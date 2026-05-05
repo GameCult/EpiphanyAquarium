@@ -25,7 +25,7 @@ import { loadOperatorSnapshot, runOperatorAction } from "./operatorApi";
 import type { ArtifactBundle, OperatorAction, OperatorActionResult, OperatorSnapshot, StatusRequest, SwarmMember } from "./types";
 import type { EpiphanyCodeRef, EpiphanyGraphsState } from "@epiphanygraph/epiphany-graph-viewer";
 import type { AquariumAgentProjection, AquariumOptionFrame, AquariumRenderer, AquariumUiFrame } from "./aquariumFluid";
-import type { AquariumScene3d } from "./aquariumScene3d";
+import type { AquariumScene3d, ProjectLabelProjection } from "./aquariumScene3d";
 import type { AquariumStardustOverlay } from "./aquariumStardust";
 import type { AquariumHarmonyFrame, HarmonyRuntime, HarmonySource, MidiCorpusFile } from "./midiHarmony";
 
@@ -1300,6 +1300,7 @@ export function App() {
         latestFaceArtifact={latestFaceArtifact}
         latestHeartbeatEvent={latestHeartbeatEvent}
         jobs={jobs}
+        swarmMembers={swarmMembers}
         variant="fullscreen"
         activeDeck={activeDeck}
         activeSubdeck={activeSubdeck}
@@ -1515,6 +1516,7 @@ function AgentConstellation({
   latestFaceArtifact,
   latestHeartbeatEvent,
   jobs,
+  swarmMembers,
   variant = "band",
   activeDeck,
   activeSubdeck,
@@ -1535,6 +1537,7 @@ function AgentConstellation({
   latestFaceArtifact: any;
   latestHeartbeatEvent: any;
   jobs: any[];
+  swarmMembers?: SwarmMember[];
   variant?: "band" | "fullscreen";
   activeDeck?: DeckId;
   activeSubdeck?: string;
@@ -1550,6 +1553,7 @@ function AgentConstellation({
   const stardustCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const optionByKeyRef = useRef(new globalThis.Map<string, AquariumOption>());
   const uiOptionByKeyRef = useRef(new globalThis.Map<string, AquariumOption>());
+  const projectLabelNodeRefs = useRef(new globalThis.Map<string, HTMLDivElement>());
   const cameraDragButtonRef = useRef<number | null>(null);
   const rendererRef = useRef<AquariumRenderer | null>(null);
   const scene3dRef = useRef<AquariumScene3d | null>(null);
@@ -1755,6 +1759,14 @@ function AgentConstellation({
     }
   }, []);
 
+  const bindProjectLabelNode = useCallback((id: string, node: HTMLDivElement | null) => {
+    if (node) {
+      projectLabelNodeRefs.current.set(id, node);
+    } else {
+      projectLabelNodeRefs.current.delete(id);
+    }
+  }, []);
+
   const applyProjectionFrame = useCallback((projections: AquariumAgentProjection[]) => {
     const sceneProjections = projections.map((projection) => {
       const agent = aquariumAgents.find((candidate) => candidate.id === projection.id);
@@ -1804,8 +1816,14 @@ function AgentConstellation({
       thoughtNode?.toggleAttribute("data-agent-hot", projection.hover > 0.35);
       optionHaloNode?.toggleAttribute("data-agent-hot", projection.hover > 0.2);
     }
+    const projectLabels = scene3dRef.current?.projectProjectLabels(
+      (swarmMembers ?? []).map((member) => ({ id: member.id, label: member.label })),
+    ) ?? [];
+    for (const label of projectLabels) {
+      applyProjectLabelProjection(projectLabelNodeRefs.current.get(label.id), label);
+    }
     stardustRef.current?.setProjections(visualProjections);
-  }, [aquariumAgents, hoveredAgentId, selectedAgentId]);
+  }, [aquariumAgents, hoveredAgentId, selectedAgentId, swarmMembers]);
 
   useEffect(() => {
     rendererRef.current?.setFrame({
@@ -2239,6 +2257,25 @@ function AgentConstellation({
             </div>
           );
         })}
+        {(swarmMembers ?? []).map((member) => (
+          <div
+            className={`projectWorldLabel ${member.kind}`}
+            key={`project-label-${member.id}`}
+            ref={(node) => bindProjectLabelNode(member.id, node)}
+            data-project-label={member.id}
+            style={
+              {
+                "--project-label-x": "50%",
+                "--project-label-y": "50%",
+                "--project-label-opacity": 0,
+                "--project-label-scale": 0.86,
+              } as React.CSSProperties
+            }
+          >
+            <strong>{member.label}</strong>
+            <span>{member.kind}</span>
+          </div>
+        ))}
         {variant !== "fullscreen" && (
           <div className="constellationInspector">
             <div>
@@ -2257,6 +2294,14 @@ function AgentConstellation({
       </div>
     </section>
   );
+}
+
+function applyProjectLabelProjection(node: HTMLDivElement | undefined, label: ProjectLabelProjection) {
+  if (!node) return;
+  node.style.setProperty("--project-label-x", `${label.xPercent}%`);
+  node.style.setProperty("--project-label-y", `${label.yPercent}%`);
+  node.style.setProperty("--project-label-opacity", String(label.opacity));
+  node.style.setProperty("--project-label-scale", String(label.scale));
 }
 
 function SectionHeader({ title, icon }: { title: string; icon: React.ReactNode }) {

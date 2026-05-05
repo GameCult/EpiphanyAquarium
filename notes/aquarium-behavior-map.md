@@ -37,9 +37,10 @@ The app has five cooperating layers:
    hovering agent bodies, cursor landing object, and Aetheria-style gravity
    texture. Agent wells and low chirp-bank modes are rendered as additive
    top-down splat quads into a grid-aligned render target; the visible mesh
-   samples that accumulated texture for displacement. The scene is Z-up over a
-   shared XY interaction plane, with middle-drag orbit, wheel zoom, and
-   right-drag/WASD panning around that plane.
+   samples that accumulated texture for displacement. Camera distance drives
+   procedural grid cell size, so zooming reveals different structural scales.
+   The scene is Z-up over a shared XY interaction plane, with middle-drag orbit,
+   wheel zoom, and right-drag/WASD panning around that plane.
 5. **Fluid and crisp canvas.** `src/aquariumFluid.ts` owns WebGL2 fluid
    simulation, fallback 2D rendering, hit zones, projection frames, fluid
    controls, and canvas-local picking. The smoke canvas now renders an
@@ -85,11 +86,13 @@ flowchart TD
 - **Idle:** fullscreen water, drifting agents, crisp labels, ambient state, no
   focus surface. The initial screen is aquarium-first, not paperwork-first.
 - **Hover/touch agent:** the renderer marks that agent hot, emits CSS projection
-  variables, applies weak long-range pointer attraction to most creatures, gives
+  variables, applies weak long-range cursor-gradient attraction to most creatures, gives
   Soul a small long-range pullback, and switches all creatures to strong
   short-range attraction so they can be pulled out of orbit deliberately. Each
   creature is a spring body: orbit slots, mouse attraction, hover hold, and
   future inter-Epiphany approach all belong in the same force accumulator. The
+  cursor itself is a visible gravity well in the Three gravity render target;
+  the spring-like pull is expressed as the gradient of that field. The
   force is derived from an Aetheria-style heightfield normal and scaled by
   horizontal slope squared, so it tapers toward the center instead of jerking
   arriving objects around. Cursor screen coordinates are unprojected to the grid
@@ -108,7 +111,8 @@ flowchart TD
   yaw/pitch; right drag pans by subtracting consecutive mouse ray hits on the
   XY plane, while WASD pans along the projected view basis. Mouse coordinates
   are projected through the camera ray onto XY so cursor deltas and distances to
-  agents stay consistent.
+  agents stay consistent. As distance increases, Epiphany project labels fade in
+  as DOM billboards projected from world anchors.
 - **Projection ownership:** Three camera projection is the placement authority
   for DOM agent captions, thought bubbles, radial option halos, focus surfaces,
   stardust attractors, and pointer-to-grid input. Fluid still owns creature
@@ -122,6 +126,10 @@ flowchart TD
   local surface coordinates for crisp DOM behavior. While the mouse is inside a
   creature billboard, the fluid projection holds that creature in place so the
   world object stops orbiting under the UI.
+- **Project labels:** registered Epiphany swarm members render as quiet
+  world-space project labels. They stay mostly absent while working close-up and
+  fade in when zoomed out far enough to read the aquarium as a multi-project
+  structure.
 - **Visual smoke boundary:** visual smoke does not attempt cursor-driven
   creature-tree or billboard interaction. Those clicks require the same
   projection/raycast math as the app itself, so they belong in targeted

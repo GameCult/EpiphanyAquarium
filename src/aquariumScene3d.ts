@@ -14,8 +14,18 @@ type PointerState = {
 
 type CameraDragMode = "orbit" | "pan";
 
+export type ProjectLabelProjection = {
+  id: string;
+  label: string;
+  opacity: number;
+  scale: number;
+  xPercent: number;
+  yPercent: number;
+};
+
 export interface AquariumScene3d {
   dispose(): void;
+  projectProjectLabels(labels: Array<{ id: string; label: string }>): ProjectLabelProjection[];
   projectPointerToGrid(pointer: PointerState): { xPercent: number; yPercent: number } | null;
   projectProjections(projections: SceneProjection[]): SceneProjection[];
   pointerDown(pointer: PointerState, button: number): void;
@@ -43,6 +53,7 @@ class ThreeAquariumScene implements AquariumScene3d {
   private cameraTarget = new THREE.Vector3(0, 0, 0);
   private cameraYaw = 0;
   private cursor = new THREE.Group();
+  private cursorSplat: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
   private dragMode: CameraDragMode | null = null;
   private dragPointer: PointerState | null = null;
   private disposed = false;
@@ -57,6 +68,7 @@ class ThreeAquariumScene implements AquariumScene3d {
   });
   private gravityScene = new THREE.Scene();
   private gravityUniforms = {
+    uCellSize: { value: 0.34 },
     uGridColor: { value: new THREE.Color(0x69ffd8) },
     uGravityTex: { value: null as THREE.Texture | null },
     uOpacity: { value: 0.42 },
@@ -91,6 +103,10 @@ class ThreeAquariumScene implements AquariumScene3d {
     this.gravityCamera.position.set(0, 0, 5);
     this.gravityCamera.lookAt(0, 0, 0);
     this.createSplatPool(48);
+    this.cursorSplat = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.createSplatMaterial());
+    this.cursorSplat.frustumCulled = false;
+    this.cursorSplat.visible = false;
+    this.gravityScene.add(this.cursorSplat);
     this.updateCamera();
     this.scene.add(new THREE.AmbientLight(0xbfffe8, 0.74));
     const key = new THREE.DirectionalLight(0xd8fff0, 1.2);
@@ -160,6 +176,28 @@ class ThreeAquariumScene implements AquariumScene3d {
     const projected = this.projectPointerToPlane(pointer);
     if (!projected) return null;
     return worldToGridPercent(projected.x, projected.y);
+  }
+
+  projectProjectLabels(labels: Array<{ id: string; label: string }>) {
+    const count = Math.max(labels.length, 1);
+    const zoomOpacity = smoothstep(8.5, 15.5, this.cameraDistance);
+    return labels.map((label, index) => {
+      const angle = -Math.PI / 2 + (index / count) * Math.PI * 2;
+      const ring = Math.min(worldWidth, worldDepth) * (0.45 + Math.min(count, 6) * 0.015);
+      const point = new THREE.Vector3(
+        Math.cos(angle) * ring * 0.86,
+        Math.sin(angle) * ring * 0.62,
+        1.35 + zoomOpacity * 0.28,
+      );
+      const screen = this.projectWorldToScreen(point);
+      return {
+        ...label,
+        opacity: zoomOpacity,
+        scale: screen.scale * (0.82 + zoomOpacity * 0.16),
+        xPercent: screen.xPercent,
+        yPercent: screen.yPercent,
+      };
+    });
   }
 
   projectProjections(projections: SceneProjection[]) {
@@ -281,11 +319,13 @@ class ThreeAquariumScene implements AquariumScene3d {
       },
       vertexShader: `
         uniform sampler2D uGravityTex;
+        varying vec2 vGridPosition;
         varying float vDepth;
         varying float vFade;
 
         void main() {
           vec3 displaced = position;
+          vGridPosition = displaced.xy;
           vec2 uv = displaced.xy / vec2(${worldWidth.toFixed(3)}, ${worldDepth.toFixed(3)}) + 0.5;
           vec4 field = texture2D(uGravityTex, uv);
           float depth = field.r - field.g;
@@ -299,14 +339,19 @@ class ThreeAquariumScene implements AquariumScene3d {
       `,
       fragmentShader: `
         uniform vec3 uGridColor;
+        uniform float uCellSize;
         uniform float uOpacity;
+        varying vec2 vGridPosition;
         varying float vDepth;
         varying float vFade;
 
         void main() {
           float cup = smoothstep(0.02, 0.28, vDepth);
+          vec2 cell = abs(fract(vGridPosition / max(uCellSize, 0.001) + 0.5) - 0.5);
+          vec2 lineWidth = fwidth(vGridPosition / max(uCellSize, 0.001)) * 1.35;
+          float line = 1.0 - min(smoothstep(0.0, lineWidth.x, cell.x), smoothstep(0.0, lineWidth.y, cell.y));
           vec3 color = mix(uGridColor * 0.38, vec3(0.82, 1.0, 0.9), cup);
-          gl_FragColor = vec4(color, uOpacity * vFade);
+          gl_FragColor = vec4(color, uOpacity * vFade * mix(0.45, 1.0, line));
         }
       `,
       transparent: true,
@@ -630,6 +675,7 @@ class ThreeAquariumScene implements AquariumScene3d {
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
+    this.gravityUniforms.uCellSize.value = this.gridCellSize();
     if (this.pointer.active) {
       const world = gridToWorld(this.pointer.xPercent, this.pointer.yPercent);
       this.cursor.visible = true;
@@ -637,8 +683,10 @@ class ThreeAquariumScene implements AquariumScene3d {
       this.pointerWorld.copy(projected ?? new THREE.Vector3(world.x, world.y, 0));
       this.cursor.position.set(this.pointerWorld.x, this.pointerWorld.y, 0.04);
       this.cursor.rotation.z = millis * 0.0014;
+      this.configureSplat(this.cursorSplat, this.pointerWorld.x, this.pointerWorld.y, 0.86, 0.34, 2.7, 0, 0, 1.25);
     } else {
       this.cursor.visible = false;
+      this.cursorSplat.visible = false;
     }
     this.gravityUniforms.uTime.value = millis * 0.001;
     const previousTarget = this.renderer.getRenderTarget();
@@ -659,9 +707,15 @@ class ThreeAquariumScene implements AquariumScene3d {
       this.cameraTarget.y.toFixed(3),
     ].join(",");
     this.canvas.dataset.threeCursor = [this.pointerWorld.x.toFixed(3), this.pointerWorld.y.toFixed(3)].join(",");
+    this.canvas.dataset.threeGridCell = this.gravityUniforms.uCellSize.value.toFixed(3);
     this.canvas.dataset.threeStardust = String(stardustParticleCount);
     this.raf = requestAnimationFrame(this.render);
   };
+
+  private gridCellSize() {
+    const exponent = Math.floor(Math.log2(Math.max(this.cameraDistance, 1) / 5.5));
+    return clamp(0.28 * 2 ** exponent, 0.14, 1.12);
+  }
 }
 
 function gridToWorld(xPercent: number, yPercent: number) {
@@ -680,6 +734,11 @@ function worldToGridPercent(x: number, y: number) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function smoothstep(edge0: number, edge1: number, value: number) {
+  const t = clamp((value - edge0) / Math.max(edge1 - edge0, 0.0001), 0, 1);
+  return t * t * (3 - 2 * t);
 }
 
 function stablePhase(id: string) {

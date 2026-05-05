@@ -108,3 +108,7 @@ Current slice:
   role orbit it. That asymmetry blocks multiple Epiphanies. The main projection
   path now gives every creature the same spring body: orbit-slot spring, pointer
   spring, hover hold damping, and pluck impulse all accumulate as forces.
+- Current scale correction: zoom now affects the visible grid cell size, project
+  labels are projected DOM billboards that fade in while zooming out, and the
+  cursor is represented as a visible gravity well whose gradient supplies the
+  spring-like attraction force.

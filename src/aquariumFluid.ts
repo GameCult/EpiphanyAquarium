@@ -1022,7 +1022,7 @@ class WebglAquariumRenderer implements AquariumRenderer {
       const hover = Math.max(explicitHover, proximityHover);
       const acknowledgement = this.acknowledgementPulse(agent.id, time);
       const chirps = projectChirpMatrix(agent, personality, stateVector, time, hover, acknowledgement);
-      const pointerForce = this.pointer.active && !billboardHold ? this.pointerPull(agent, state.x, state.y) : { x: 0, y: 0 };
+      const pointerForce = this.pointer.active && !billboardHold ? this.cursorGravityForce(agent, state.x, state.y) : { x: 0, y: 0 };
       const orbitRadius = orbitScale * (0.035 + chirps.orbitRadius * 0.11);
       const angle = chirps.angle;
       const normalX = Math.cos(angle);
@@ -1125,7 +1125,7 @@ class WebglAquariumRenderer implements AquariumRenderer {
     };
   }
 
-  private pointerPull(agent: AquariumAgentFrame, x: number, y: number) {
+  private cursorGravityForce(agent: AquariumAgentFrame, x: number, y: number) {
     const far = aetheriaGravityForce(
       { x, y },
       { x: this.pointer.x, y: this.pointer.y },
