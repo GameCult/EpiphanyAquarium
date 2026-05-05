@@ -124,3 +124,7 @@ Current slice:
   samples the gravity texture for displaced grid height. Particle positions, not
   alpha, now follow an exponential vertical distribution around the grid surface
   with a tighter below-grid falloff.
+- Current exploration correction: the visible grid mesh, deferred gravity camera,
+  gravity sampling origin, and parented stardust now track the camera target so
+  WASD/right-drag exploration moves across a continuous grid field instead of
+  leaving the origin-centered floor behind.

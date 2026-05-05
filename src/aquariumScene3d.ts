@@ -72,7 +72,9 @@ class ThreeAquariumScene implements AquariumScene3d {
   private gravityUniforms = {
     uCellSize: { value: 0.34 },
     uFieldHalfSize: { value: new THREE.Vector2(worldWidth / 2, worldDepth / 2) },
+    uGravityOrigin: { value: new THREE.Vector2(0, 0) },
     uGridColor: { value: new THREE.Color(0x69ffd8) },
+    uGridScale: { value: new THREE.Vector2(1, 1) },
     uGravitySize: { value: new THREE.Vector2(worldWidth, worldDepth) },
     uGravityTex: { value: null as THREE.Texture | null },
     uOpacity: { value: 0.42 },
@@ -343,6 +345,7 @@ class ThreeAquariumScene implements AquariumScene3d {
       vertexShader: `
         uniform sampler2D uGravityTex;
         uniform vec2 uFieldHalfSize;
+        uniform vec2 uGravityOrigin;
         uniform vec2 uGravitySize;
         varying vec2 vGridPosition;
         varying float vDepth;
@@ -352,12 +355,13 @@ class ThreeAquariumScene implements AquariumScene3d {
           vec3 displaced = position;
           vec2 worldPosition = (modelMatrix * vec4(position, 1.0)).xy;
           vGridPosition = worldPosition;
-          vec2 uv = worldPosition / uGravitySize + 0.5;
+          vec2 fieldPosition = worldPosition - uGravityOrigin;
+          vec2 uv = fieldPosition / uGravitySize + 0.5;
           float gravityMask = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
           vec4 field = texture2D(uGravityTex, clamp(uv, vec2(0.0), vec2(1.0))) * gravityMask;
           float depth = field.r - field.g;
           displaced.z = -depth;
-          float edge = max(abs(worldPosition.x) / max(uFieldHalfSize.x, 0.001), abs(worldPosition.y) / max(uFieldHalfSize.y, 0.001));
+          float edge = max(abs(fieldPosition.x) / max(uFieldHalfSize.x, 0.001), abs(fieldPosition.y) / max(uFieldHalfSize.y, 0.001));
           vDepth = depth;
           vFade = (1.0 - smoothstep(0.72, 1.0, edge)) * (1.0 - smoothstep(0.65, 1.8, depth));
           gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
@@ -507,6 +511,8 @@ class ThreeAquariumScene implements AquariumScene3d {
     const sourceData = Array.from({ length: maxStardustSources }, () => new THREE.Vector4(999, 999, 0, 0));
     return new THREE.ShaderMaterial({
       uniforms: {
+        uGravityOrigin: this.gravityUniforms.uGravityOrigin,
+        uGridScale: this.gravityUniforms.uGridScale,
         uGravityTex: this.gravityUniforms.uGravityTex,
         uGravitySize: this.gravityUniforms.uGravitySize,
         uSources: { value: sourceData },
@@ -515,6 +521,8 @@ class ThreeAquariumScene implements AquariumScene3d {
       },
       vertexShader: `
         attribute float aSeed;
+        uniform vec2 uGravityOrigin;
+        uniform vec2 uGridScale;
         uniform sampler2D uGravityTex;
         uniform vec2 uGravitySize;
         uniform float uTime;
@@ -545,13 +553,14 @@ class ThreeAquariumScene implements AquariumScene3d {
           ) * 0.022;
           for (int i = 0; i < ${maxStardustSources}; i += 1) {
             vec4 source = uSources[i];
-            vec2 delta = source.xy - p.xy;
+            vec2 sourceLocal = (source.xy - uGravityOrigin) / max(uGridScale, vec2(0.001));
+            vec2 delta = sourceLocal - p.xy;
             float influence = exp(-dot(delta, delta) * 0.42) * source.z;
             vec2 tangent = normalize(vec2(-delta.y, delta.x) + vec2(0.001, 0.0));
             flow += tangent * influence * 0.038 + source.w * normalize(delta + vec2(0.001, 0.0)) * influence * 0.015;
           }
           p.xy = wrapWorld(p.xy - flow * lifetime * 24.0 + vec2(uTime * 0.018, -uTime * 0.011));
-          vec2 gridUv = (modelMatrix * vec4(p.xy, 0.0, 1.0)).xy / uGravitySize + 0.5;
+          vec2 gridUv = ((modelMatrix * vec4(p.xy, 0.0, 1.0)).xy - uGravityOrigin) / uGravitySize + 0.5;
           float gravityMask = step(0.0, gridUv.x) * step(gridUv.x, 1.0) * step(0.0, gridUv.y) * step(gridUv.y, 1.0);
           vec4 field = texture2D(uGravityTex, clamp(gridUv, vec2(0.0), vec2(1.0))) * gravityMask;
           float gridHeight = -(field.r - field.g);
@@ -754,6 +763,10 @@ class ThreeAquariumScene implements AquariumScene3d {
       (this.gravityUniforms.uFieldHalfSize.value.x * 2).toFixed(3),
       (this.gravityUniforms.uFieldHalfSize.value.y * 2).toFixed(3),
     ].join(",");
+    this.canvas.dataset.threeGridOrigin = [
+      this.gravityUniforms.uGravityOrigin.value.x.toFixed(3),
+      this.gravityUniforms.uGravityOrigin.value.y.toFixed(3),
+    ].join(",");
     this.canvas.dataset.threeStardust = String(stardustParticleCount);
     this.raf = requestAnimationFrame(this.render);
   };
@@ -762,8 +775,21 @@ class ThreeAquariumScene implements AquariumScene3d {
     const scale = clamp(this.cameraDistance / 9.2, 1, 3.1);
     const width = worldWidth * scale;
     const depth = worldDepth * scale;
-    this.gridGroup.scale.set(width / worldWidth, depth / worldDepth, 1);
+    const scaleX = width / worldWidth;
+    const scaleY = depth / worldDepth;
+    this.gridGroup.position.set(this.cameraTarget.x, this.cameraTarget.y, 0);
+    this.gridGroup.scale.set(scaleX, scaleY, 1);
     this.gravityUniforms.uFieldHalfSize.value.set(width / 2, depth / 2);
+    this.gravityUniforms.uGravityOrigin.value.set(this.cameraTarget.x, this.cameraTarget.y);
+    this.gravityUniforms.uGravitySize.value.set(width, depth);
+    this.gravityUniforms.uGridScale.value.set(scaleX, scaleY);
+    this.gravityCamera.left = -width / 2;
+    this.gravityCamera.right = width / 2;
+    this.gravityCamera.top = depth / 2;
+    this.gravityCamera.bottom = -depth / 2;
+    this.gravityCamera.position.set(this.cameraTarget.x, this.cameraTarget.y, 5);
+    this.gravityCamera.lookAt(this.cameraTarget.x, this.cameraTarget.y, 0);
+    this.gravityCamera.updateProjectionMatrix();
   }
 
   private gridCellSize() {
