@@ -30,18 +30,23 @@ The app has five cooperating layers:
    attraction. Agents are projected as hovering objects above gravity cups, not
    as points embedded in the surface. Their grid coordinates project through a
    tilted near-omniscient camera before reaching DOM.
-4. **Fluid and crisp canvas.** `src/aquariumFluid.ts` owns WebGL2 fluid
+4. **Three field layer.** `src/aquariumScene3d.ts` owns the visible 3D grid,
+   hovering agent bodies, cursor landing object, and Aetheria-style gravity
+   texture. Agent wells and low chirp-bank modes are rendered as additive
+   top-down splat quads into a grid-aligned render target; the visible mesh
+   samples that accumulated texture for displacement.
+5. **Fluid and crisp canvas.** `src/aquariumFluid.ts` owns WebGL2 fluid
    simulation, fallback 2D rendering, hit zones, projection frames, fluid
    controls, and canvas-local picking. The smoke canvas now renders an
    Aetheria-style PowerPulse heightfield under the dye: wells, slope shading,
    contour lines, and sparse particle-like stardust. The crisp canvas carries
    readable overlay marks and simulation-owned controls.
-5. **Compute stardust.** `src/aquariumStardust.ts` is an optional WebGPU layer.
+6. **Compute stardust.** `src/aquariumStardust.ts` is an optional WebGPU layer.
    When `navigator.gpu` is available, it runs a real compute pass over particle
    buffers and renders instanced quads above the WebGL aquarium. Its flow source
    is currently mirrored from projected agent motion; a full WebGPU fluid port
    can replace that with the real velocity texture.
-6. **Soundscape.** The same renderer lazily creates an `AudioContext`. Agents
+7. **Soundscape.** The same renderer lazily creates an `AudioContext`. Agents
    get vocal chirp/spectral behavior; interface controls get one short
    subtractive resonator hit per deliberate pointer gesture.
 
@@ -83,8 +88,10 @@ flowchart TD
   horizontal slope squared, so it tapers toward the center instead of jerking
   arriving objects around. Cursor screen coordinates are unprojected to the grid
   before force is applied, and the shader draws a landing mark on the projected
-  surface. It also
-  wakes sound on real user input and opens the agent-local option halo. Every
+  surface. The Three field layer follows current Aetheria's gravity-texture
+  model: agent wells and chirp waves splat into an orthographic render target,
+  then the visible grid samples the accumulated texture. It also wakes sound on
+  real user input and opens the agent-local option halo. Every
   creature carries the shared heartbeat; the latest awakened role gets a stronger
   pluck. Touch and heartbeat events resolve as damped string-like oscillations
   through both motion and audio. Thought bubbles become readable when hot or

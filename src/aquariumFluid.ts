@@ -53,6 +53,7 @@ export interface AquariumUiFrame {
 
 export interface AquariumAgentProjection {
   id: string;
+  chirpBank: AquariumChirpBand[];
   gridXPercent: number;
   gridYPercent: number;
   xPercent: number;
@@ -64,6 +65,8 @@ export interface AquariumAgentProjection {
   hover: number;
   acknowledgement: number;
 }
+
+export type AquariumChirpBand = [frequency: number, amplitude: number, phase: number, chirp: number];
 
 export interface AquariumAgentHarmonyFrame {
   chordDegree: number;
@@ -150,6 +153,7 @@ interface AgentStateVector {
 interface AgentChirpMatrix {
   acknowledgement: number;
   angle: number;
+  chirpBank: AquariumChirpBand[];
   distortion: number;
   expression: number;
   glowPulse: number;
@@ -1067,6 +1071,7 @@ class WebglAquariumRenderer implements AquariumRenderer {
     this.frame.onProjectionFrame?.(
       projected.map((agent) => ({
         id: agent.id,
+        chirpBank: agent.chirps.chirpBank,
         gridXPercent: (agent.x / Math.max(this.simWidth, 1)) * 100,
         gridYPercent: (agent.y / Math.max(this.simHeight, 1)) * 100,
         xPercent: ((agent.screenX ?? agent.x) / Math.max(this.simWidth, 1)) * 100,
@@ -2860,6 +2865,10 @@ class CanvasAquariumRenderer implements AquariumRenderer {
       this.hotAgents.push({ x, y, radius: 60, key: agent.id });
       projections.push({
         id: agent.id,
+        chirpBank: [
+          [0.22 + agent.activity * 0.08, 0.04 + agent.activity * 0.03, agent.phase, 0.01],
+          [0.34 + agent.activity * 0.12, 0.03 + agent.activity * 0.025, agent.phase * 1.7, -0.008],
+        ],
         gridXPercent: (x / Math.max(this.canvas.width, 1)) * 100,
         gridYPercent: (y / Math.max(this.canvas.height, 1)) * 100,
         xPercent: (x / Math.max(this.canvas.width, 1)) * 100,
@@ -2986,39 +2995,51 @@ function projectChirpMatrix(
     0.035,
     1.55,
   );
-  const radial = layeredChirps(time, [
+  const radialComponents: ChirpletComponent[] = [
     [agent.phase + personality.angle * 0.41, personality.radialTempo * hoverFrequency * (0.7 + heat * 0.38), 0.006 + state.urgency * 0.01, 10.5, 0.58],
     [agent.phase * 1.37, personality.radialTempo * 1.72 * hoverFrequency, -0.011 - personality.precision * 0.004, 7.8, 0.23],
     [agent.phase * 2.91 + state.panic, personality.radialTempo * 3.4 * hoverFrequency, 0.018 + state.panic * 0.035, 3.8, 0.08 + state.panic * 0.22],
     ...chirpletSpectrum(agent.phase + personality.angle, personality.radialTempo, hoverFrequency, 9, 0.016 + personality.expressiveness * 0.01 + state.panic * 0.03 + pluck * 0.025, 6.8),
-  ]);
-  const tangential = layeredChirps(time, [
+  ];
+  const radial = layeredChirps(time, radialComponents);
+  const tangentialComponents: ChirpletComponent[] = [
     [agent.phase * 1.73 + personality.angle, personality.tangentialTempo * hoverFrequency * (0.65 + state.activity * 0.3), -0.01 - personality.precision * 0.006, 9.2, 0.54],
     [agent.phase * 2.18, personality.tangentialTempo * 2.2 * hoverFrequency, 0.008 + personality.expressiveness * 0.006, 6.4, 0.22],
     [agent.phase * 3.5 + state.review, personality.tangentialTempo * 4.2 * hoverFrequency, -0.026 - state.panic * 0.02, 3.2, 0.08 + state.panic * 0.2],
     ...chirpletSpectrum(agent.phase * 1.61 + personality.angle, personality.tangentialTempo, hoverFrequency, 8, 0.014 + personality.precision * 0.006 + state.panic * 0.026 + pluck * 0.02, 7.4),
-  ]);
-  const flicker = layeredChirps(time, [
+  ];
+  const tangential = layeredChirps(time, tangentialComponents);
+  const flickerComponents: ChirpletComponent[] = [
     [agent.phase * 2.37 + state.review * 0.9, personality.glowTempo * hoverFrequency * (0.86 + heat), 0.018 + state.blocked * 0.018, 6.8, 0.42],
     [agent.phase * 4.1 + pluck, personality.glowTempo * 2.8 * hoverFrequency, -0.024, 2.8, 0.18 + pluck * 0.34],
     [agent.phase * 5.6 + state.panic, personality.glowTempo * 5.2 * hoverFrequency, 0.04 + state.panic * 0.06, 1.7, state.panic * 0.34],
     ...chirpletSpectrum(agent.phase * 2.23 + state.review, personality.glowTempo, hoverFrequency, 10, 0.018 + heat * 0.018 + pluck * 0.035, 5.2),
-  ]);
-  const ink = layeredChirps(time, [
+  ];
+  const flicker = layeredChirps(time, flickerComponents);
+  const inkComponents: ChirpletComponent[] = [
     [agent.phase * 2.91 + state.urgency, personality.inkTempo * hoverFrequency * (0.72 + state.activity * 0.44), -0.011 + personality.expressiveness * 0.012, 8.4, 0.5],
     [agent.phase * 3.6, personality.inkTempo * 2.1 * hoverFrequency, 0.016, 5.6, 0.18],
     [agent.phase * 6.2 + pluck, personality.inkTempo * 4.6 * hoverFrequency, -0.032, 2.2, 0.08 + pluck * 0.36 + state.panic * 0.16],
     ...chirpletSpectrum(agent.phase * 2.87 + state.urgency, personality.inkTempo, hoverFrequency, 9, 0.016 + personality.expressiveness * 0.006 + state.panic * 0.02 + pluck * 0.032, 6.1),
-  ]);
-  const panicJitter = layeredChirps(time, [
+  ];
+  const ink = layeredChirps(time, inkComponents);
+  const panicComponents: ChirpletComponent[] = [
     [agent.phase * 7.1, 4.8 * hoverFrequency, 0.08, 1.9, 0.45],
     [agent.phase * 11.4, 9.2 * hoverFrequency, -0.12, 1.1, 0.28],
     ...chirpletSpectrum(agent.phase * 5.3 + state.panic, 1.8, hoverFrequency, 7, state.panic * 0.055, 2.7),
-  ]) * state.panic;
+  ];
+  const panicJitter = layeredChirps(time, panicComponents) * state.panic;
+  const chirpBank = lowChirpBank(
+    time,
+    [...radialComponents, ...tangentialComponents, ...flickerComponents, ...inkComponents, ...panicComponents],
+    4,
+    clamp(0.3 + heat * 0.75 + pluck * 1.05 + hover * 0.25, 0.2, 2.2),
+  );
   const orbitDrift = time * personality.orbitSpeed * hoverFrequency * (0.22 + state.activity * 0.22 + state.urgency * 0.16 + state.panic * 1.35);
   return {
     acknowledgement,
     angle: personality.angle + orbitDrift + tangential * 0.055 * expressiveGain + panicJitter * 0.12 + state.blocked * 0.035 - state.review * 0.025,
+    chirpBank,
     distortion: clamp(0.024 + personality.expressiveness * 0.028 + heat * 0.03 + Math.abs(flicker) * 0.02 + pluck * 0.02, 0.012, 0.16),
     expression: clamp(expressiveGain, 0.035, 1.75),
     glowPulse: clamp(0.5 + Math.abs(flicker) * 0.34 + heat * 0.34 + state.review * 0.1 + state.ready * 0.05 + pluck * 0.62, 0.26, 2.1),
@@ -3057,6 +3078,21 @@ function layeredChirps(time: number, components: ChirpletComponent[]) {
     weight += componentWeight;
   }
   return weight > 0 ? total / weight : 0;
+}
+
+function lowChirpBank(time: number, components: ChirpletComponent[], count: number, excitation: number): AquariumChirpBand[] {
+  return [...components]
+    .sort((a, b) => a[1] - b[1])
+    .slice(0, count)
+    .map(([phase, frequency, chirp, period, componentWeight]) => {
+      const live = chirplet(time, phase, frequency, chirp, period);
+      return [
+        frequency,
+        clamp(live * componentWeight * excitation, -0.24, 0.24),
+        phase,
+        chirp,
+      ];
+    });
 }
 
 function chirplet(time: number, phase: number, frequency: number, chirp: number, period: number) {

@@ -39,3 +39,14 @@ Current slice:
   coordinates, projects them through a tilted overhead camera for DOM/rendering,
   unprojects cursor screen input back onto the grid, and draws a cursor landing
   mark on the surface.
+- Current Three/Aetheria pass: pulled Three.js into the aquarium for the 3D
+  scene layer. The field mesh now uses Aetheria-Economy's current PowerPulse
+  envelope for gravity cups instead of the 2011 denominator cup, and a separate
+  radial-wave source array mirrors Aetheria gas giant wave emitters: PowerPulse
+  mask, sine-power phase, frequency, speed, and time-driven breathing.
+- Correction to that pass: current Aetheria does not make every grid point
+  enumerate every source. It renders additive brush quads into grid-aligned
+  gravity render textures with an orthographic top-down camera, then samples the
+  accumulated height texture. Aquarium's Three layer now follows that model:
+  static wells and low chirp-bank radial waves are splats, and the visible grid
+  mesh samples the render target.

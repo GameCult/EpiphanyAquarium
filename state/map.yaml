@@ -39,6 +39,8 @@ interaction_laws:
   - Agent motion stays tethered to visible orbit slots; pointer force is welcoming at range, only Soul pulls back weakly, and all creatures attract strongly up close.
   - Pointer force follows Aetheria's gravity model: derive force from a PowerPulse heightfield normal and scale by horizontal slope squared so wells taper near their centers.
   - Agents hover above their gravity cups; WebGL renders the well surface underneath, while DOM glyphs receive elevation and scale from projected height.
+  - The Three.js spatial layer owns the visible 3D grid: gravity cups and chirp waves splat into a grid-aligned render target, then the mesh samples that accumulated gravity texture for displacement.
+  - Aetheria's current PowerPulse envelope is the cup/mask curve; low chirp-bank partials become multiple radial wave emitters so excited agents vibrate the grid like small speakers.
   - The aquarium camera is near-omniscient: grid coordinates project through a tilted overhead camera, and cursor input unprojects back to the grid before applying force.
   - WebGPU stardust is optional progressive enhancement: real compute updates particles from mirrored flow sources, while WebGL2 remains the compatible surface/ink fallback.
   - Every creature carries the shared heartbeat; the latest awakened role gets the stronger plucked-string oscillation.
@@ -63,4 +65,6 @@ landed:
   - Aetheria-style gravity cups now shape pointer attraction and the WebGL aquarium surface; agents project a hover offset above their wells.
   - Added an optional WebGPU compute stardust layer modeled after Aetheria's compute particles, keyed from agent flow instead of gravity.
   - Added a tilted grid camera projection: shader pixels sample the grid through an inverse camera map, DOM agents project through the same view, and the cursor becomes a grid landing mark.
+  - Added a Three.js field layer with an Aetheria-style orthographic gravity render target: additive PowerPulse and radial-wave splat quads feed a sampled grid mesh instead of forcing every grid vertex to evaluate every source.
+  - Mapped the low-frequency agent chirp bank into radial grid vibration channels, preserving the Aetheria split between static wells and gas-giant-like wave breathing.
   - Added a swarm registry seam. `.epiphany-aquarium/swarm.json` registers EpiphanyAgent and AetheriaLore, and the Tauri backend scopes status, actions, codex-home, workspace root, and artifact roots to the selected member.

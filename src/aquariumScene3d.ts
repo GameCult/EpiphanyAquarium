@@ -30,10 +30,27 @@ class ThreeAquariumScene implements AquariumScene3d {
   private camera = new THREE.PerspectiveCamera(42, 1, 0.1, 80);
   private cursor = new THREE.Group();
   private disposed = false;
+  private gravityCamera = new THREE.OrthographicCamera(-worldWidth / 2, worldWidth / 2, worldDepth / 2, -worldDepth / 2, 0.1, 10);
+  private gravityRenderTarget = new THREE.WebGLRenderTarget(256, 256, {
+    depthBuffer: false,
+    format: THREE.RGBAFormat,
+    magFilter: THREE.LinearFilter,
+    minFilter: THREE.LinearFilter,
+    stencilBuffer: false,
+    type: THREE.HalfFloatType,
+  });
+  private gravityScene = new THREE.Scene();
+  private gravityUniforms = {
+    uGridColor: { value: new THREE.Color(0x69ffd8) },
+    uGravityTex: { value: null as THREE.Texture | null },
+    uOpacity: { value: 0.42 },
+    uTime: { value: 0 },
+  };
   private pointer: PointerState = { active: false, xPercent: 50, yPercent: 50 };
   private raf = 0;
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
+  private splatMeshes: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>[] = [];
 
   constructor(private canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({
@@ -46,6 +63,10 @@ class ThreeAquariumScene implements AquariumScene3d {
     this.renderer.setClearColor(0x000000, 0);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6));
+    this.gravityUniforms.uGravityTex.value = this.gravityRenderTarget.texture;
+    this.gravityCamera.position.set(0, 0, 5);
+    this.gravityCamera.lookAt(0, 0, 0);
+    this.createSplatPool(48);
     this.camera.position.set(0, 6.2, 7.8);
     this.camera.lookAt(0, 0, 0.2);
     this.scene.add(new THREE.AmbientLight(0xbfffe8, 0.74));
@@ -67,6 +88,13 @@ class ThreeAquariumScene implements AquariumScene3d {
         materials.forEach((material) => material.dispose());
       }
     });
+    this.gravityScene.traverse((object) => {
+      if (object instanceof THREE.Mesh) {
+        object.geometry?.dispose();
+        object.material?.dispose();
+      }
+    });
+    this.gravityRenderTarget.dispose();
     this.renderer.dispose();
   }
 
@@ -76,6 +104,7 @@ class ThreeAquariumScene implements AquariumScene3d {
 
   setProjections(projections: SceneProjection[]) {
     const live = new Set<string>();
+    let splatIndex = 0;
     for (const projection of projections) {
       live.add(projection.id);
       const group = this.agentGroups.get(projection.id) ?? this.createAgent(projection);
@@ -88,6 +117,30 @@ class ThreeAquariumScene implements AquariumScene3d {
       if (cup?.material instanceof THREE.MeshBasicMaterial) {
         cup.material.opacity = 0.46 + projection.hover * 0.22 + projection.acknowledgement * 0.18;
       }
+      if (splatIndex < this.splatMeshes.length) {
+        const strength = 0.46 + projection.z * 0.74 + projection.expression * 0.16;
+        const radius = 1.65 + projection.acknowledgement * 0.34 + projection.hover * 0.26;
+        this.configureSplat(this.splatMeshes[splatIndex], target.x, target.z, radius, strength, 2.18, 0, 0, 1.25);
+        splatIndex += 1;
+      }
+      if (splatIndex < this.splatMeshes.length) {
+        const bands = projection.chirpBank.length > 0
+          ? projection.chirpBank
+          : [[0.28, 0.035 + projection.glowPulse * 0.01, stablePhase(projection.id), 0.01] as const];
+        for (let bandIndex = 0; bandIndex < bands.length && splatIndex < this.splatMeshes.length; bandIndex += 1) {
+          const [temporalFrequency, amplitude, phase, chirp] = bands[bandIndex];
+          const waveDepth = amplitude * (0.36 + projection.acknowledgement * 0.5 + projection.hover * 0.18);
+          const waveRadius = 1.85 + bandIndex * 0.28 + projection.z * 0.42 + projection.hover * 0.22;
+          const spatialFrequency = 3.8 + temporalFrequency * 5.6 + bandIndex * 0.85;
+          const speed = 0.22 + temporalFrequency * 1.7 + Math.abs(chirp) * 4.5 + projection.acknowledgement * 0.9;
+          const sinePower = 1.05 + bandIndex * 0.08 + Math.min(0.5, Math.abs(chirp) * 18);
+          this.configureSplat(this.splatMeshes[splatIndex], target.x, target.z, waveRadius, waveDepth, 8, spatialFrequency, phase + bandIndex * 0.7, sinePower, speed);
+          splatIndex += 1;
+        }
+      }
+    }
+    for (let index = splatIndex; index < this.splatMeshes.length; index += 1) {
+      this.splatMeshes[index].visible = false;
     }
     for (const [id, group] of this.agentGroups) {
       if (!live.has(id)) {
@@ -99,28 +152,138 @@ class ThreeAquariumScene implements AquariumScene3d {
 
   private createGrid() {
     const group = new THREE.Group();
-    const plane = new THREE.Mesh(
-      new THREE.PlaneGeometry(worldWidth, worldDepth, 48, 32),
-      new THREE.MeshBasicMaterial({
-        color: 0x16876e,
-        opacity: 0.24,
-        transparent: true,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      }),
-    );
-    plane.rotation.x = -Math.PI / 2;
-    group.add(plane);
-
-    const grid = new THREE.GridHelper(10.4, 32, 0x67ffd5, 0x2c8975);
-    grid.position.y = 0.012;
-    if (grid.material instanceof THREE.Material) {
-      grid.material.transparent = true;
-      grid.material.opacity = 0.48;
-      grid.material.depthWrite = false;
-    }
-    group.add(grid);
+    const geometry = new THREE.PlaneGeometry(worldWidth, worldDepth, 96, 72);
+    const field = new THREE.Mesh(geometry, this.createGravityGridMaterial(0.12, false));
+    const wire = new THREE.Mesh(geometry.clone(), this.createGravityGridMaterial(0.46, true));
+    field.rotation.x = -Math.PI / 2;
+    wire.rotation.x = -Math.PI / 2;
+    wire.position.y = 0.018;
+    group.add(field, wire);
     return group;
+  }
+
+  private createGravityGridMaterial(opacity: number, wireframe: boolean) {
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        ...this.gravityUniforms,
+        uOpacity: { value: opacity },
+      },
+      vertexShader: `
+        uniform sampler2D uGravityTex;
+        varying float vDepth;
+        varying float vFade;
+
+        void main() {
+          vec3 displaced = position;
+          vec2 uv = displaced.xy / vec2(${worldWidth.toFixed(3)}, ${worldDepth.toFixed(3)}) + 0.5;
+          vec4 field = texture2D(uGravityTex, uv);
+          float depth = field.r - field.g;
+          displaced.z = -depth;
+          vec2 edgeBasis = vec2(${(worldWidth / 2).toFixed(3)}, ${(worldDepth / 2).toFixed(3)});
+          float edge = max(abs(displaced.x) / edgeBasis.x, abs(displaced.y) / edgeBasis.y);
+          vDepth = depth;
+          vFade = (1.0 - smoothstep(0.24, 1.0, edge)) * (1.0 - smoothstep(0.65, 1.8, depth));
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 uGridColor;
+        uniform float uOpacity;
+        varying float vDepth;
+        varying float vFade;
+
+        void main() {
+          float cup = smoothstep(0.02, 0.28, vDepth);
+          vec3 color = mix(uGridColor * 0.38, vec3(0.82, 1.0, 0.9), cup);
+          gl_FragColor = vec4(color, uOpacity * vFade);
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      wireframe,
+    });
+  }
+
+  private configureSplat(
+    mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>,
+    x: number,
+    y: number,
+    radius: number,
+    depth: number,
+    power: number,
+    frequency: number,
+    phase: number,
+    sinePower: number,
+    speed = 0,
+  ) {
+    mesh.visible = true;
+    mesh.position.set(x, y, 0);
+    mesh.scale.set(radius * 2, radius * 2, 1);
+    mesh.material.uniforms.uDepth.value = depth;
+    mesh.material.uniforms.uFrequency.value = frequency;
+    mesh.material.uniforms.uPhase.value = phase;
+    mesh.material.uniforms.uPower.value = power;
+    mesh.material.uniforms.uSinePower.value = sinePower;
+    mesh.material.uniforms.uSpeed.value = speed;
+  }
+
+  private createSplatPool(count: number) {
+    for (let index = 0; index < count; index += 1) {
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.createSplatMaterial());
+      mesh.frustumCulled = false;
+      mesh.visible = false;
+      this.gravityScene.add(mesh);
+      this.splatMeshes.push(mesh);
+    }
+  }
+
+  private createSplatMaterial() {
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        uDepth: { value: 0 },
+        uFrequency: { value: 0 },
+        uPhase: { value: 0 },
+        uPower: { value: 2 },
+        uSinePower: { value: 1.25 },
+        uSpeed: { value: 0 },
+        uTime: this.gravityUniforms.uTime,
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float uDepth;
+        uniform float uFrequency;
+        uniform float uPhase;
+        uniform float uPower;
+        uniform float uSinePower;
+        uniform float uSpeed;
+        uniform float uTime;
+        varying vec2 vUv;
+
+        float powerPulse(float x, float exponent) {
+          x = clamp(abs(x), 0.0, 1.0);
+          return pow((x + 1.0) * (1.0 - x), exponent);
+        }
+
+        void main() {
+          float dist = length(vUv - vec2(0.5)) * 2.0;
+          float envelope = powerPulse(dist, uPower) * smoothstep(1.0, 0.95, dist);
+          float wave = uFrequency > 0.0 ? cos(pow(dist, uSinePower) * uFrequency + uPhase + uTime * uSpeed) : 1.0;
+          float height = envelope * wave * uDepth;
+          gl_FragColor = vec4(max(height, 0.0), max(-height, 0.0), abs(height), 1.0);
+        }
+      `,
+      blending: THREE.AdditiveBlending,
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+    });
   }
 
   private createCursor() {
@@ -189,6 +352,14 @@ class ThreeAquariumScene implements AquariumScene3d {
     } else {
       this.cursor.visible = false;
     }
+    this.gravityUniforms.uTime.value = millis * 0.001;
+    const previousTarget = this.renderer.getRenderTarget();
+    this.renderer.setRenderTarget(this.gravityRenderTarget);
+    this.renderer.setClearColor(0x000000, 1);
+    this.renderer.clear(true, false, false);
+    this.renderer.render(this.gravityScene, this.gravityCamera);
+    this.renderer.setRenderTarget(previousTarget);
+    this.renderer.setClearColor(0x000000, 0);
     this.renderer.render(this.scene, this.camera);
     this.canvas.dataset.threeReady = "true";
     this.canvas.dataset.threeAgents = String(this.agentGroups.size);
@@ -201,4 +372,12 @@ function gridToWorld(xPercent: number, yPercent: number) {
     x: (xPercent / 100 - 0.5) * worldWidth,
     z: (yPercent / 100 - 0.5) * worldDepth,
   };
+}
+
+function stablePhase(id: string) {
+  let hash = 0;
+  for (let index = 0; index < id.length; index += 1) {
+    hash = (hash * 31 + id.charCodeAt(index)) >>> 0;
+  }
+  return (hash / 0xffffffff) * Math.PI * 2;
 }
