@@ -116,3 +116,7 @@ Current slice:
   sub-agent captions instead of stacking with them. Each workspace label exposes
   radial swarm-level petals. Self also contributes a larger shared gravity divot
   so swarm cohesion is visible and force-based.
+- Current audio-grid correction: chirp bands mapped into grid waves must obey
+  spectral logic. Low bands get slow 0.5-1 Hz wide breathing waves; high bands
+  get sharply attenuated amplitude, smaller radii, and sub-unit world
+  wavelengths so treble reads as fine shimmer instead of huge surface heaving.

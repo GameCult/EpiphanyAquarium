@@ -39,6 +39,7 @@ export interface AquariumScene3d {
 
 const worldWidth = 10;
 const worldDepth = 7.2;
+const mathTau = Math.PI * 2;
 const stardustParticleCount = new URLSearchParams(globalThis.location?.search ?? "").has("smoke") ? 48_000 : 1_000_000;
 const maxStardustSources = 8;
 
@@ -294,12 +295,17 @@ class ThreeAquariumScene implements AquariumScene3d {
           : [[0.28, 0.035 + projection.glowPulse * 0.01, stablePhase(projection.id), 0.01] as const];
         for (let bandIndex = 0; bandIndex < bands.length && splatIndex < this.splatMeshes.length; bandIndex += 1) {
           const [temporalFrequency, amplitude, phase, chirp] = bands[bandIndex];
-          const waveDepth = amplitude * (0.36 + projection.acknowledgement * 0.5 + projection.hover * 0.18);
-          const waveRadius = 1.85 + bandIndex * 0.28 + projection.z * 0.42 + projection.hover * 0.22;
-          const spatialFrequency = 3.8 + temporalFrequency * 5.6 + bandIndex * 0.85;
-          const speed = 0.22 + temporalFrequency * 1.7 + Math.abs(chirp) * 4.5 + projection.acknowledgement * 0.9;
-          const sinePower = 1.05 + bandIndex * 0.08 + Math.min(0.5, Math.abs(chirp) * 18);
-          this.configureSplat(this.splatMeshes[splatIndex], target.x, target.y, waveRadius, waveDepth, 8, spatialFrequency, phase + bandIndex * 0.7, sinePower, speed);
+          const wave = spectralGridWave(
+            temporalFrequency,
+            amplitude,
+            chirp,
+            bandIndex,
+            bands.length,
+            projection.z,
+            projection.hover,
+            projection.acknowledgement,
+          );
+          this.configureSplat(this.splatMeshes[splatIndex], target.x, target.y, wave.radius, wave.depth, 8, wave.spatialFrequency, phase + bandIndex * 0.7, wave.sinePower, wave.speed);
           splatIndex += 1;
         }
       }
@@ -780,6 +786,37 @@ function stablePhase(id: string) {
     hash = (hash * 31 + id.charCodeAt(index)) >>> 0;
   }
   return (hash / 0xffffffff) * Math.PI * 2;
+}
+
+function spectralGridWave(
+  temporalFrequency: number,
+  amplitude: number,
+  chirp: number,
+  bandIndex: number,
+  bandCount: number,
+  elevation: number,
+  hover: number,
+  acknowledgement: number,
+) {
+  const octave = Math.log2(Math.max(temporalFrequency, 0.05) / 0.24);
+  const rank = clamp(bandIndex / Math.max(bandCount - 1, 1), 0, 1);
+  const octaveRank = clamp((octave + 0.35) / 4.6, 0, 1);
+  const highness = Math.max(rank, octaveRank);
+  const lowness = 1 - highness;
+  const depthRollOff = 1 / (1 + highness * highness * 8.5);
+  const excitation = 1 + acknowledgement * (0.42 - highness * 0.24) + hover * 0.12;
+  const radius = 0.62 + lowness * 1.42 + elevation * 0.32 + hover * 0.16;
+  const wavelength = 0.92 - highness * 0.68;
+  const spatialFrequency = mathTau * radius / clamp(wavelength, 0.16, 0.92);
+  const breathingHertz = clamp(0.5 + temporalFrequency * 0.44 + acknowledgement * 0.12, 0.5, 1);
+  const shimmerHertz = clamp(1.1 + temporalFrequency * 0.82 + Math.abs(chirp) * 2.4, 1.1, 4.8);
+  return {
+    depth: amplitude * depthRollOff * excitation * (0.5 + lowness * 0.36),
+    radius,
+    sinePower: 0.92 + highness * 0.72 + Math.min(0.34, Math.abs(chirp) * 10),
+    spatialFrequency,
+    speed: mathTau * (breathingHertz * lowness + shimmerHertz * highness),
+  };
 }
 
 function hashNumber(value: number) {
