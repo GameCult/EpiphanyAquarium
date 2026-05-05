@@ -9,6 +9,9 @@ export interface StatusRequest {
 export type OperatorAction =
   | "statusSnapshot"
   | "coordinatorPlan"
+  | "heartbeatStatus"
+  | "runHeartbeat"
+  | "faceBubble"
   | "inspectUnity"
   | "inspectRider"
   | "prepareCheckpoint"

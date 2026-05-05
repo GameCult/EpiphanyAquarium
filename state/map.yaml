@@ -42,3 +42,8 @@ next_actions:
   - Make agent petals more object-native while keeping them real DOM buttons.
   - Add visual tests for empty-water dismissal, offscreen-safe focus anchoring, agent-specific petals, and one-hit control audio.
   - Consider a debug-only keyboard chord for utilitarian always-on panels.
+  - Deepen Face as the chat/aura organism now that backend heartbeatStatus, runHeartbeat, and faceBubble actions exist.
+
+landed:
+  - Face is now an interactible aquarium organism. Its habitat exposes heartbeat status, heartbeat pulse, and bubble leaves over EpiphanyAgent's backend GUI action bridge.
+  - The Tauri action bridge passes heartbeatStatus, runHeartbeat, and faceBubble through to EpiphanyAgent, so Face can surface local Aquarium chat bubbles without Discord.

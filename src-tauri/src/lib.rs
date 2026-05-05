@@ -147,6 +147,9 @@ fn run_operator_action(
         "coordinatorPlan" => run_coordinator_plan(&repo_root, request),
         "inspectUnity" => run_unity_inspection(&repo_root, request),
         "inspectRider" => run_rider_inspection(&repo_root, request),
+        "heartbeatStatus" | "runHeartbeat" | "faceBubble" => {
+            run_gui_action_bridge(&repo_root, request, action)
+        }
         "launchImagination"
         | "readImaginationResult"
         | "acceptImagination"

@@ -10,6 +10,7 @@ import {
   GitBranch,
   ListChecks,
   Map,
+  MessageCircle,
   Play,
   RefreshCw,
 } from "lucide-react";
@@ -23,7 +24,7 @@ import type { EpiphanyCodeRef, EpiphanyGraphsState } from "@epiphanygraph/epipha
 import type { AquariumAgentProjection, AquariumOptionFrame, AquariumRenderer, AquariumUiFrame } from "./aquariumFluid";
 import type { AquariumHarmonyFrame, HarmonyRuntime, HarmonySource, MidiCorpusFile } from "./midiHarmony";
 
-const roleOrder = ["implementation", "imagination", "research", "eyes", "modeling", "verification", "reorientation"];
+const roleOrder = ["implementation", "face", "imagination", "research", "eyes", "modeling", "verification", "reorientation"];
 const constellationSpecs = [
   {
     id: "coordinator",
@@ -39,6 +40,21 @@ const constellationSpecs = [
     driftX: 1.9,
     driftY: 1.4,
     phase: 0.2,
+  },
+  {
+    id: "face",
+    laneId: "face",
+    name: "Face",
+    title: "Public Surface",
+    glyph: "F",
+    shape: "lens",
+    color: "#f4a261",
+    glow: "#ffe0a3",
+    baseX: 61,
+    baseY: 28,
+    driftX: 1.3,
+    driftY: 1.1,
+    phase: 3.7,
   },
   {
     id: "imagination",
@@ -174,6 +190,11 @@ const aquariumOptionsByAgent: Record<string, AquariumOption[]> = {
     { label: "Run", deck: "command", subdeck: "run" },
     { label: "Checkpoint", action: "prepareCheckpoint" },
   ],
+  face: [
+    { label: "Heartbeat", action: "heartbeatStatus" },
+    { label: "Pulse", action: "runHeartbeat" },
+    { label: "Bubble", action: "faceBubble" },
+  ],
   imagination: [
     { label: "Planning", deck: "state", subdeck: "planning" },
     { label: "Launch", action: "launchImagination" },
@@ -221,7 +242,7 @@ const actionButtons: Array<{
   requiresReorientResult?: boolean;
   requiresPlanningDraft?: boolean;
   requiresContinueImplementation?: boolean;
-  icon: "file" | "check" | "play" | "eye" | "accept" | "runtime" | "plan" | "ide";
+  icon: "file" | "check" | "play" | "eye" | "accept" | "runtime" | "plan" | "ide" | "message";
 }> = [
   {
     action: "statusSnapshot",
@@ -236,6 +257,27 @@ const actionButtons: Array<{
     runningLabel: "Running",
     title: "Run a review-gated coordinator plan",
     icon: "check",
+  },
+  {
+    action: "heartbeatStatus",
+    label: "Heartbeat Status",
+    runningLabel: "Reading",
+    title: "Read heartbeat initiative and latest agent wake output",
+    icon: "message",
+  },
+  {
+    action: "runHeartbeat",
+    label: "Run Heartbeat",
+    runningLabel: "Pulsing",
+    title: "Advance one heartbeat slot and emit a Face bubble",
+    icon: "message",
+  },
+  {
+    action: "faceBubble",
+    label: "Face Bubble",
+    runningLabel: "Opening",
+    title: "Open a Discord-independent Face bubble in the Aquarium",
+    icon: "message",
   },
   {
     action: "inspectUnity",
@@ -665,6 +707,10 @@ export function App() {
   const reorient = status?.reorient?.decision ?? {};
   const crrc = status?.crrc?.recommendation ?? {};
   const coordinator = status?.coordinator ?? {};
+  const heartbeat = status?.heartbeat ?? {};
+  const face = status?.face ?? {};
+  const latestHeartbeatEvent = heartbeat?.latestEvent ?? {};
+  const latestFaceArtifact = Array.isArray(face?.latestArtifacts) ? face.latestArtifacts[0] : undefined;
   const roles = useMemo(() => {
     const lanes = status?.roles?.roles;
     if (!Array.isArray(lanes)) return [];
@@ -971,6 +1017,15 @@ export function App() {
     if (agentId === "coordinator" && leafId === "harmony") {
       return <PlaylistControl error={harmony.error} frame={harmony.frame} loading={harmony.loading} onChangeFolder={harmony.changeFolder} onNext={harmony.nextSong} />;
     }
+    if (agentId === "face" && leafId === "heartbeatStatus") {
+      return <section className="leafGrid two"><dl className="facts environmentFacts"><div><dt>Status</dt><dd>{text(heartbeat.status)}</dd></div><div><dt>Clock</dt><dd>{text(heartbeat.sceneClock)}</dd></div><div><dt>Latest role</dt><dd>{text(latestHeartbeatEvent.selectedRole)}</dd></div><div><dt>Action</dt><dd>{text(latestHeartbeatEvent.coordinatorAction ?? latestHeartbeatEvent.actionType)}</dd></div></dl>{actionControlByAction("heartbeatStatus", "secondaryButton leafActionButton")}</section>;
+    }
+    if (agentId === "face" && leafId === "heartbeatPulse") {
+      return <section className="leafActionCluster">{["runHeartbeat", "heartbeatStatus"].map((action) => actionControlByAction(action as OperatorAction, "secondaryButton leafActionButton"))}{actionResult && <p className="actionResult hudResult">{actionResult.summary} <code>{actionResult.artifactPath}</code></p>}</section>;
+    }
+    if (agentId === "face" && leafId === "bubble") {
+      return <section className="leafStack"><article className="artifactMini"><strong>{text(latestFaceArtifact?.name, "No Face bubble yet.")}</strong><span>{text(latestFaceArtifact?.content, "Touch Bubble to ask Face to surface the latest heartbeat.")}</span><code title={latestFaceArtifact?.path}>{text(latestFaceArtifact?.path)}</code></article>{actionControlByAction("faceBubble", "secondaryButton leafActionButton")}</section>;
+    }
     if (agentId === "imagination" && leafId === "drafts") {
       return (
         <section className="leafStack">
@@ -1148,6 +1203,9 @@ export function App() {
         crrc={crrc}
         pressure={pressure}
         reorient={reorient}
+        heartbeat={heartbeat}
+        latestFaceArtifact={latestFaceArtifact}
+        latestHeartbeatEvent={latestHeartbeatEvent}
         jobs={jobs}
         variant="fullscreen"
         activeDeck={activeDeck}
@@ -1214,6 +1272,7 @@ function organTitle(agentId: string) {
 
 function habitatIcon(agentId: string) {
   if (agentId === "coordinator") return <ClipboardCheck size={18} aria-hidden="true" />;
+  if (agentId === "face") return <MessageCircle size={18} aria-hidden="true" />;
   if (agentId === "imagination") return <ListChecks size={18} aria-hidden="true" />;
   if (agentId === "research") return <Eye size={18} aria-hidden="true" />;
   if (agentId === "modeling") return <Map size={18} aria-hidden="true" />;
@@ -1242,6 +1301,15 @@ function habitatTree(agentId: string): HabitatNode {
         ] },
       ],
     };
+  }
+  if (agentId === "face") {
+    return { id: "face-root", label: "Face", icon: habitatIcon(agentId), children: [
+      { id: "heartbeat", label: "Heartbeat", icon: <MessageCircle size={16} aria-hidden="true" />, children: [
+        { id: "heartbeatStatus", label: "Status", icon: <Eye size={16} aria-hidden="true" /> },
+        { id: "heartbeatPulse", label: "Pulse", icon: <Play size={16} aria-hidden="true" /> },
+      ] },
+      { id: "bubble", label: "Bubble", icon: <MessageCircle size={16} aria-hidden="true" /> },
+    ] };
   }
   if (agentId === "imagination") {
     return { id: "imagination-root", label: "Imagination", icon: habitatIcon(agentId), children: [
@@ -1334,6 +1402,9 @@ function AgentConstellation({
   crrc,
   pressure,
   reorient,
+  heartbeat,
+  latestFaceArtifact,
+  latestHeartbeatEvent,
   jobs,
   variant = "band",
   activeDeck,
@@ -1351,6 +1422,9 @@ function AgentConstellation({
   crrc: any;
   pressure: any;
   reorient: any;
+  heartbeat: any;
+  latestFaceArtifact: any;
+  latestHeartbeatEvent: any;
   jobs: any[];
   variant?: "band" | "fullscreen";
   activeDeck?: DeckId;
@@ -1399,6 +1473,14 @@ function AgentConstellation({
         );
         detail = `target ${text(coordinator?.targetRole ?? crrc?.recommendedSceneAction, "none")}`;
         review = text(coordinator?.requiresReview, "false") === "true" ? "required" : "not required";
+      } else if (spec.id === "face") {
+        status = text(heartbeat?.status, "idle");
+        thought = projectedThought(
+          latestFaceArtifact?.content ?? latestHeartbeatEvent?.coordinatorAction,
+          "Listening for heartbeat output. Discord can stay locked; the Aquarium still gets bubbles.",
+        );
+        detail = `latest ${text(latestHeartbeatEvent?.selectedRole, "none")}`;
+        review = text(latestFaceArtifact?.status, "none");
       } else if (spec.id === "reorientation") {
         status = text(lane?.status ?? reorient?.action ?? reorientResult?.status, "idle");
         thought = projectedThought(
@@ -1425,7 +1507,7 @@ function AgentConstellation({
         review,
       };
     });
-  }, [coordinator, crrc, jobs, pressure, reorient, reorientResult, roleResults, roles]);
+  }, [coordinator, crrc, heartbeat, jobs, latestFaceArtifact, latestHeartbeatEvent, pressure, reorient, reorientResult, roleResults, roles]);
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0];
   const aquariumAgents = useMemo(() => {
     const optionsByKey = new globalThis.Map<string, AquariumOption>();
@@ -1835,7 +1917,7 @@ function SectionHeader({ title, icon }: { title: string; icon: React.ReactNode }
   );
 }
 
-function ActionIcon({ icon }: { icon: "file" | "check" | "play" | "eye" | "accept" | "runtime" | "plan" | "ide" }) {
+function ActionIcon({ icon }: { icon: "file" | "check" | "play" | "eye" | "accept" | "runtime" | "plan" | "ide" | "message" }) {
   if (icon === "file") return <FileText size={16} aria-hidden="true" />;
   if (icon === "check") return <ClipboardCheck size={16} aria-hidden="true" />;
   if (icon === "play") return <Play size={16} aria-hidden="true" />;
@@ -1843,6 +1925,7 @@ function ActionIcon({ icon }: { icon: "file" | "check" | "play" | "eye" | "accep
   if (icon === "runtime") return <Database size={16} aria-hidden="true" />;
   if (icon === "plan") return <ListChecks size={16} aria-hidden="true" />;
   if (icon === "ide") return <GitBranch size={16} aria-hidden="true" />;
+  if (icon === "message") return <MessageCircle size={16} aria-hidden="true" />;
   return <CheckCircle2 size={16} aria-hidden="true" />;
 }
 
