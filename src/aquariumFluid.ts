@@ -1009,9 +1009,6 @@ class WebglAquariumRenderer implements AquariumRenderer {
 
   private projectAgents(time: number): ProjectedAgent[] {
     this.hotAgents = [];
-    const selfAgent = this.frame.agents.find((agent) => agent.id === "coordinator") ?? this.frame.agents[0];
-    const selfBase = selfAgent ? this.basePoint(selfAgent) : { x: this.simWidth * 0.5, y: this.simHeight * 0.42 };
-    let selfAnchor = this.motion.get("coordinator") ?? { x: selfBase.x, y: selfBase.y, vx: 0, vy: 0 };
     const orbitScale = Math.min(this.simWidth, this.simHeight) * (this.simWidth < 540 ? 0.3 : 0.32);
     return this.frame.agents.map((agent, index) => {
       const base = this.basePoint(agent);
@@ -1025,9 +1022,8 @@ class WebglAquariumRenderer implements AquariumRenderer {
       const hover = Math.max(explicitHover, proximityHover);
       const acknowledgement = this.acknowledgementPulse(agent.id, time);
       const chirps = projectChirpMatrix(agent, personality, stateVector, time, hover, acknowledgement);
-      const pull = this.pointer.active ? this.pointerPull(agent, state.x, state.y) : { x: 0, y: 0 };
-      const pointerPull = { x: pull.x * lerp(1, 0.72, explicitHover), y: pull.y * lerp(1, 0.72, explicitHover) };
-      const orbitRadius = orbitScale * chirps.orbitRadius;
+      const pointerForce = this.pointer.active && !billboardHold ? this.pointerPull(agent, state.x, state.y) : { x: 0, y: 0 };
+      const orbitRadius = orbitScale * (0.035 + chirps.orbitRadius * 0.11);
       const angle = chirps.angle;
       const normalX = Math.cos(angle);
       const normalY = Math.sin(angle);
@@ -1035,48 +1031,34 @@ class WebglAquariumRenderer implements AquariumRenderer {
       const tangentY = normalX;
       const panicSwim = stateVector.panic * (this.frame.variant === "fullscreen" ? 42 : 16);
       const swim = (this.frame.variant === "fullscreen" ? 7 + activity * 22 + panicSwim : 3 + activity * 8 + panicSwim) * chirps.expression;
-      let target =
-        agent.id === "coordinator"
-          ? {
-              x: base.x + chirps.radial * swim * 0.26 + pointerPull.x,
-              y: base.y + chirps.tangential * swim * 0.18 + pointerPull.y,
-            }
-          : {
-              x:
-                selfAnchor.x +
-                normalX * orbitRadius * (1 + personality.eccentricity) +
-                (normalX * chirps.radial + tangentX * chirps.tangential) * swim +
-                pointerPull.x,
-              y:
-                selfAnchor.y +
-                normalY * orbitRadius * (0.78 - personality.eccentricity * 0.18) +
-                (normalY * chirps.radial + tangentY * chirps.tangential) * swim * 0.72 +
-                pointerPull.y,
-            };
+      const orbitSlot = {
+        x:
+          base.x +
+          normalX * orbitRadius * (1 + personality.eccentricity) +
+          (normalX * chirps.radial + tangentX * chirps.tangential) * swim,
+        y:
+          base.y +
+          normalY * orbitRadius * (0.78 - personality.eccentricity * 0.18) +
+          (normalY * chirps.radial + tangentY * chirps.tangential) * swim * 0.72,
+      };
+      const force = {
+        x: billboardHold ? 0 : (orbitSlot.x - state.x) * (0.012 + activity * 0.004 + personality.expressiveness * 0.0018),
+        y: billboardHold ? 0 : (orbitSlot.y - state.y) * (0.012 + activity * 0.004 + personality.expressiveness * 0.0018),
+      };
+      force.x += pointerForce.x * 0.014 * lerp(1, 0.72, explicitHover);
+      force.y += pointerForce.y * 0.014 * lerp(1, 0.72, explicitHover);
       if (explicitHover) {
         const acknowledgementMotion = (acknowledgement + chirps.pluck * 0.7) * (4.2 + stateVector.panic * 2);
-        target = {
-          x: target.x + chirps.radial * acknowledgementMotion,
-          y: target.y + chirps.tangential * acknowledgementMotion,
-        };
+        force.x += chirps.radial * acknowledgementMotion * 0.018;
+        force.y += chirps.tangential * acknowledgementMotion * 0.018;
       }
-      const follow = billboardHold ? 0 : (
-        0.0024 +
-        activity * 0.004 +
-        personality.expressiveness * 0.0011 +
-        stateVector.urgency * 0.002 +
-        stateVector.panic * 0.005
-      ) * lerp(chirps.hoverDamping, 0.68, explicitHover);
-      const damping = billboardHold ? 0.58 : lerp(0.92, 0.87, hover) - stateVector.panic * 0.06;
-      state.vx = state.vx * damping + (target.x - state.x) * follow;
-      state.vy = state.vy * damping + (target.y - state.y) * follow;
+      const damping = billboardHold ? 0.52 : lerp(0.88, 0.82, hover) - stateVector.panic * 0.045;
+      state.vx = state.vx * damping + force.x;
+      state.vy = state.vy * damping + force.y;
       state.x = clamp(state.x + state.vx, 42, this.simWidth - 42);
       state.y = clamp(state.y + state.vy, 50, this.simHeight - 50);
       state.z = this.agentGravityHeight(agent, state.x, state.y);
       this.motion.set(agent.id, state);
-      if (agent.id === "coordinator") {
-        selfAnchor = state;
-      }
       const emissionPulse = chirps.inkPulse * lerp(1, 0.5, hover);
       const projected = projectGridPoint(state.x, state.y, state.z ?? 0, this.simWidth, this.simHeight);
       this.hotAgents.push({ x: projected.x, y: projected.y, radius: 54 * projected.scale, key: agent.id });

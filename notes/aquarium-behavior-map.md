@@ -27,11 +27,12 @@ The app has five cooperating layers:
    creature body is the Three.js 3D object; the centered DOM caption is its ID
    tag, hit target, and billboard root. Radial option buttons open around that
    central tag, and leaf surfaces unfold from that local graph. The renderer
-   draws thin dashed orbit guides behind them and keeps their motion tethered to
-   those orbit slots while allowing pointer attraction. Agents are projected as
-   hovering objects above gravity cups, not as points embedded in the surface.
-   Their grid coordinates project through a tilted near-omniscient camera before
-   reaching DOM.
+   draws thin dashed orbit guides behind them and keeps their motion spring-
+   tethered to those orbit slots while allowing pointer attraction. Self is not
+   a separate physics class; it has the same spring body as every other
+   creature. Agents are projected as hovering objects above gravity cups, not as
+   points embedded in the surface. Their grid coordinates project through a
+   tilted near-omniscient camera before reaching DOM.
 4. **Three field layer.** `src/aquariumScene3d.ts` owns the visible 3D grid,
    hovering agent bodies, cursor landing object, and Aetheria-style gravity
    texture. Agent wells and low chirp-bank modes are rendered as additive
@@ -86,7 +87,9 @@ flowchart TD
 - **Hover/touch agent:** the renderer marks that agent hot, emits CSS projection
   variables, applies weak long-range pointer attraction to most creatures, gives
   Soul a small long-range pullback, and switches all creatures to strong
-  short-range attraction so they can be pulled out of orbit deliberately. The
+  short-range attraction so they can be pulled out of orbit deliberately. Each
+  creature is a spring body: orbit slots, mouse attraction, hover hold, and
+  future inter-Epiphany approach all belong in the same force accumulator. The
   force is derived from an Aetheria-style heightfield normal and scaled by
   horizontal slope squared, so it tapers toward the center instead of jerking
   arriving objects around. Cursor screen coordinates are unprojected to the grid
@@ -129,8 +132,8 @@ flowchart TD
   a lighter count. The old overlay canvas is kept invisible as a compatibility
   mount only.
 - **Click agent:** React locks selection and mounts `agentFocusSurface` near that
-  agent. This is the correct gate, but the mounted contents still behave like the
-  inherited operator console.
+  agent. This is the correct gate; leaf surfaces should continue to unfold from
+  the local caption/billboard graph.
 - **Click empty water:** canvas picking clears selection when no agent or option
   is under the pointer.
 - **Click option petal:** agent options map to either deck/subdeck selection or

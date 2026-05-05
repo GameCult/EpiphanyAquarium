@@ -36,7 +36,8 @@ interaction_laws:
   - Data and controls appear only through interaction with aquarium objects.
   - Agent options are DOM controls anchored to the agent.
   - Focus surfaces are selected-agent local shells, not global panels.
-  - Agent motion stays tethered to visible orbit slots; pointer force is welcoming at range, only Soul pulls back weakly, and all creatures attract strongly up close.
+  - Agent motion is force-based and role-symmetric: every creature has the same spring body, with orbit slots, pointer attraction, hover hold, and future inter-Epiphany approach expressed as forces instead of coordinator exceptions.
+  - Agent motion stays spring-tethered to visible orbit slots; pointer force is welcoming at range, only Soul pulls back weakly, and all creatures attract strongly up close.
   - Pointer force follows Aetheria's gravity model: derive force from a PowerPulse heightfield normal and scale by horizontal slope squared so wells taper near their centers.
   - Agents hover above their gravity cups; WebGL renders the well surface underneath, while DOM glyphs receive elevation and scale from projected height.
   - The Three.js spatial layer owns the visible 3D grid: gravity cups and chirp waves splat into a grid-aligned render target, then the mesh samples that accumulated gravity texture for displacement.

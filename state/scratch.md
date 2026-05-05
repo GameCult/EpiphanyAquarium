@@ -103,3 +103,8 @@ Current slice:
   centered DOM caption stays visible as the ID tag, click target, and radial
   interaction graph root. When the mouse is inside a creature billboard, the
   fluid orbit integrator damps that creature to a hold so the UI stabilizes.
+- Current spring correction: Self used to be a separate motion class because
+  the constellation treated the coordinator as the origin and made every other
+  role orbit it. That asymmetry blocks multiple Epiphanies. The main projection
+  path now gives every creature the same spring body: orbit-slot spring, pointer
+  spring, hover hold damping, and pluck impulse all accumulate as forces.
