@@ -722,7 +722,6 @@ export function App() {
   const riderChangedFiles = latestRiderAudit?.vcs?.changedFiles ?? [];
   const activeSubdeck = subdeckByDeck[activeDeck];
   const activeDeckTitle = deckLabels[activeDeck];
-  const graphMenuActive = activeDeck === "state" && activeSubdeck === "graph";
 
   function selectDeck(deck: DeckId) {
     setActiveDeck(deck);
@@ -761,7 +760,7 @@ export function App() {
     }
   }
 
-  const actionControls = actionButtons.map((button) => {
+  function renderActionControl(button: (typeof actionButtons)[number], className = "secondaryButton hudActionButton") {
     const needsThread = button.requiresThread && !currentThreadId;
     const needsState = button.requiresReadyState && !readyState;
     const needsImagination = button.requiresImaginationPatch && !canAcceptImagination;
@@ -803,18 +802,23 @@ export function App() {
                       : button.title;
     return (
       <button
-        className="secondaryButton hudActionButton"
+        className={className}
         onClick={() => void runAction(button.action)}
-      disabled={disabled}
-      title={title}
-      data-interface-sound={disabled ? "action-disabled" : "action-primary"}
-      key={button.action}
-    >
+        disabled={disabled}
+        title={title}
+        data-interface-sound={disabled ? "action-disabled" : "action-primary"}
+        key={button.action}
+      >
         <ActionIcon icon={button.icon} />
         {runningAction === button.action ? button.runningLabel : button.label}
       </button>
     );
-  });
+  }
+
+  const actionControlByAction = (action: OperatorAction, className?: string) => {
+    const button = actionButtons.find((candidate) => candidate.action === action);
+    return button ? renderActionControl(button, className) : null;
+  };
   const aquariumPanelLines = (() => {
     if (activeDeck === "command" && activeSubdeck === "run") {
       return [
@@ -883,8 +887,8 @@ export function App() {
       : ["No dogfood artifact bundles found."];
   })();
   const aquariumUi: AquariumUiFrame = {
-    eyebrow: "Epiphany MVP",
-    title: "Operator Console",
+    eyebrow: "Epiphany Aquarium",
+    title: "Agent Habitat",
     reason: text(coordinator.reason ?? crrc.reason, "No recommendation loaded yet."),
     activeDeckLabel: activeDeckTitle,
     activeSubdeck,
@@ -931,438 +935,317 @@ export function App() {
     });
   }, [objectiveDrafts, setRequest]);
 
-  const operatorSurface = (
-    <>
-      <header className="immersiveTopbar">
-        <div className="operatorIdentity">
-          <p className="eyebrow">Epiphany MVP</p>
-          <h1>Operator Console</h1>
-          <span>{text(coordinator.reason ?? crrc.reason, "No recommendation loaded yet.")}</span>
-        </div>
-        <div className="operatorTopControls">
-          <Pill tone={statusClass(coordinator.action ?? crrc.action)}>
-            {text(coordinator.action ?? crrc.action, "unknown")}
-          </Pill>
-          <Pill tone={statusClass(pressure.level)}>pressure {text(pressure.level, "unknown")}</Pill>
-          <Pill tone={statusClass(reorient.action)}>continuity {text(reorient.action, "unknown")}</Pill>
-          <button
-            className="primaryButton"
-            onClick={() => void refresh()}
-            disabled={loading}
-            title="Refresh status"
-            data-interface-sound={loading ? "primary-disabled" : "primary-refresh"}
-          >
-            <RefreshCw size={16} aria-hidden="true" />
-            {loading ? "Refreshing" : "Refresh"}
-          </button>
-          <PlaylistControl
-            error={harmony.error}
-            frame={harmony.frame}
-            loading={harmony.loading}
-            onChangeFolder={harmony.changeFolder}
-            onNext={harmony.nextSong}
-          />
-        </div>
-      </header>
+  function renderAgentHabitat(agent: ProjectedAgent) {
+    const habitatActions: Partial<Record<string, OperatorAction[]>> = {
+      coordinator: ["statusSnapshot", "coordinatorPlan", "prepareCheckpoint"],
+      imagination: ["launchImagination", "readImaginationResult", "acceptImagination", "adoptObjectiveDraft"],
+      modeling: ["launchModeling", "readModelingResult", "acceptModeling"],
+      implementation: ["inspectRider", "continueImplementation", "statusSnapshot"],
+      verification: ["launchVerification", "readVerificationResult", "acceptVerification"],
+      reorientation: ["launchReorient", "readReorientResult", "acceptReorient", "prepareCheckpoint"],
+    };
+    const actionStrip = (habitatActions[agent.id] ?? []).map((action) =>
+      actionControlByAction(action, "secondaryButton organActionButton"),
+    );
+    const headline =
+      agent.id === "coordinator"
+        ? text(coordinator.reason ?? crrc.reason, "No coordinator recommendation loaded.")
+        : agent.thought;
+    const alertText =
+      error ??
+      (agent.id === "implementation" && latestImplementationAudit && !latestImplementationAudit.workspaceChanged
+        ? "Implementation returned no workspace diff; review before rerun."
+        : agent.id === "modeling" && graphIssues.length
+          ? `${graphIssues.length} graph issue(s) need attention.`
+          : undefined);
 
-      <nav className="deckRail" aria-label="Primary operator menus">
-        {(Object.keys(deckSubmenus) as DeckId[]).map((deck) => (
-          <button
-            type="button"
-            className={activeDeck === deck ? "active" : ""}
-            onClick={() => selectDeck(deck)}
-            data-interface-sound="deck-menu"
-            key={deck}
-          >
-            {deck === "command" && <ClipboardCheck size={17} aria-hidden="true" />}
-            {deck === "state" && <Map size={17} aria-hidden="true" />}
-            {deck === "agents" && <BriefcaseBusiness size={17} aria-hidden="true" />}
-            {deck === "artifacts" && <FileText size={17} aria-hidden="true" />}
-            <span>{deckLabels[deck]}</span>
-          </button>
-        ))}
-      </nav>
-
-      <section className={`diegeticPanel ${graphMenuActive ? "widePanel" : ""}`} aria-label={`${activeDeckTitle} menu`}>
-        <div className="deckHeader">
-          <div>
-            <span>{activeDeckTitle}</span>
-            <h2>{activeSubdeck}</h2>
+    return (
+      <>
+        <header className="organTopbar">
+          <div className="organIdentity">
+            <p className="eyebrow">{agent.title} Organ</p>
+            <h1>{agent.name}</h1>
+            <span>{headline}</span>
           </div>
-          <div className="subdeckTabs" role="tablist" aria-label={`${activeDeckTitle} sections`}>
-            {deckSubmenus[activeDeck].map((subdeck) => (
-              <button
-                type="button"
-                className={activeSubdeck === subdeck ? "active" : ""}
-                onClick={() => selectSubdeck(activeDeck, subdeck)}
-                data-interface-sound="subdeck-menu"
-                key={subdeck}
-              >
-                {subdeck}
-              </button>
-            ))}
+          <div className="organTopControls">
+            <Pill tone={agent.tone}>{agent.status}</Pill>
+            <Pill tone={statusClass(pressure.level)}>pressure {text(pressure.level, "unknown")}</Pill>
+            <button
+              className="primaryButton"
+              onClick={() => void refresh()}
+              disabled={loading}
+              title="Refresh status"
+              data-interface-sound={loading ? "primary-disabled" : "primary-refresh"}
+            >
+              <RefreshCw size={16} aria-hidden="true" />
+              {loading ? "Refreshing" : "Refresh"}
+            </button>
+            {agent.id === "coordinator" && (
+              <PlaylistControl
+                error={harmony.error}
+                frame={harmony.frame}
+                loading={harmony.loading}
+                onChangeFolder={harmony.changeFolder}
+                onNext={harmony.nextSong}
+              />
+            )}
           </div>
-        </div>
+        </header>
 
-        <div className="deckBody">
-          {activeDeck === "command" && activeSubdeck === "run" && (
+        <nav className="organRail" aria-label={`${agent.name} local actions`}>
+          {actionStrip}
+          {agent.id === "research" && (
             <>
-              <section className="hudActionGrid" aria-label="Bounded operator actions">
-                {actionControls}
-              </section>
-              {actionResult && (
-                <p className="actionResult hudResult">
-                  {actionResult.summary} <code>{actionResult.artifactPath}</code>
-                </p>
-              )}
+              <button type="button" className="secondaryButton organActionButton" onClick={() => selectDeck("state")} data-interface-sound="organ-nav">
+                <Map size={16} aria-hidden="true" />
+                Evidence
+              </button>
+              <button type="button" className="secondaryButton organActionButton" onClick={() => selectDeck("artifacts")} data-interface-sound="organ-nav">
+                <FileText size={16} aria-hidden="true" />
+                Artifacts
+              </button>
             </>
           )}
+        </nav>
 
-          {activeDeck === "command" && activeSubdeck === "connection" && (
-            <section className="hudFormGrid" aria-label="Connection">
-              <label>
-                Thread ID
-                <input
-                  placeholder="auto-load persistent status thread"
-                  value={request.threadId ?? ""}
-                  onChange={(event) => setRequest({ ...request, threadId: event.target.value || undefined })}
-                />
-              </label>
-              <label>
-                Workspace
-                <input
-                  placeholder={snapshot?.repoRoot ?? "repo root"}
-                  value={request.cwd ?? ""}
-                  onChange={(event) => setRequest({ ...request, cwd: event.target.value || undefined })}
-                />
-              </label>
-              <dl className="facts compact">
-                <div><dt>Thread</dt><dd>{text(status?.threadId)}</dd></div>
-                <div><dt>State</dt><dd>{text(scene.stateStatus)} rev {text(scene.revision)}</dd></div>
-                <div><dt>Repo</dt><dd>{text(snapshot?.repoRoot)}</dd></div>
-                <div><dt>Draft</dt><dd>{text(request.planningDraftId)}</dd></div>
-              </dl>
-            </section>
-          )}
-
-          {activeDeck === "command" && activeSubdeck === "signals" && (
-            <section className="signalStack" aria-label="Coordinator and continuity">
-              <div className={`actionBanner ${statusClass(coordinator.action ?? crrc.action)}`}>
-                <strong>{text(coordinator.action ?? crrc.action, "unknown")}</strong>
-                <span>{text(coordinator.targetRole ?? crrc.recommendedSceneAction)}</span>
-              </div>
-              <p className="reason">{text(coordinator.reason ?? crrc.reason, "No recommendation loaded yet.")}</p>
-              <dl className="facts">
-                <div><dt>Requires review</dt><dd>{text(coordinator.requiresReview)}</dd></div>
-                <div><dt>Pressure</dt><dd><Pill tone={statusClass(pressure.level)}>{text(pressure.level)}</Pill></dd></div>
-                <div><dt>Prepare compaction</dt><dd>{text(pressure.shouldPrepareCompaction)}</dd></div>
-                <div><dt>Reorient</dt><dd><Pill tone={statusClass(reorient.action)}>{text(reorient.action)}</Pill></dd></div>
-                <div><dt>Reasons</dt><dd>{listText(reorient.reasons)}</dd></div>
-                <div><dt>Next</dt><dd>{text(reorient.nextAction)}</dd></div>
-              </dl>
-            </section>
-          )}
-
-          {activeDeck === "state" && activeSubdeck === "environment" && (
-            <div className="environmentGrid hudEnvironmentGrid">
-              <article className="environmentCard">
-                <div className="cardTopline">
-                  <h3>Unity Editor</h3>
-                  <Pill tone={unityBridgeReady ? "ok" : statusClass(latestRuntimeAudit?.status)}>
-                    {unityBridgeReady ? "bridge ready" : text(latestRuntimeAudit?.status, "unknown")}
-                  </Pill>
-                </div>
-                <dl className="facts environmentFacts">
-                  <div><dt>Project</dt><dd>{text(latestRuntimeAudit?.projectVersion)}</dd></div>
-                  <div><dt>Editor</dt><dd>{text(latestRuntimeAudit?.editorPath, "missing")}</dd></div>
-                  <div><dt>Package</dt><dd>{unityBridge?.exists ? "present" : "missing"}</dd></div>
-                  <div><dt>Method</dt><dd>{text(unityBridge?.executeMethod)}</dd></div>
-                </dl>
-                {latestRuntimeAudit?.note && <p className="environmentNote">{latestRuntimeAudit.note}</p>}
-                <PathList title="Installed" items={installedEditors.map((editor) => `${text(editor.version)} ${text(editor.editorPath)}`)} />
-                <PathList title="Candidates" items={candidatePaths} />
-              </article>
-
-              <article className="environmentCard">
-                <div className="cardTopline">
-                  <h3>Rider</h3>
-                  <Pill tone={statusClass(latestRiderAudit?.status)}>{text(latestRiderAudit?.status, "unknown")}</Pill>
-                </div>
-                <dl className="facts environmentFacts">
-                  <div><dt>Workspace</dt><dd>{text(latestRiderAudit?.workspace ?? request.cwd ?? snapshot?.repoRoot)}</dd></div>
-                  <div><dt>Solution</dt><dd>{text(latestRiderAudit?.solutionPath)}</dd></div>
-                  <div><dt>Rider</dt><dd>{text(latestRiderAudit?.riderPath, "missing")}</dd></div>
-                  <div><dt>Branch</dt><dd>{text(latestRiderAudit?.vcs?.branch)}</dd></div>
-                  <div><dt>Dirty</dt><dd>{text(latestRiderAudit?.vcs?.dirty)}</dd></div>
-                  <div><dt>Changed</dt><dd>{riderChangedFiles.length}</dd></div>
-                </dl>
-                <p className="environmentNote">{text(latestRiderAudit?.note, "Run Inspect Rider to capture source-context status.")}</p>
-                <PathList title="Installations" items={riderInstallations.map((installation) => `${text(installation.versionHint)} ${text(installation.path)}`)} />
-                <PathList title="Changed files" items={riderChangedFiles} />
-                <PathList title="Search roots" items={riderSearchRoots} />
-              </article>
-
-              <article className="environmentCard">
-                <div className="cardTopline">
-                  <h3>Runtime Artifacts</h3>
-                  <Pill tone={latestRuntimeArtifact ? "ok" : "neutral"}>{latestRuntimeArtifact ? "available" : "none"}</Pill>
-                </div>
-                <dl className="facts environmentFacts">
-                  <div><dt>Runtime bundle</dt><dd>{text(latestRuntimeArtifact?.name)}</dd></div>
-                  <div><dt>Files</dt><dd>{text(latestRuntimeArtifact?.files.length)}</dd></div>
-                  <div><dt>Summary</dt><dd>{text(latestRuntimeArtifact?.summaryPath)}</dd></div>
-                  <div><dt>Project path</dt><dd>{text(latestRuntimeAudit?.projectPath)}</dd></div>
-                </dl>
-                <PathList title="Search roots" items={searchRoots} />
-                <code title={latestRuntimeArtifact?.path}>{text(latestRuntimeArtifact?.path)}</code>
-              </article>
-            </div>
-          )}
-
-          {activeDeck === "state" && activeSubdeck === "planning" && (
-            <div className="planningGrid hudPlanningGrid">
-              <article className="environmentCard planningSummary">
-                <div className="cardTopline">
-                  <h3>State</h3>
-                  <Pill tone={statusClass(planningResponse?.stateStatus)}>
-                    {text(planningResponse?.stateStatus, "missing")}
-                  </Pill>
-                </div>
-                <dl className="facts environmentFacts">
-                  <div><dt>Captures</dt><dd>{countText(planningSummary?.captureCount)}</dd></div>
-                  <div><dt>Pending</dt><dd>{countText(planningSummary?.pendingCaptureCount)}</dd></div>
-                  <div><dt>Backlog</dt><dd>{countText(planningSummary?.backlogItemCount)}</dd></div>
-                  <div><dt>Ready</dt><dd>{countText(planningSummary?.readyBacklogItemCount)}</dd></div>
-                  <div><dt>Streams</dt><dd>{countText(planningSummary?.roadmapStreamCount)}</dd></div>
-                  <div><dt>Drafts</dt><dd>{countText(planningSummary?.objectiveDraftCount)}</dd></div>
-                </dl>
-                <label className="draftPicker">
-                  Objective Draft
-                  <select
-                    value={request.planningDraftId ?? ""}
-                    onChange={(event) =>
-                      setRequest({ ...request, planningDraftId: event.target.value || undefined })
-                    }
-                    disabled={objectiveDrafts.length === 0}
-                  >
-                    <option value="">none</option>
-                    {objectiveDrafts.map((draft) => (
-                      <option value={text(draft.id, "")} key={text(draft.id)}>
-                        {text(draft.title)} [{text(draft.status)}]
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <PathList title="Roadmap" items={roadmapStreams.map((stream) => `${text(stream.id)}: ${text(stream.title)}`)} />
-                {planningSummary?.note && <p className="environmentNote">{text(planningSummary.note)}</p>}
-              </article>
-
-              <div className="planningColumn">
-                <div className="cardTopline planningColumnHeader">
-                  <h3>Objective Drafts</h3>
-                  <Pill tone={objectiveDrafts.length ? "warn" : "neutral"}>{objectiveDrafts.length}</Pill>
-                </div>
-                {objectiveDrafts.slice(0, 4).map((draft) => (
-                  <PlanningItem
-                    key={text(draft.id)}
-                    title={text(draft.title)}
-                    status={text(draft.status)}
-                    selected={text(draft.id, "") === request.planningDraftId}
-                    body={text(draft.summary)}
-                    meta={[
-                      text(draft.id),
-                      `${
-                        Array.isArray(draft.acceptance_criteria ?? draft.acceptanceCriteria)
-                          ? (draft.acceptance_criteria ?? draft.acceptanceCriteria).length
-                          : 0
-                      } checks`,
-                      listText(draft.source_item_ids ?? draft.sourceItemIds),
-                    ]}
-                  />
-                ))}
-                {objectiveDrafts.length === 0 && <EmptyState label="No objective drafts loaded." />}
-              </div>
-
-              <div className="planningColumn">
-                <div className="cardTopline planningColumnHeader">
-                  <h3>Backlog</h3>
-                  <Pill tone={backlogItems.length ? "ok" : "neutral"}>{backlogItems.length}</Pill>
-                </div>
-                {backlogItems.slice(0, 4).map((item) => (
-                  <PlanningItem
-                    key={text(item.id)}
-                    title={text(item.title)}
-                    status={text(item.status)}
-                    body={text(item.summary)}
-                    meta={[text(item.priority?.value), text(item.horizon), text(item.product_area ?? item.productArea)]}
-                  />
-                ))}
-                {backlogItems.length === 0 && <EmptyState label="No backlog items loaded." />}
-              </div>
-
-              <div className="planningColumn">
-                <div className="cardTopline planningColumnHeader">
-                  <h3>Captures</h3>
-                  <Pill tone="neutral">{planningCaptures.length}</Pill>
-                </div>
-                {planningCaptures.slice(0, 4).map((capture) => {
-                  const source = capture.source ?? {};
-                  const sourceLabel =
-                    source.repo && source.issue_number ? `${source.repo}#${source.issue_number}` : text(source.kind);
-                  return (
-                    <PlanningItem
-                      key={text(capture.id)}
-                      title={text(capture.title)}
-                      status={text(capture.status)}
-                      body={text(capture.body)}
-                      meta={[text(capture.confidence), sourceLabel, listText(capture.tags)]}
-                    />
-                  );
-                })}
-                {planningCaptures.length === 0 && <EmptyState label="No captures loaded." />}
-              </div>
-            </div>
-          )}
-
-          {activeDeck === "state" && activeSubdeck === "graph" && (
-            <section className="graphBand hudGraphBand">
-              <div className="graphSummary">
-                <dl className="facts environmentFacts">
-                  <div><dt>Architecture</dt><dd>{graphState.architecture.nodes.length} nodes / {graphState.architecture.edges.length} edges</dd></div>
-                  <div><dt>Dataflow</dt><dd>{graphState.dataflow.nodes.length} nodes / {graphState.dataflow.edges.length} edges</dd></div>
-                  <div><dt>Links</dt><dd>{graphState.links.length}</dd></div>
-                  <div><dt>Issues</dt><dd>{graphIssues.length}</dd></div>
-                </dl>
-                {selectedCodeRef && (
-                  <div className="selectedCodeRef">
-                    <Boxes size={16} aria-hidden="true" />
-                    <span>Selected code ref</span>
-                    <code title={codeRefLabel(selectedCodeRef)}>{codeRefLabel(selectedCodeRef)}</code>
+        <section className={`organPanel organ-${agent.id}`} aria-label={`${agent.name} habitat`}>
+          <div className="organHeader">
+            <span>{agent.title}</span>
+            <h2>{organTitle(agent.id)}</h2>
+          </div>
+          <div className="organBody">
+            {agent.id === "coordinator" && (
+              <div className="organGrid two">
+                <section className="organCell">
+                  <div className={`actionBanner ${statusClass(coordinator.action ?? crrc.action)}`}>
+                    <strong>{text(coordinator.action ?? crrc.action, "unknown")}</strong>
+                    <span>{text(coordinator.targetRole ?? crrc.recommendedSceneAction)}</span>
                   </div>
-                )}
+                  <p className="reason">{text(coordinator.reason ?? crrc.reason, "No recommendation loaded yet.")}</p>
+                  <dl className="facts">
+                    <div><dt>Requires review</dt><dd>{text(coordinator.requiresReview)}</dd></div>
+                    <div><dt>Thread</dt><dd>{text(status?.threadId)}</dd></div>
+                    <div><dt>State</dt><dd>{text(scene.stateStatus)} rev {text(scene.revision)}</dd></div>
+                    <div><dt>Draft</dt><dd>{text(request.planningDraftId)}</dd></div>
+                  </dl>
+                </section>
+                <section className="organCell">
+                  <label>
+                    Thread ID
+                    <input
+                      placeholder="auto-load persistent status thread"
+                      value={request.threadId ?? ""}
+                      onChange={(event) => setRequest({ ...request, threadId: event.target.value || undefined })}
+                    />
+                  </label>
+                  <label>
+                    Workspace
+                    <input
+                      placeholder={snapshot?.repoRoot ?? "repo root"}
+                      value={request.cwd ?? ""}
+                      onChange={(event) => setRequest({ ...request, cwd: event.target.value || undefined })}
+                    />
+                  </label>
+                  {actionResult && <p className="actionResult hudResult">{actionResult.summary} <code>{actionResult.artifactPath}</code></p>}
+                </section>
               </div>
-              {graphIssues.length > 0 && (
-                <div className="graphIssues">
-                  {graphIssues.slice(0, 4).map((issue) => (
+            )}
+
+            {agent.id === "imagination" && (
+              <div className="organGrid two">
+                <section className="organCell">
+                  <div className="cardTopline">
+                    <h3>Drafts</h3>
+                    <Pill tone={objectiveDrafts.length ? "warn" : "neutral"}>{objectiveDrafts.length}</Pill>
+                  </div>
+                  <label className="draftPicker">
+                    Objective Draft
+                    <select
+                      value={request.planningDraftId ?? ""}
+                      onChange={(event) => setRequest({ ...request, planningDraftId: event.target.value || undefined })}
+                      disabled={objectiveDrafts.length === 0}
+                    >
+                      <option value="">none</option>
+                      {objectiveDrafts.map((draft) => (
+                        <option value={text(draft.id, "")} key={text(draft.id)}>
+                          {text(draft.title)} [{text(draft.status)}]
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {objectiveDrafts.slice(0, 3).map((draft) => (
+                    <PlanningItem
+                      key={text(draft.id)}
+                      title={text(draft.title)}
+                      status={text(draft.status)}
+                      selected={text(draft.id, "") === request.planningDraftId}
+                      body={text(draft.summary)}
+                      meta={[text(draft.id), listText(draft.source_item_ids ?? draft.sourceItemIds)]}
+                    />
+                  ))}
+                </section>
+                <section className="organCell">
+                  <div className="cardTopline">
+                    <h3>Backlog</h3>
+                    <Pill tone={backlogItems.length ? "ok" : "neutral"}>{backlogItems.length}</Pill>
+                  </div>
+                  {backlogItems.slice(0, 4).map((item) => (
+                    <PlanningItem
+                      key={text(item.id)}
+                      title={text(item.title)}
+                      status={text(item.status)}
+                      body={text(item.summary)}
+                      meta={[text(item.priority?.value), text(item.horizon), text(item.product_area ?? item.productArea)]}
+                    />
+                  ))}
+                  {backlogItems.length === 0 && <EmptyState label="No backlog items loaded." />}
+                </section>
+              </div>
+            )}
+
+            {agent.id === "research" && (
+              <div className="organGrid two">
+                <section className="organCell">
+                  <div className="cardTopline">
+                    <h3>Graph Evidence</h3>
+                    <Pill tone={graphIssues.length ? "warn" : "ok"}>{graphCount} records</Pill>
+                  </div>
+                  <dl className="facts environmentFacts">
+                    <div><dt>Architecture</dt><dd>{graphState.architecture.nodes.length} nodes / {graphState.architecture.edges.length} edges</dd></div>
+                    <div><dt>Dataflow</dt><dd>{graphState.dataflow.nodes.length} nodes / {graphState.dataflow.edges.length} edges</dd></div>
+                    <div><dt>Links</dt><dd>{graphState.links.length}</dd></div>
+                    <div><dt>Issues</dt><dd>{graphIssues.length}</dd></div>
+                  </dl>
+                  {graphIssues.slice(0, 3).map((issue) => (
                     <Pill tone="warn" key={`${issue.scope}:${issue.message}`}>{issue.scope}: {issue.message}</Pill>
                   ))}
-                </div>
-              )}
-              {graphCount > 0 ? (
-                <div className="graphViewerFrame">
-                  <EpiphanyGraphViewer
-                    state={graphState}
-                    title="Epiphany Typed Graph"
-                    className="embeddedGraphViewer"
-                    style={{ minHeight: 520 }}
-                    onCodeRefSelect={(codeRef) => setSelectedCodeRef(codeRef)}
-                  />
-                </div>
-              ) : (
-                <EmptyState label="No graph state loaded. Prepare a checkpoint or accept a modeling patch to grow the map." />
-              )}
-            </section>
-          )}
-
-          {activeDeck === "agents" && activeSubdeck === "lanes" && (
-            <div className="cardGrid hudCardGrid">
-              {roles.map((role) => (
-                <article className="laneCard" key={text(role.id)}>
+                </section>
+                <section className="organCell">
                   <div className="cardTopline">
-                    <h3>{text(role.title)}</h3>
-                    <Pill tone={statusClass(role.status)}>{text(role.status)}</Pill>
+                    <h3>Artifacts</h3>
+                    <Pill tone={(snapshot?.artifacts ?? []).length ? "ok" : "neutral"}>{(snapshot?.artifacts ?? []).length}</Pill>
                   </div>
-                  <p>{text(role.note)}</p>
-                  <span className="owner">{text(role.ownerRole)}</span>
-                </article>
-              ))}
-              {roles.length === 0 && <EmptyState label="No role lanes loaded." />}
-            </div>
-          )}
-
-          {activeDeck === "agents" && activeSubdeck === "findings" && (
-            <div className="stack">
-              <Finding title="Imagination / Planning" result={roleResults.imagination} />
-              <Finding title="Modeling / Checkpoint" result={roleResults.modeling} />
-              <Finding title="Verification / Review" result={roleResults.verification} />
-              <Finding title="Reorientation" result={reorientResult} findingKey="finding" />
-            </div>
-          )}
-
-          {activeDeck === "agents" && activeSubdeck === "jobs" && (
-            <div className="stack">
-              {jobs.map((job) => (
-                <article className="jobRow" key={text(job.id)}>
-                  <div>
-                    <strong>{text(job.id)}</strong>
-                    <span>{text(job.kind)} - {text(job.ownerRole)}</span>
-                  </div>
-                  <Pill tone={statusClass(job.status)}>{text(job.status)}</Pill>
-                </article>
-              ))}
-              {jobs.length === 0 && <EmptyState label="No jobs loaded." />}
-            </div>
-          )}
-
-          {activeDeck === "artifacts" && activeSubdeck === "bundles" && (
-            <div className="artifactTable" role="table" aria-label="Artifact bundles">
-              <div className="artifactHeader" role="row">
-                <span>Name</span>
-                <span>Outcome</span>
-                <span>Files</span>
-                <span>Path</span>
+                  {(snapshot?.artifacts ?? []).slice(0, 5).map((artifact: ArtifactBundle) => (
+                    <article className="artifactMini" key={artifact.path}>
+                      <strong>{artifact.name}</strong>
+                      <span><ArtifactOutcome artifact={artifact} /> / {artifact.files.length} files</span>
+                      <code title={artifact.path}>{artifact.path}</code>
+                    </article>
+                  ))}
+                  {(snapshot?.artifacts ?? []).length === 0 && <EmptyState label="No artifact bundles found." />}
+                </section>
               </div>
-              {(snapshot?.artifacts ?? []).map((artifact: ArtifactBundle) => (
-                <div className="artifactRow" role="row" key={artifact.path}>
-                  <strong>{artifact.name}</strong>
-                  <span><ArtifactOutcome artifact={artifact} /></span>
-                  <span>{artifact.files.length}</span>
-                  <code title={artifact.path}>{artifact.path}</code>
-                </div>
-              ))}
-              {(snapshot?.artifacts ?? []).length === 0 && <EmptyState label="No dogfood artifact bundles found." />}
-            </div>
-          )}
-        </div>
-      </section>
+            )}
 
-      <aside className="hudToastStack" aria-label="Audit alerts">
-        {error && (
-          <section className="hudToast dangerNotice" role="alert">
-            <AlertTriangle size={18} aria-hidden="true" />
-            <span>{error}</span>
-          </section>
-        )}
-        {latestImplementationAudit && (
-          <section className={`hudToast ${latestImplementationAudit.workspaceChanged ? "okNotice" : "warnNotice"}`}>
-            {latestImplementationAudit.workspaceChanged ? (
-              <CheckCircle2 size={18} aria-hidden="true" />
-            ) : (
-              <AlertTriangle size={18} aria-hidden="true" />
+            {agent.id === "modeling" && (
+              <section className="organCell graphOrgan">
+                <Finding title="Modeling / Checkpoint" result={roleResults.modeling} />
+                {graphCount > 0 ? (
+                  <div className="graphViewerFrame">
+                    <EpiphanyGraphViewer
+                      state={graphState}
+                      title="Epiphany Typed Graph"
+                      className="embeddedGraphViewer"
+                      style={{ minHeight: 420 }}
+                      onCodeRefSelect={(codeRef) => setSelectedCodeRef(codeRef)}
+                    />
+                  </div>
+                ) : (
+                  <EmptyState label="No graph state loaded. Accept a modeling patch to grow the map." />
+                )}
+              </section>
             )}
-            <span>
-              <strong>Implementation:</strong>{" "}
-              {latestImplementationAudit.workspaceChanged
-                ? `${latestImplementationAudit.changedFiles.length} changed file(s).`
-                : "no workspace diff; review before rerun."}
-            </span>
-          </section>
-        )}
-        {latestRuntimeAudit && (
-          <section className={`hudToast ${latestRuntimeAudit.status === "ready" ? "okNotice" : "warnNotice"}`}>
-            {latestRuntimeAudit.status === "ready" ? (
-              <CheckCircle2 size={18} aria-hidden="true" />
-            ) : (
-              <AlertTriangle size={18} aria-hidden="true" />
+
+            {agent.id === "implementation" && (
+              <div className="organGrid two">
+                <section className="organCell">
+                  <div className="cardTopline">
+                    <h3>Workspace</h3>
+                    <Pill tone={latestImplementationAudit?.workspaceChanged ? "ok" : "warn"}>
+                      {latestImplementationAudit?.workspaceChanged ? "changed" : "quiet"}
+                    </Pill>
+                  </div>
+                  <dl className="facts environmentFacts">
+                    <div><dt>Action</dt><dd>{text(coordinator.action)}</dd></div>
+                    <div><dt>Changed files</dt><dd>{latestImplementationAudit?.changedFiles?.length ?? riderChangedFiles.length}</dd></div>
+                    <div><dt>Branch</dt><dd>{text(latestRiderAudit?.vcs?.branch)}</dd></div>
+                    <div><dt>Dirty</dt><dd>{text(latestRiderAudit?.vcs?.dirty)}</dd></div>
+                  </dl>
+                  <PathList title="Changed files" items={latestImplementationAudit?.changedFiles ?? riderChangedFiles} />
+                </section>
+                <section className="organCell">
+                  <div className="cardTopline">
+                    <h3>Implementation Artifact</h3>
+                    <Pill tone={latestImplementationArtifact ? "ok" : "neutral"}>{latestImplementationArtifact ? "available" : "none"}</Pill>
+                  </div>
+                  <dl className="facts environmentFacts">
+                    <div><dt>Name</dt><dd>{text(latestImplementationArtifact?.name)}</dd></div>
+                    <div><dt>Files</dt><dd>{text(latestImplementationArtifact?.files.length)}</dd></div>
+                    <div><dt>Summary</dt><dd>{text(latestImplementationArtifact?.summaryPath)}</dd></div>
+                  </dl>
+                  <code title={latestImplementationArtifact?.path}>{text(latestImplementationArtifact?.path)}</code>
+                </section>
+              </div>
             )}
-            <span>
-              <strong>Unity:</strong> {text(latestRuntimeAudit.projectVersion)} is {text(latestRuntimeAudit.status)}.
-            </span>
-          </section>
+
+            {agent.id === "verification" && (
+              <div className="organGrid two">
+                <section className="organCell">
+                  <Finding title="Verification / Review" result={roleResults.verification} />
+                  <Finding title="Imagination / Planning" result={roleResults.imagination} />
+                  <Finding title="Modeling / Checkpoint" result={roleResults.modeling} />
+                </section>
+                <section className="organCell">
+                  <div className="cardTopline">
+                    <h3>Runtime Risk</h3>
+                    <Pill tone={unityBridgeReady ? "ok" : statusClass(latestRuntimeAudit?.status)}>
+                      {unityBridgeReady ? "bridge ready" : text(latestRuntimeAudit?.status, "unknown")}
+                    </Pill>
+                  </div>
+                  <dl className="facts environmentFacts">
+                    <div><dt>Unity</dt><dd>{text(latestRuntimeAudit?.projectVersion)}</dd></div>
+                    <div><dt>Editor</dt><dd>{text(latestRuntimeAudit?.editorPath, "missing")}</dd></div>
+                    <div><dt>Rider</dt><dd>{text(latestRiderAudit?.status, "unknown")}</dd></div>
+                    <div><dt>Solution</dt><dd>{text(latestRiderAudit?.solutionPath)}</dd></div>
+                  </dl>
+                </section>
+              </div>
+            )}
+
+            {agent.id === "reorientation" && (
+              <div className="organGrid two">
+                <section className="organCell">
+                  <div className={`actionBanner ${statusClass(reorient.action)}`}>
+                    <strong>{text(reorient.action, "unknown")}</strong>
+                    <span>{text(reorient.nextAction)}</span>
+                  </div>
+                  <dl className="facts">
+                    <div><dt>Pressure</dt><dd><Pill tone={statusClass(pressure.level)}>{text(pressure.level)}</Pill></dd></div>
+                    <div><dt>Prepare compaction</dt><dd>{text(pressure.shouldPrepareCompaction)}</dd></div>
+                    <div><dt>Reasons</dt><dd>{listText(reorient.reasons)}</dd></div>
+                    <div><dt>Continuity</dt><dd>{text(reorient.action)}</dd></div>
+                  </dl>
+                </section>
+                <section className="organCell">
+                  <Finding title="Reorientation" result={reorientResult} findingKey="finding" />
+                  <PathList title="Recent captures" items={planningCaptures.slice(0, 5).map((capture) => `${text(capture.id)}: ${text(capture.title)}`)} />
+                </section>
+              </div>
+            )}
+          </div>
+        </section>
+
+        {alertText && (
+          <aside className="organToastStack" aria-label={`${agent.name} alerts`}>
+            <section className="hudToast warnNotice" role={error ? "alert" : undefined}>
+              <AlertTriangle size={18} aria-hidden="true" />
+              <span>{alertText}</span>
+            </section>
+          </aside>
         )}
-      </aside>
-    </>
-  );
+      </>
+    );
+  }
 
   return (
     <main className="immersiveShell">
@@ -1380,7 +1263,7 @@ export function App() {
         activeSubdeck={activeSubdeck}
         ui={aquariumUi}
         harmonyFrame={harmony.frame}
-        operatorSurface={operatorSurface}
+        focusSurface={renderAgentHabitat}
         onAgentOption={handleAquariumOption}
         isActionBlocked={actionBlocked}
       />
@@ -1427,6 +1310,17 @@ function PlaylistControl({
   );
 }
 
+function organTitle(agentId: string) {
+  if (agentId === "coordinator") return "Intent and command";
+  if (agentId === "imagination") return "Planning and possibility";
+  if (agentId === "research") return "Evidence and artifacts";
+  if (agentId === "modeling") return "Graph and structure";
+  if (agentId === "implementation") return "Hands and workspace";
+  if (agentId === "verification") return "Findings and risk";
+  if (agentId === "reorientation") return "Memory and continuity";
+  return "Local habitat";
+}
+
 function AgentConstellation({
   roles,
   roleResults,
@@ -1441,7 +1335,7 @@ function AgentConstellation({
   activeSubdeck,
   ui,
   harmonyFrame,
-  operatorSurface,
+  focusSurface,
   onAgentOption,
   isActionBlocked,
 }: {
@@ -1458,7 +1352,7 @@ function AgentConstellation({
   activeSubdeck?: string;
   ui?: AquariumUiFrame;
   harmonyFrame: AquariumHarmonyFrame | null;
-  operatorSurface?: React.ReactNode;
+  focusSurface?: (agent: ProjectedAgent) => React.ReactNode;
   onAgentOption?: (option: AquariumOption) => void;
   isActionBlocked?: (action: OperatorAction) => boolean;
 }) {
@@ -1783,7 +1677,7 @@ function AgentConstellation({
           aria-hidden="true"
         />
         <div className="agentStageVignette" aria-hidden="true" />
-        {operatorSurface && focusedAgent && (
+        {focusSurface && focusedAgent && (
           <div
             className={`agentFocusSurface ${selectedAgentId === focusedAgent.id ? "locked" : "preview"} ${
               focusedAgent.baseX > 62 ? "anchorLeft" : focusedAgent.baseX < 38 ? "anchorRight" : "anchorCenter"
@@ -1800,7 +1694,7 @@ function AgentConstellation({
               } as React.CSSProperties
             }
           >
-            {operatorSurface}
+            {focusSurface(focusedAgent)}
           </div>
         )}
         {agents.map((agent) => (

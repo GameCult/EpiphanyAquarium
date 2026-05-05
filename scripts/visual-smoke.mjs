@@ -5,9 +5,9 @@ import { createServer } from "vite";
 
 const root = resolve(import.meta.dirname, "..");
 const artifactDir = resolve(root, ".epiphany-aquarium");
-const desktopScreenshotPath = resolve(artifactDir, "operator-console-smoke-desktop.png");
-const wideScreenshotPath = resolve(artifactDir, "operator-console-smoke-wide.png");
-const mobileScreenshotPath = resolve(artifactDir, "operator-console-smoke-mobile.png");
+const desktopScreenshotPath = resolve(artifactDir, "aquarium-focus-smoke-desktop.png");
+const wideScreenshotPath = resolve(artifactDir, "aquarium-focus-smoke-wide.png");
+const mobileScreenshotPath = resolve(artifactDir, "aquarium-focus-smoke-mobile.png");
 const smokePort = Number.parseInt(process.env.EPIPHANY_SMOKE_PORT ?? "1420", 10);
 if (!Number.isFinite(smokePort) || smokePort < 1 || smokePort > 65535) {
   throw new Error(`invalid EPIPHANY_SMOKE_PORT: ${process.env.EPIPHANY_SMOKE_PORT}`);
@@ -164,11 +164,11 @@ async function smokeViewport(browser, viewport, screenshotPath, exerciseFluidPan
       throw new Error("research DOM node has no clickable bounds");
     }
     await page.mouse.click(researchBox.x + researchBox.width / 2, researchBox.y + researchBox.height / 2);
-    const operatorSurface = await page.evaluate(() => {
+    const focusSurface = await page.evaluate(() => {
       const focus = document.querySelector('.agentStage [data-agent-focus="research"]');
       if (!(focus instanceof HTMLElement)) return { ok: false, reason: "research focus surface missing" };
       const style = window.getComputedStyle(focus);
-      const surfaces = [".immersiveTopbar", ".deckRail", ".diegeticPanel"].every((selector) => {
+      const surfaces = [".organTopbar", ".organRail", ".organPanel"].every((selector) => {
         const element = focus.querySelector(selector);
         if (!(element instanceof HTMLElement)) return false;
         const rect = element.getBoundingClientRect();
@@ -179,8 +179,28 @@ async function smokeViewport(browser, viewport, screenshotPath, exerciseFluidPan
         reason: `opacity=${style.opacity} visibility=${style.visibility} surfaces=${surfaces}`,
       };
     });
-    if (!operatorSurface.ok) {
-      throw new Error(`agent-owned operator surface did not open: ${operatorSurface.reason}`);
+    if (!focusSurface.ok) {
+      throw new Error(`agent-owned focus surface did not open: ${focusSurface.reason}`);
+    }
+    const organProbe = await page.evaluate(() => {
+      const focus = document.querySelector('.agentStage [data-agent-focus="research"]');
+      if (!(focus instanceof HTMLElement)) return { ok: false, reason: "research focus surface missing" };
+      const heading = focus.querySelector(".organIdentity h1")?.textContent?.trim();
+      const title = focus.querySelector(".organHeader h2")?.textContent?.trim();
+      const buttons = [...focus.querySelectorAll(".organRail button")].map((button) => button.textContent?.trim()).filter(Boolean);
+      const corpseText = focus.textContent ?? "";
+      return {
+        ok:
+          heading === "Eyes" &&
+          title === "Evidence and artifacts" &&
+          buttons.includes("Evidence") &&
+          buttons.includes("Artifacts") &&
+          !corpseText.includes("Operator Console"),
+        reason: `heading=${heading} title=${title} buttons=${buttons.join(",")}`,
+      };
+    });
+    if (!organProbe.ok) {
+      throw new Error(`research habitat did not replace the operator console: ${organProbe.reason}`);
     }
     try {
       await page.waitForFunction(() => {
@@ -201,7 +221,7 @@ async function smokeViewport(browser, viewport, screenshotPath, exerciseFluidPan
       throw new Error(`aquarium audio did not wake correctly: ${JSON.stringify(audio)}`, { cause: error });
     }
     audioProbe = await page.evaluate(() => window.__epiphanyAquariumAudio ?? null);
-    await page.locator('[data-agent-focus="research"] .deckRail button').nth(1).dispatchEvent("pointerdown", { bubbles: true });
+    await page.locator('[data-agent-focus="research"] .organRail button').nth(1).dispatchEvent("pointerdown", { bubbles: true });
     await page.waitForFunction(() => {
       const audio = window.__epiphanyAquariumAudio;
       return audio?.state === "running" && audio.interfaceHitCount >= 1;

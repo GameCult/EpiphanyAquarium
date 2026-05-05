@@ -589,6 +589,210 @@ body:has(.immersiveShell) {
   max-height: calc(min(66vh, 700px) - 68px);
 }
 
+.organTopbar,
+.organRail,
+.organPanel,
+.organToastStack {
+  position: relative;
+  z-index: auto;
+}
+
+.organTopbar {
+  grid-area: top;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--agent-glow) 34%, rgba(219, 238, 216, 0.28));
+  border-radius: 10px;
+  padding: 10px 12px;
+  background:
+    radial-gradient(circle at 12% 20%, color-mix(in srgb, var(--agent-glow) 18%, transparent), transparent 42%),
+    rgba(8, 17, 14, 0.76);
+  backdrop-filter: blur(16px);
+}
+
+.organIdentity {
+  min-width: 0;
+  max-width: min(430px, 34vw);
+  border-left: 3px solid color-mix(in srgb, var(--agent-glow) 78%, rgba(255, 255, 255, 0.28));
+  padding-left: 12px;
+}
+
+.organIdentity h1 {
+  color: #f7fff7;
+  font-size: 1.55rem;
+}
+
+.organIdentity span {
+  display: block;
+  margin-top: 5px;
+  overflow: hidden;
+  color: rgba(239, 255, 241, 0.74);
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.organTopControls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  max-width: min(420px, 32vw);
+}
+
+.organRail {
+  grid-area: rail;
+  display: grid;
+  align-content: start;
+  gap: 9px;
+  width: 104px;
+}
+
+.organActionButton {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  min-height: 54px;
+  width: 100%;
+  min-width: 0;
+  border-color: color-mix(in srgb, var(--agent-glow) 38%, rgba(219, 238, 216, 0.28));
+  border-radius: 8px;
+  padding: 8px 6px;
+  color: rgba(244, 255, 245, 0.84);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--agent-color) 24%, transparent), rgba(10, 19, 16, 0.7));
+  font-size: 0.68rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.organActionButton:disabled {
+  opacity: 0.42;
+}
+
+.organPanel {
+  grid-area: panel;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(760px, 48vw);
+  min-width: 390px;
+  max-height: min(66vh, 700px);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--agent-glow) 34%, rgba(219, 238, 216, 0.32));
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 100% 0, color-mix(in srgb, var(--agent-color) 16%, transparent), transparent 36%),
+    rgba(8, 17, 14, 0.74);
+  box-shadow: 0 22px 62px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(16px);
+}
+
+.organPanel.organ-modeling {
+  width: min(1040px, 58vw);
+}
+
+.organHeader {
+  display: grid;
+  gap: 2px;
+  border-bottom: 1px solid rgba(219, 238, 216, 0.18);
+  padding: 13px 15px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.organHeader span {
+  color: color-mix(in srgb, var(--agent-glow) 72%, rgba(216, 235, 214, 0.66));
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.organHeader h2 {
+  color: #f7fff7;
+  font-size: 1rem;
+}
+
+.organBody {
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+  scrollbar-color: rgba(212, 236, 211, 0.32) transparent;
+}
+
+.organGrid {
+  display: grid;
+  gap: 12px;
+}
+
+.organGrid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.organCell,
+.artifactMini {
+  border: 1px solid rgba(219, 238, 216, 0.24);
+  border-radius: 8px;
+  padding: 12px;
+  color: #f7fff7;
+  background: rgba(244, 255, 245, 0.09);
+}
+
+.organCell {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  align-content: start;
+}
+
+.organCell label {
+  color: rgba(232, 255, 234, 0.78);
+}
+
+.organCell input,
+.organCell select {
+  border-color: rgba(219, 238, 216, 0.28);
+  color: #f7fff7;
+  background: rgba(244, 255, 245, 0.1);
+}
+
+.organCell p,
+.organCell dd,
+.organCell code,
+.artifactMini span {
+  color: rgba(237, 255, 239, 0.72);
+}
+
+.organCell dt,
+.organCell .pathList strong {
+  color: rgba(218, 239, 215, 0.58);
+}
+
+.artifactMini {
+  display: grid;
+  gap: 4px;
+}
+
+.artifactMini code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graphOrgan .graphViewerFrame {
+  height: min(48vh, 520px);
+  min-height: 360px;
+}
+
+.organToastStack {
+  grid-area: toast;
+  display: grid;
+  gap: 8px;
+  width: auto;
+  pointer-events: none;
+}
+
 .immersiveTopbar {
   top: 18px;
   right: 24px;
@@ -1597,6 +1801,19 @@ code {
     min-width: 0;
   }
 
+  .organPanel {
+    width: min(640px, calc(100vw - 172px));
+    min-width: 0;
+  }
+
+  .organPanel.organ-modeling {
+    width: min(760px, calc(100vw - 172px));
+  }
+
+  .organGrid.two {
+    grid-template-columns: 1fr;
+  }
+
   .diegeticPanel.widePanel {
     right: 14px;
   }
@@ -1671,6 +1888,71 @@ code {
 
   .operatorTopControls .pill {
     font-size: 0.7rem;
+  }
+
+  .agentFocusSurface {
+    grid-template-areas:
+      "top"
+      "panel"
+      "rail";
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    left: 8px !important;
+    top: 8px !important;
+    right: 8px;
+    bottom: 8px;
+    max-width: none;
+    max-height: none;
+    transform: none;
+  }
+
+  .agentFocusSurface.preview,
+  .agentFocusSurface.locked {
+    transform: none;
+  }
+
+  .organTopbar {
+    display: grid;
+    gap: 8px;
+  }
+
+  .organIdentity {
+    max-width: none;
+    padding-left: 10px;
+  }
+
+  .organIdentity h1 {
+    font-size: 1.42rem;
+  }
+
+  .organIdentity span {
+    display: none;
+  }
+
+  .organTopControls {
+    justify-content: flex-start;
+    max-width: none;
+  }
+
+  .organRail {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: auto;
+  }
+
+  .organActionButton {
+    min-height: 46px;
+    font-size: 0.61rem;
+  }
+
+  .organPanel,
+  .organPanel.organ-modeling {
+    width: auto;
+    min-width: 0;
+    max-height: none;
+  }
+
+  .organBody {
+    padding: 10px;
   }
 
   .deckRail {

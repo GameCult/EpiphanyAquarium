@@ -7,6 +7,8 @@ Current slice:
   interaction, agent, friction, and improvement-plan surface.
 - Main design debt: the old operator console was gated behind aquarium objects
   but not broken down into aquarium-native agent organs.
-- Canonical next direction: split console data/actions by Self, Imagination,
-  Eyes, Body, Hands, Soul, and Life; then differentiate motion, petals, focus
-  habitats, and smoke coverage.
+- Current implementation pass split selected-agent focus data/actions by Self,
+  Imagination, Eyes, Body, Hands, Soul, and Life using `renderAgentHabitat`.
+- Next direction: give those habitats distinct silhouettes and motion grammar;
+  rename remaining smoke artifact filenames; broaden smoke around dismissal,
+  anchoring, petal identity, and one-hit audio.

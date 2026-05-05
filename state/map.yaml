@@ -35,8 +35,8 @@ interaction_laws:
   - Audio must respond once per deliberate input gesture.
 
 next_actions:
-  - Stop preserving the inherited operator console as a single surface; split its data and actions into agent-owned organs.
-  - Rename console-era copy and smoke artifact names toward aquarium-native focus language.
+  - Deepen the new agent-owned habitats with distinct silhouettes, not just distinct content.
+  - Add visual tests for all seven agent habitats, not only Eyes.
   - Give Self, Eyes, Imagination, Body, Hands, Soul, and Life distinct motion/reveal signatures.
   - Make agent petals more object-native while keeping them real DOM buttons.
   - Add visual tests for empty-water dismissal, offscreen-safe focus anchoring, agent-specific petals, and one-hit control audio.

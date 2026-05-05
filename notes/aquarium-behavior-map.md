@@ -104,19 +104,30 @@ flowchart TD
   hover projection, focus reveal, interface audio, fluid persistence, and
   horizontal overflow.
 
+## Decomposition Pass
+
+The old `operatorSurface` slab has been removed from `src/App.tsx`. Selected
+agents now receive a generated habitat from `renderAgentHabitat(agent)`, so the
+same backend data and actions are distributed by owner:
+
+- Self owns intent, command, thread/workspace binding, checkpoint, and run state.
+- Imagination owns drafts, backlog, and planning-lane actions.
+- Eyes owns graph evidence and artifact bundles.
+- Body owns graph structure and modeling findings/actions.
+- Hands owns implementation continuation, changed files, and implementation
+  artifacts.
+- Soul owns verification findings and runtime/source risk.
+- Life owns reorientation, pressure, continuity, and recent planning captures.
+
 ## Current Friction
 
-- The focus surface still names itself "Operator Console" and "Epiphany MVP".
-  That is inherited harness language, not aquarium-native object language.
-- The old console has been moved behind an agent reveal, not decomposed into
-  agent-owned controls. This is the main thing to fix.
-- Visual inspection after smoke confirms the split: the mobile idle state reads
-  as a compact ecosystem, while the wide selected-agent view still reads as a
-  console slab with aquarium objects behind it.
+- Visual inspection after smoke confirms the selected-agent view now reads as an
+  agent habitat rather than the old console slab, but the habitat bodies are
+  still panel-like and need more object-specific visual grammar.
 - The seven agents share the same petal/button grammar. They differ in shape and
   color, but not enough in behavior, motion, or reveal texture.
-- The focus surface is still a conventional panel cluster after it blooms. It is
-  gated correctly, but the contents have not fully become organism-owned.
+- The focus surface is now decomposed by owner, but each owner still needs a more
+  distinct layout silhouette.
 - Fluid controls live in the renderer and are covered by smoke, but the behavior
   contract is not obvious from React or docs.
 - Visual smoke proves important rules, but it does not yet assert empty-water
@@ -133,9 +144,9 @@ split the surface by aquarium object instead of preserving one general panel.
 
 Acceptance:
 
-- Each visible surface can answer: which agent owns this, and why?
-- Console-era names are removed from user-facing copy and smoke artifact names.
-- Build and visual smoke pass.
+- Each visible surface can answer: which agent owns this, and why? **Done.**
+- Console-era names are removed from selected-agent focus copy. **Done.**
+- Build and visual smoke pass. **Done.**
 
 ### Phase 2: Break the console into agent-owned organs
 
@@ -155,7 +166,8 @@ Acceptance:
 - Agent petals open only the organs that agent can plausibly own.
 - Shared data can still exist, but appears through the agent whose job makes it
   meaningful.
-- No single generic deck cluster remains as the default reveal.
+- No single generic deck cluster remains as the default reveal. **Done for the
+  selected-agent focus surface.**
 
 ### Phase 3: Give each agent a distinct body language
 
