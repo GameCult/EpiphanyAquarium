@@ -168,7 +168,7 @@ async function smokeViewport(browser, viewport, screenshotPath, exerciseFluidPan
       const focus = document.querySelector('.agentStage [data-agent-focus="research"]');
       if (!(focus instanceof HTMLElement)) return { ok: false, reason: "research focus surface missing" };
       const style = window.getComputedStyle(focus);
-      const surfaces = [".organTopbar", ".organRail", ".organPanel"].every((selector) => {
+      const surfaces = [".creatureTreeRoot"].every((selector) => {
         const element = focus.querySelector(selector);
         if (!(element instanceof HTMLElement)) return false;
         const rect = element.getBoundingClientRect();
@@ -185,22 +185,36 @@ async function smokeViewport(browser, viewport, screenshotPath, exerciseFluidPan
     const organProbe = await page.evaluate(() => {
       const focus = document.querySelector('.agentStage [data-agent-focus="research"]');
       if (!(focus instanceof HTMLElement)) return { ok: false, reason: "research focus surface missing" };
-      const heading = focus.querySelector(".organIdentity h1")?.textContent?.trim();
-      const title = focus.querySelector(".organHeader h2")?.textContent?.trim();
-      const buttons = [...focus.querySelectorAll(".organRail button")].map((button) => button.textContent?.trim()).filter(Boolean);
+      const root = focus.querySelector(".creatureRootIcon");
+      const label = focus.querySelector(".creatureRootSignal span:last-child")?.textContent?.trim();
       const corpseText = focus.textContent ?? "";
       return {
         ok:
-          heading === "Eyes" &&
-          title === "Evidence and artifacts" &&
-          buttons.includes("Evidence") &&
-          buttons.includes("Artifacts") &&
+          root instanceof HTMLButtonElement &&
+          label === "Evidence and artifacts" &&
           !corpseText.includes("Operator Console"),
-        reason: `heading=${heading} title=${title} buttons=${buttons.join(",")}`,
+        reason: `root=${root instanceof HTMLButtonElement} label=${label}`,
       };
     });
     if (!organProbe.ok) {
       throw new Error(`research habitat did not replace the operator console: ${organProbe.reason}`);
+    }
+    await page.locator('[data-agent-focus="research"] .creatureRootIcon').dispatchEvent("click", { bubbles: true });
+    await page.locator('[data-agent-focus="research"] .creatureTreeNode').filter({ hasText: "Evidence" }).dispatchEvent("click", { bubbles: true });
+    await page.locator('[data-agent-focus="research"] .creatureTreeNode').filter({ hasText: "Graph Query" }).dispatchEvent("click", { bubbles: true });
+    const leafProbe = await page.evaluate(() => {
+      const focus = document.querySelector('.agentStage [data-agent-focus="research"]');
+      if (!(focus instanceof HTMLElement)) return { ok: false, reason: "research focus surface missing" };
+      const leaf = focus.querySelector(".creatureLeafSurface");
+      const heading = focus.querySelector(".creatureLeafHeader h2")?.textContent?.trim();
+      const path = focus.querySelector(".creatureLeafHeader span")?.textContent?.trim();
+      return {
+        ok: leaf instanceof HTMLElement && heading === "Graph Query" && path === "Evidence / Graph Query",
+        reason: `leaf=${leaf instanceof HTMLElement} heading=${heading} path=${path}`,
+      };
+    });
+    if (!leafProbe.ok) {
+      throw new Error(`research interaction tree did not unfold to a graph query leaf: ${leafProbe.reason}`);
     }
     try {
       await page.waitForFunction(() => {
@@ -221,7 +235,7 @@ async function smokeViewport(browser, viewport, screenshotPath, exerciseFluidPan
       throw new Error(`aquarium audio did not wake correctly: ${JSON.stringify(audio)}`, { cause: error });
     }
     audioProbe = await page.evaluate(() => window.__epiphanyAquariumAudio ?? null);
-    await page.locator('[data-agent-focus="research"] .organRail button').nth(1).dispatchEvent("pointerdown", { bubbles: true });
+    await page.locator('[data-agent-focus="research"] .creatureLeafHeader button').dispatchEvent("pointerdown", { bubbles: true });
     await page.waitForFunction(() => {
       const audio = window.__epiphanyAquariumAudio;
       return audio?.state === "running" && audio.interfaceHitCount >= 1;

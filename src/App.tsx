@@ -149,6 +149,12 @@ type AquariumOption = {
   subdeck?: string;
   action?: OperatorAction;
 };
+type HabitatNode = {
+  id: string;
+  label: string;
+  icon: React.ReactNode;
+  children?: HabitatNode[];
+};
 const deckSubmenus = {
   command: ["run", "connection", "signals"],
   state: ["environment", "planning", "graph"],
@@ -935,316 +941,201 @@ export function App() {
     });
   }, [objectiveDrafts, setRequest]);
 
-  function renderAgentHabitat(agent: ProjectedAgent) {
-    const habitatActions: Partial<Record<string, OperatorAction[]>> = {
-      coordinator: ["statusSnapshot", "coordinatorPlan", "prepareCheckpoint"],
-      imagination: ["launchImagination", "readImaginationResult", "acceptImagination", "adoptObjectiveDraft"],
-      modeling: ["launchModeling", "readModelingResult", "acceptModeling"],
-      implementation: ["inspectRider", "continueImplementation", "statusSnapshot"],
-      verification: ["launchVerification", "readVerificationResult", "acceptVerification"],
-      reorientation: ["launchReorient", "readReorientResult", "acceptReorient", "prepareCheckpoint"],
-    };
-    const actionStrip = (habitatActions[agent.id] ?? []).map((action) =>
-      actionControlByAction(action, "secondaryButton organActionButton"),
-    );
+  function renderTreeLeaf(agentId: string, leafId: string) {
+    if (agentId === "coordinator" && leafId === "crrc") {
+      return (
+        <section className="leafGrid two">
+          <div className={`actionBanner ${statusClass(coordinator.action ?? crrc.action)}`}>
+            <strong>{text(coordinator.action ?? crrc.action, "unknown")}</strong>
+            <span>{text(coordinator.targetRole ?? crrc.recommendedSceneAction)}</span>
+          </div>
+          <p className="reason">{text(coordinator.reason ?? crrc.reason, "No recommendation loaded yet.")}</p>
+        </section>
+      );
+    }
+    if (agentId === "coordinator" && leafId === "thread") {
+      return (
+        <section className="leafGrid two">
+          <label>Thread ID<input placeholder="auto-load persistent status thread" value={request.threadId ?? ""} onChange={(event) => setRequest({ ...request, threadId: event.target.value || undefined })} /></label>
+          <label>Workspace<input placeholder={snapshot?.repoRoot ?? "repo root"} value={request.cwd ?? ""} onChange={(event) => setRequest({ ...request, cwd: event.target.value || undefined })} /></label>
+          <dl className="facts"><div><dt>Thread</dt><dd>{text(status?.threadId)}</dd></div><div><dt>State</dt><dd>{text(scene.stateStatus)} rev {text(scene.revision)}</dd></div></dl>
+        </section>
+      );
+    }
+    if (agentId === "coordinator" && leafId === "checkpoint") {
+      return <section className="leafActionCluster">{actionControlByAction("prepareCheckpoint", "secondaryButton leafActionButton")}{actionResult && <p className="actionResult hudResult">{actionResult.summary} <code>{actionResult.artifactPath}</code></p>}</section>;
+    }
+    if (agentId === "coordinator" && leafId === "run") {
+      return <section className="leafActionCluster">{["statusSnapshot", "coordinatorPlan"].map((action) => actionControlByAction(action as OperatorAction, "secondaryButton leafActionButton"))}</section>;
+    }
+    if (agentId === "coordinator" && leafId === "harmony") {
+      return <PlaylistControl error={harmony.error} frame={harmony.frame} loading={harmony.loading} onChangeFolder={harmony.changeFolder} onNext={harmony.nextSong} />;
+    }
+    if (agentId === "imagination" && leafId === "drafts") {
+      return (
+        <section className="leafStack">
+          <label className="draftPicker">Objective Draft<select value={request.planningDraftId ?? ""} onChange={(event) => setRequest({ ...request, planningDraftId: event.target.value || undefined })} disabled={objectiveDrafts.length === 0}><option value="">none</option>{objectiveDrafts.map((draft) => <option value={text(draft.id, "")} key={text(draft.id)}>{text(draft.title)} [{text(draft.status)}]</option>)}</select></label>
+          {objectiveDrafts.slice(0, 4).map((draft) => <PlanningItem key={text(draft.id)} title={text(draft.title)} status={text(draft.status)} selected={text(draft.id, "") === request.planningDraftId} body={text(draft.summary)} meta={[text(draft.id), listText(draft.source_item_ids ?? draft.sourceItemIds)]} />)}
+          {actionControlByAction("adoptObjectiveDraft", "secondaryButton leafActionButton")}
+        </section>
+      );
+    }
+    if (agentId === "imagination" && leafId === "backlog") {
+      return <section className="leafStack">{backlogItems.slice(0, 5).map((item) => <PlanningItem key={text(item.id)} title={text(item.title)} status={text(item.status)} body={text(item.summary)} meta={[text(item.priority?.value), text(item.horizon), text(item.product_area ?? item.productArea)]} />)}{backlogItems.length === 0 && <EmptyState label="No backlog items loaded." />}</section>;
+    }
+    if (agentId === "imagination" && leafId === "captures") {
+      return <section className="leafStack">{planningCaptures.slice(0, 5).map((capture) => <PlanningItem key={text(capture.id)} title={text(capture.title)} status={text(capture.status)} body={text(capture.body)} meta={[text(capture.confidence), listText(capture.tags)]} />)}{planningCaptures.length === 0 && <EmptyState label="No captures loaded." />}</section>;
+    }
+    if (agentId === "research" && leafId === "graphQuery") {
+      return <section className="leafGrid two"><dl className="facts environmentFacts"><div><dt>Architecture</dt><dd>{graphState.architecture.nodes.length} nodes / {graphState.architecture.edges.length} edges</dd></div><div><dt>Dataflow</dt><dd>{graphState.dataflow.nodes.length} nodes / {graphState.dataflow.edges.length} edges</dd></div><div><dt>Links</dt><dd>{graphState.links.length}</dd></div><div><dt>Issues</dt><dd>{graphIssues.length}</dd></div></dl><div className="graphIssues">{graphIssues.slice(0, 4).map((issue) => <Pill tone="warn" key={`${issue.scope}:${issue.message}`}>{issue.scope}: {issue.message}</Pill>)}</div></section>;
+    }
+    if (agentId === "research" && leafId === "artifacts") {
+      return <section className="leafStack">{(snapshot?.artifacts ?? []).slice(0, 5).map((artifact: ArtifactBundle) => <article className="artifactMini" key={artifact.path}><strong>{artifact.name}</strong><span><ArtifactOutcome artifact={artifact} /> / {artifact.files.length} files</span><code title={artifact.path}>{artifact.path}</code></article>)}{(snapshot?.artifacts ?? []).length === 0 && <EmptyState label="No artifact bundles found." />}</section>;
+    }
+    if (agentId === "modeling" && leafId === "graph") {
+      return graphCount > 0 ? <div className="graphViewerFrame"><EpiphanyGraphViewer state={graphState} title="Epiphany Typed Graph" className="embeddedGraphViewer" style={{ minHeight: 420 }} onCodeRefSelect={(codeRef) => setSelectedCodeRef(codeRef)} /></div> : <EmptyState label="No graph state loaded. Accept a modeling patch to grow the map." />;
+    }
+    if (agentId === "modeling" && leafId === "modelingResult") {
+      return <section className="leafStack"><Finding title="Modeling / Checkpoint" result={roleResults.modeling} />{["launchModeling", "readModelingResult", "acceptModeling"].map((action) => actionControlByAction(action as OperatorAction, "secondaryButton leafActionButton"))}</section>;
+    }
+    if (agentId === "implementation" && leafId === "workspace") {
+      return <section className="leafGrid two"><dl className="facts environmentFacts"><div><dt>Action</dt><dd>{text(coordinator.action)}</dd></div><div><dt>Changed files</dt><dd>{latestImplementationAudit?.changedFiles?.length ?? riderChangedFiles.length}</dd></div><div><dt>Branch</dt><dd>{text(latestRiderAudit?.vcs?.branch)}</dd></div><div><dt>Dirty</dt><dd>{text(latestRiderAudit?.vcs?.dirty)}</dd></div></dl><PathList title="Changed files" items={latestImplementationAudit?.changedFiles ?? riderChangedFiles} /></section>;
+    }
+    if (agentId === "implementation" && leafId === "continue") {
+      return <section className="leafActionCluster">{["inspectRider", "continueImplementation", "statusSnapshot"].map((action) => actionControlByAction(action as OperatorAction, "secondaryButton leafActionButton"))}</section>;
+    }
+    if (agentId === "implementation" && leafId === "implementationArtifact") {
+      return <section className="leafGrid two"><dl className="facts environmentFacts"><div><dt>Name</dt><dd>{text(latestImplementationArtifact?.name)}</dd></div><div><dt>Files</dt><dd>{text(latestImplementationArtifact?.files.length)}</dd></div><div><dt>Summary</dt><dd>{text(latestImplementationArtifact?.summaryPath)}</dd></div></dl><code title={latestImplementationArtifact?.path}>{text(latestImplementationArtifact?.path)}</code></section>;
+    }
+    if (agentId === "verification" && leafId === "findings") {
+      return <section className="leafStack"><Finding title="Verification / Review" result={roleResults.verification} /><Finding title="Imagination / Planning" result={roleResults.imagination} /><Finding title="Modeling / Checkpoint" result={roleResults.modeling} /></section>;
+    }
+    if (agentId === "verification" && leafId === "runtime") {
+      return <section className="leafGrid two"><dl className="facts environmentFacts"><div><dt>Unity</dt><dd>{text(latestRuntimeAudit?.projectVersion)}</dd></div><div><dt>Editor</dt><dd>{text(latestRuntimeAudit?.editorPath, "missing")}</dd></div><div><dt>Rider</dt><dd>{text(latestRiderAudit?.status, "unknown")}</dd></div><div><dt>Solution</dt><dd>{text(latestRiderAudit?.solutionPath)}</dd></div></dl>{actionControlByAction("inspectUnity", "secondaryButton leafActionButton")}{actionControlByAction("inspectRider", "secondaryButton leafActionButton")}</section>;
+    }
+    if (agentId === "verification" && leafId === "review") {
+      return <section className="leafActionCluster">{["launchVerification", "readVerificationResult", "acceptVerification"].map((action) => actionControlByAction(action as OperatorAction, "secondaryButton leafActionButton"))}</section>;
+    }
+    if (agentId === "reorientation" && leafId === "pressure") {
+      return <section className="leafGrid two"><dl className="facts"><div><dt>Pressure</dt><dd><Pill tone={statusClass(pressure.level)}>{text(pressure.level)}</Pill></dd></div><div><dt>Prepare compaction</dt><dd>{text(pressure.shouldPrepareCompaction)}</dd></div></dl></section>;
+    }
+    if (agentId === "reorientation" && leafId === "reorientVerdict") {
+      return <section className="leafGrid two"><div className={`actionBanner ${statusClass(reorient.action)}`}><strong>{text(reorient.action, "unknown")}</strong><span>{text(reorient.nextAction)}</span></div><dl className="facts"><div><dt>Reasons</dt><dd>{listText(reorient.reasons)}</dd></div><div><dt>Continuity</dt><dd>{text(reorient.action)}</dd></div></dl></section>;
+    }
+    if (agentId === "reorientation" && leafId === "reorientWorker") {
+      return <section className="leafStack"><Finding title="Reorientation" result={reorientResult} findingKey="finding" />{["launchReorient", "readReorientResult", "acceptReorient"].map((action) => actionControlByAction(action as OperatorAction, "secondaryButton leafActionButton"))}</section>;
+    }
+    return <EmptyState label="No leaf surface mapped yet." />;
+  }
+
+  function AgentTreeHabitat({ agent }: { agent: ProjectedAgent }) {
+    const tree = habitatTree(agent.id);
+    const [open, setOpen] = useState(false);
+    const [path, setPath] = useState<string[]>([]);
+    const selected = treeNodeAtPath(tree, path);
+    const childNodes = selected?.children ?? tree.children ?? [];
+    const leaf = selected && !selected.children?.length ? selected : null;
     const headline =
       agent.id === "coordinator"
         ? text(coordinator.reason ?? crrc.reason, "No coordinator recommendation loaded.")
         : agent.thought;
-    const alertText =
-      error ??
-      (agent.id === "implementation" && latestImplementationAudit && !latestImplementationAudit.workspaceChanged
-        ? "Implementation returned no workspace diff; review before rerun."
-        : agent.id === "modeling" && graphIssues.length
-          ? `${graphIssues.length} graph issue(s) need attention.`
-          : undefined);
+
+    function choose(node: HabitatNode) {
+      const next = [...pathForNode(tree, node.id)];
+      setPath(next);
+      setOpen(true);
+    }
+
+    function resetTree() {
+      setPath([]);
+      setOpen((current) => !current);
+    }
 
     return (
       <>
-        <header className="organTopbar">
-          <div className="organIdentity">
-            <p className="eyebrow">{agent.title} Organ</p>
-            <h1>{agent.name}</h1>
-            <span>{headline}</span>
-          </div>
-          <div className="organTopControls">
+        <section className="creatureTreeRoot" aria-label={`${agent.name} interaction tree`}>
+          <button
+            type="button"
+            className={`creatureRootIcon ${open ? "open" : ""}`}
+            onClick={resetTree}
+            data-interface-sound="organ-seed"
+            aria-expanded={open}
+            title={`${agent.name} interaction tree`}
+          >
+            {habitatIcon(agent.id)}
+            <span>{agent.name}</span>
+          </button>
+          <div className="creatureRootSignal">
             <Pill tone={agent.tone}>{agent.status}</Pill>
-            <Pill tone={statusClass(pressure.level)}>pressure {text(pressure.level, "unknown")}</Pill>
-            <button
-              className="primaryButton"
-              onClick={() => void refresh()}
-              disabled={loading}
-              title="Refresh status"
-              data-interface-sound={loading ? "primary-disabled" : "primary-refresh"}
-            >
-              <RefreshCw size={16} aria-hidden="true" />
-              {loading ? "Refreshing" : "Refresh"}
-            </button>
-            {agent.id === "coordinator" && (
-              <PlaylistControl
-                error={harmony.error}
-                frame={harmony.frame}
-                loading={harmony.loading}
-                onChangeFolder={harmony.changeFolder}
-                onNext={harmony.nextSong}
-              />
-            )}
+            <span>{organTitle(agent.id)}</span>
           </div>
-        </header>
-
-        <nav className="organRail" aria-label={`${agent.name} local actions`}>
-          {actionStrip}
-          {agent.id === "research" && (
-            <>
-              <button type="button" className="secondaryButton organActionButton" onClick={() => selectDeck("state")} data-interface-sound="organ-nav">
-                <Map size={16} aria-hidden="true" />
-                Evidence
-              </button>
-              <button type="button" className="secondaryButton organActionButton" onClick={() => selectDeck("artifacts")} data-interface-sound="organ-nav">
-                <FileText size={16} aria-hidden="true" />
-                Artifacts
-              </button>
-            </>
-          )}
-        </nav>
-
-        <section className={`organPanel organ-${agent.id}`} aria-label={`${agent.name} habitat`}>
-          <div className="organHeader">
-            <span>{agent.title}</span>
-            <h2>{organTitle(agent.id)}</h2>
-          </div>
-          <div className="organBody">
-            {agent.id === "coordinator" && (
-              <div className="organGrid two">
-                <section className="organCell">
-                  <div className={`actionBanner ${statusClass(coordinator.action ?? crrc.action)}`}>
-                    <strong>{text(coordinator.action ?? crrc.action, "unknown")}</strong>
-                    <span>{text(coordinator.targetRole ?? crrc.recommendedSceneAction)}</span>
-                  </div>
-                  <p className="reason">{text(coordinator.reason ?? crrc.reason, "No recommendation loaded yet.")}</p>
-                  <dl className="facts">
-                    <div><dt>Requires review</dt><dd>{text(coordinator.requiresReview)}</dd></div>
-                    <div><dt>Thread</dt><dd>{text(status?.threadId)}</dd></div>
-                    <div><dt>State</dt><dd>{text(scene.stateStatus)} rev {text(scene.revision)}</dd></div>
-                    <div><dt>Draft</dt><dd>{text(request.planningDraftId)}</dd></div>
-                  </dl>
-                </section>
-                <section className="organCell">
-                  <label>
-                    Thread ID
-                    <input
-                      placeholder="auto-load persistent status thread"
-                      value={request.threadId ?? ""}
-                      onChange={(event) => setRequest({ ...request, threadId: event.target.value || undefined })}
-                    />
-                  </label>
-                  <label>
-                    Workspace
-                    <input
-                      placeholder={snapshot?.repoRoot ?? "repo root"}
-                      value={request.cwd ?? ""}
-                      onChange={(event) => setRequest({ ...request, cwd: event.target.value || undefined })}
-                    />
-                  </label>
-                  {actionResult && <p className="actionResult hudResult">{actionResult.summary} <code>{actionResult.artifactPath}</code></p>}
-                </section>
-              </div>
-            )}
-
-            {agent.id === "imagination" && (
-              <div className="organGrid two">
-                <section className="organCell">
-                  <div className="cardTopline">
-                    <h3>Drafts</h3>
-                    <Pill tone={objectiveDrafts.length ? "warn" : "neutral"}>{objectiveDrafts.length}</Pill>
-                  </div>
-                  <label className="draftPicker">
-                    Objective Draft
-                    <select
-                      value={request.planningDraftId ?? ""}
-                      onChange={(event) => setRequest({ ...request, planningDraftId: event.target.value || undefined })}
-                      disabled={objectiveDrafts.length === 0}
-                    >
-                      <option value="">none</option>
-                      {objectiveDrafts.map((draft) => (
-                        <option value={text(draft.id, "")} key={text(draft.id)}>
-                          {text(draft.title)} [{text(draft.status)}]
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  {objectiveDrafts.slice(0, 3).map((draft) => (
-                    <PlanningItem
-                      key={text(draft.id)}
-                      title={text(draft.title)}
-                      status={text(draft.status)}
-                      selected={text(draft.id, "") === request.planningDraftId}
-                      body={text(draft.summary)}
-                      meta={[text(draft.id), listText(draft.source_item_ids ?? draft.sourceItemIds)]}
-                    />
-                  ))}
-                </section>
-                <section className="organCell">
-                  <div className="cardTopline">
-                    <h3>Backlog</h3>
-                    <Pill tone={backlogItems.length ? "ok" : "neutral"}>{backlogItems.length}</Pill>
-                  </div>
-                  {backlogItems.slice(0, 4).map((item) => (
-                    <PlanningItem
-                      key={text(item.id)}
-                      title={text(item.title)}
-                      status={text(item.status)}
-                      body={text(item.summary)}
-                      meta={[text(item.priority?.value), text(item.horizon), text(item.product_area ?? item.productArea)]}
-                    />
-                  ))}
-                  {backlogItems.length === 0 && <EmptyState label="No backlog items loaded." />}
-                </section>
-              </div>
-            )}
-
-            {agent.id === "research" && (
-              <div className="organGrid two">
-                <section className="organCell">
-                  <div className="cardTopline">
-                    <h3>Graph Evidence</h3>
-                    <Pill tone={graphIssues.length ? "warn" : "ok"}>{graphCount} records</Pill>
-                  </div>
-                  <dl className="facts environmentFacts">
-                    <div><dt>Architecture</dt><dd>{graphState.architecture.nodes.length} nodes / {graphState.architecture.edges.length} edges</dd></div>
-                    <div><dt>Dataflow</dt><dd>{graphState.dataflow.nodes.length} nodes / {graphState.dataflow.edges.length} edges</dd></div>
-                    <div><dt>Links</dt><dd>{graphState.links.length}</dd></div>
-                    <div><dt>Issues</dt><dd>{graphIssues.length}</dd></div>
-                  </dl>
-                  {graphIssues.slice(0, 3).map((issue) => (
-                    <Pill tone="warn" key={`${issue.scope}:${issue.message}`}>{issue.scope}: {issue.message}</Pill>
-                  ))}
-                </section>
-                <section className="organCell">
-                  <div className="cardTopline">
-                    <h3>Artifacts</h3>
-                    <Pill tone={(snapshot?.artifacts ?? []).length ? "ok" : "neutral"}>{(snapshot?.artifacts ?? []).length}</Pill>
-                  </div>
-                  {(snapshot?.artifacts ?? []).slice(0, 5).map((artifact: ArtifactBundle) => (
-                    <article className="artifactMini" key={artifact.path}>
-                      <strong>{artifact.name}</strong>
-                      <span><ArtifactOutcome artifact={artifact} /> / {artifact.files.length} files</span>
-                      <code title={artifact.path}>{artifact.path}</code>
-                    </article>
-                  ))}
-                  {(snapshot?.artifacts ?? []).length === 0 && <EmptyState label="No artifact bundles found." />}
-                </section>
-              </div>
-            )}
-
-            {agent.id === "modeling" && (
-              <section className="organCell graphOrgan">
-                <Finding title="Modeling / Checkpoint" result={roleResults.modeling} />
-                {graphCount > 0 ? (
-                  <div className="graphViewerFrame">
-                    <EpiphanyGraphViewer
-                      state={graphState}
-                      title="Epiphany Typed Graph"
-                      className="embeddedGraphViewer"
-                      style={{ minHeight: 420 }}
-                      onCodeRefSelect={(codeRef) => setSelectedCodeRef(codeRef)}
-                    />
-                  </div>
-                ) : (
-                  <EmptyState label="No graph state loaded. Accept a modeling patch to grow the map." />
-                )}
-              </section>
-            )}
-
-            {agent.id === "implementation" && (
-              <div className="organGrid two">
-                <section className="organCell">
-                  <div className="cardTopline">
-                    <h3>Workspace</h3>
-                    <Pill tone={latestImplementationAudit?.workspaceChanged ? "ok" : "warn"}>
-                      {latestImplementationAudit?.workspaceChanged ? "changed" : "quiet"}
-                    </Pill>
-                  </div>
-                  <dl className="facts environmentFacts">
-                    <div><dt>Action</dt><dd>{text(coordinator.action)}</dd></div>
-                    <div><dt>Changed files</dt><dd>{latestImplementationAudit?.changedFiles?.length ?? riderChangedFiles.length}</dd></div>
-                    <div><dt>Branch</dt><dd>{text(latestRiderAudit?.vcs?.branch)}</dd></div>
-                    <div><dt>Dirty</dt><dd>{text(latestRiderAudit?.vcs?.dirty)}</dd></div>
-                  </dl>
-                  <PathList title="Changed files" items={latestImplementationAudit?.changedFiles ?? riderChangedFiles} />
-                </section>
-                <section className="organCell">
-                  <div className="cardTopline">
-                    <h3>Implementation Artifact</h3>
-                    <Pill tone={latestImplementationArtifact ? "ok" : "neutral"}>{latestImplementationArtifact ? "available" : "none"}</Pill>
-                  </div>
-                  <dl className="facts environmentFacts">
-                    <div><dt>Name</dt><dd>{text(latestImplementationArtifact?.name)}</dd></div>
-                    <div><dt>Files</dt><dd>{text(latestImplementationArtifact?.files.length)}</dd></div>
-                    <div><dt>Summary</dt><dd>{text(latestImplementationArtifact?.summaryPath)}</dd></div>
-                  </dl>
-                  <code title={latestImplementationArtifact?.path}>{text(latestImplementationArtifact?.path)}</code>
-                </section>
-              </div>
-            )}
-
-            {agent.id === "verification" && (
-              <div className="organGrid two">
-                <section className="organCell">
-                  <Finding title="Verification / Review" result={roleResults.verification} />
-                  <Finding title="Imagination / Planning" result={roleResults.imagination} />
-                  <Finding title="Modeling / Checkpoint" result={roleResults.modeling} />
-                </section>
-                <section className="organCell">
-                  <div className="cardTopline">
-                    <h3>Runtime Risk</h3>
-                    <Pill tone={unityBridgeReady ? "ok" : statusClass(latestRuntimeAudit?.status)}>
-                      {unityBridgeReady ? "bridge ready" : text(latestRuntimeAudit?.status, "unknown")}
-                    </Pill>
-                  </div>
-                  <dl className="facts environmentFacts">
-                    <div><dt>Unity</dt><dd>{text(latestRuntimeAudit?.projectVersion)}</dd></div>
-                    <div><dt>Editor</dt><dd>{text(latestRuntimeAudit?.editorPath, "missing")}</dd></div>
-                    <div><dt>Rider</dt><dd>{text(latestRiderAudit?.status, "unknown")}</dd></div>
-                    <div><dt>Solution</dt><dd>{text(latestRiderAudit?.solutionPath)}</dd></div>
-                  </dl>
-                </section>
-              </div>
-            )}
-
-            {agent.id === "reorientation" && (
-              <div className="organGrid two">
-                <section className="organCell">
-                  <div className={`actionBanner ${statusClass(reorient.action)}`}>
-                    <strong>{text(reorient.action, "unknown")}</strong>
-                    <span>{text(reorient.nextAction)}</span>
-                  </div>
-                  <dl className="facts">
-                    <div><dt>Pressure</dt><dd><Pill tone={statusClass(pressure.level)}>{text(pressure.level)}</Pill></dd></div>
-                    <div><dt>Prepare compaction</dt><dd>{text(pressure.shouldPrepareCompaction)}</dd></div>
-                    <div><dt>Reasons</dt><dd>{listText(reorient.reasons)}</dd></div>
-                    <div><dt>Continuity</dt><dd>{text(reorient.action)}</dd></div>
-                  </dl>
-                </section>
-                <section className="organCell">
-                  <Finding title="Reorientation" result={reorientResult} findingKey="finding" />
-                  <PathList title="Recent captures" items={planningCaptures.slice(0, 5).map((capture) => `${text(capture.id)}: ${text(capture.title)}`)} />
-                </section>
-              </div>
-            )}
-          </div>
+          <p>{headline}</p>
         </section>
 
-        {alertText && (
-          <aside className="organToastStack" aria-label={`${agent.name} alerts`}>
-            <section className="hudToast warnNotice" role={error ? "alert" : undefined}>
-              <AlertTriangle size={18} aria-hidden="true" />
-              <span>{alertText}</span>
-            </section>
-          </aside>
+        {open && (
+          <nav className="creatureRadialTree" aria-label={`${agent.name} branches`}>
+            {childNodes.map((node, index) => {
+              const angle = -112 + (224 * index) / Math.max(childNodes.length - 1, 1);
+              const radius = path.length ? 148 : 106;
+              return (
+                <button
+                  type="button"
+                  className={`creatureTreeNode ${path.includes(node.id) ? "active" : ""} ${node.children?.length ? "branch" : "leaf"}`}
+                  key={node.id}
+                  onClick={() => choose(node)}
+                  data-interface-sound={node.children?.length ? "organ-branch" : "organ-leaf"}
+                  style={
+                    {
+                      "--node-x": `${Math.cos((angle * Math.PI) / 180) * radius}px`,
+                      "--node-y": `${Math.sin((angle * Math.PI) / 180) * radius}px`,
+                    } as React.CSSProperties
+                  }
+                  title={node.label}
+                >
+                  {node.icon}
+                  <span>{node.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        )}
+
+        {path.length > 0 && selected?.children?.length ? (
+          <div className="creatureBreadcrumb" aria-label={`${agent.name} selected branch`}>
+            <button type="button" onClick={() => setPath([])} data-interface-sound="organ-branch">
+              {tree.label}
+            </button>
+            {path.map((part, index) => (
+              <button
+                type="button"
+                key={part}
+                onClick={() => setPath(path.slice(0, index + 1))}
+                data-interface-sound="organ-branch"
+              >
+                {treeNodeAtPath(tree, path.slice(0, index + 1))?.label ?? part}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        {leaf && (
+          <section className={`creatureLeafSurface leaf-${leaf.id}`} aria-label={`${agent.name} ${leaf.label}`}>
+            <header className="creatureLeafHeader">
+              <span>{selectedPathLabel(tree, path)}</span>
+              <h2>{leaf.label}</h2>
+              <button type="button" onClick={() => setPath(path.slice(0, -1))} data-interface-sound="organ-close" title="Fold leaf">
+                ×
+              </button>
+            </header>
+            <div className="creatureLeafBody">{renderTreeLeaf(agent.id, leaf.id)}</div>
+          </section>
         )}
       </>
     );
+  }
+
+  function renderAgentHabitat(agent: ProjectedAgent) {
+    return <AgentTreeHabitat agent={agent} />;
   }
 
   return (
@@ -1319,6 +1210,120 @@ function organTitle(agentId: string) {
   if (agentId === "verification") return "Findings and risk";
   if (agentId === "reorientation") return "Memory and continuity";
   return "Local habitat";
+}
+
+function habitatIcon(agentId: string) {
+  if (agentId === "coordinator") return <ClipboardCheck size={18} aria-hidden="true" />;
+  if (agentId === "imagination") return <ListChecks size={18} aria-hidden="true" />;
+  if (agentId === "research") return <Eye size={18} aria-hidden="true" />;
+  if (agentId === "modeling") return <Map size={18} aria-hidden="true" />;
+  if (agentId === "implementation") return <Play size={18} aria-hidden="true" />;
+  if (agentId === "verification") return <CheckCircle2 size={18} aria-hidden="true" />;
+  return <RefreshCw size={18} aria-hidden="true" />;
+}
+
+function habitatTree(agentId: string): HabitatNode {
+  if (agentId === "coordinator") {
+    return {
+      id: "self",
+      label: "Self",
+      icon: habitatIcon(agentId),
+      children: [
+        { id: "read", label: "Read", icon: <Eye size={16} aria-hidden="true" />, children: [
+          { id: "crrc", label: "CRRC", icon: <Map size={16} aria-hidden="true" /> },
+          { id: "thread", label: "Thread", icon: <Database size={16} aria-hidden="true" /> },
+        ] },
+        { id: "write", label: "Write", icon: <ClipboardCheck size={16} aria-hidden="true" />, children: [
+          { id: "checkpoint", label: "Checkpoint", icon: <ClipboardCheck size={16} aria-hidden="true" /> },
+          { id: "run", label: "Run", icon: <Play size={16} aria-hidden="true" /> },
+        ] },
+        { id: "sound", label: "Sound", icon: <Boxes size={16} aria-hidden="true" />, children: [
+          { id: "harmony", label: "Harmony", icon: <Boxes size={16} aria-hidden="true" /> },
+        ] },
+      ],
+    };
+  }
+  if (agentId === "imagination") {
+    return { id: "imagination-root", label: "Imagination", icon: habitatIcon(agentId), children: [
+      { id: "planningRead", label: "Planning", icon: <ListChecks size={16} aria-hidden="true" />, children: [
+        { id: "drafts", label: "Drafts", icon: <ClipboardCheck size={16} aria-hidden="true" /> },
+        { id: "backlog", label: "Backlog", icon: <BriefcaseBusiness size={16} aria-hidden="true" /> },
+        { id: "captures", label: "Captures", icon: <FileText size={16} aria-hidden="true" /> },
+      ] },
+    ] };
+  }
+  if (agentId === "research") {
+    return { id: "eyes-root", label: "Eyes", icon: habitatIcon(agentId), children: [
+      { id: "evidenceBranch", label: "Evidence", icon: <Eye size={16} aria-hidden="true" />, children: [
+        { id: "graphQuery", label: "Graph Query", icon: <Map size={16} aria-hidden="true" /> },
+        { id: "artifacts", label: "Artifacts", icon: <FileText size={16} aria-hidden="true" /> },
+      ] },
+    ] };
+  }
+  if (agentId === "modeling") {
+    return { id: "body-root", label: "Body", icon: habitatIcon(agentId), children: [
+      { id: "structure", label: "Structure", icon: <Map size={16} aria-hidden="true" />, children: [
+        { id: "graph", label: "Graph", icon: <Map size={16} aria-hidden="true" /> },
+        { id: "modelingResult", label: "Result", icon: <Boxes size={16} aria-hidden="true" /> },
+      ] },
+    ] };
+  }
+  if (agentId === "implementation") {
+    return { id: "hands-root", label: "Hands", icon: habitatIcon(agentId), children: [
+      { id: "workspaceBranch", label: "Workspace", icon: <GitBranch size={16} aria-hidden="true" />, children: [
+        { id: "workspace", label: "Diff", icon: <GitBranch size={16} aria-hidden="true" /> },
+        { id: "implementationArtifact", label: "Artifact", icon: <FileText size={16} aria-hidden="true" /> },
+      ] },
+      { id: "continueBranch", label: "Continue", icon: <Play size={16} aria-hidden="true" />, children: [
+        { id: "continue", label: "Run", icon: <Play size={16} aria-hidden="true" /> },
+      ] },
+    ] };
+  }
+  if (agentId === "verification") {
+    return { id: "soul-root", label: "Soul", icon: habitatIcon(agentId), children: [
+      { id: "riskBranch", label: "Risk", icon: <AlertTriangle size={16} aria-hidden="true" />, children: [
+        { id: "findings", label: "Findings", icon: <Eye size={16} aria-hidden="true" /> },
+        { id: "runtime", label: "Runtime", icon: <Database size={16} aria-hidden="true" /> },
+        { id: "review", label: "Review", icon: <CheckCircle2 size={16} aria-hidden="true" /> },
+      ] },
+    ] };
+  }
+  return { id: "life-root", label: "Life", icon: habitatIcon(agentId), children: [
+    { id: "continuityBranch", label: "Continuity", icon: <RefreshCw size={16} aria-hidden="true" />, children: [
+      { id: "pressure", label: "Pressure", icon: <AlertTriangle size={16} aria-hidden="true" /> },
+      { id: "reorientVerdict", label: "Verdict", icon: <Map size={16} aria-hidden="true" /> },
+      { id: "reorientWorker", label: "Worker", icon: <Play size={16} aria-hidden="true" /> },
+    ] },
+  ] };
+}
+
+function treeNodeAtPath(root: HabitatNode, path: string[]) {
+  let node: HabitatNode | undefined = root;
+  for (const id of path) {
+    node = node?.children?.find((child) => child.id === id);
+  }
+  return node;
+}
+
+function pathForNode(root: HabitatNode, id: string): string[] {
+  function visit(node: HabitatNode, prefix: string[]): string[] | null {
+    if (node.id === id) return prefix;
+    for (const child of node.children ?? []) {
+      const found = visit(child, [...prefix, child.id]);
+      if (found) return found;
+    }
+    return null;
+  }
+  return visit(root, []) ?? [];
+}
+
+function selectedPathLabel(root: HabitatNode, path: string[]) {
+  const labels: string[] = [];
+  for (let index = 0; index < path.length; index += 1) {
+    const node = treeNodeAtPath(root, path.slice(0, index + 1));
+    if (node) labels.push(node.label);
+  }
+  return labels.join(" / ") || root.label;
 }
 
 function AgentConstellation({
@@ -1941,3 +1946,4 @@ function PathList({ title, items }: { title: string; items: string[] }) {
 function EmptyState({ label }: { label: string }) {
   return <p className="emptyState">{label}</p>;
 }
+

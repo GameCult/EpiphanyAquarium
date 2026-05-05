@@ -25,6 +25,7 @@ current_model:
     aquarium: .epiphany-aquarium
     backend_gui: E:\Projects\EpiphanyAgent\.epiphany-gui
   behavior_map: notes/aquarium-behavior-map.md
+  backend_api_tree_map: notes/epiphany-agent-api-tree-map.md
 
 interaction_laws:
   - The default screen shows only the aquarium, agents, fluid, and ambient state.
@@ -35,7 +36,7 @@ interaction_laws:
   - Audio must respond once per deliberate input gesture.
 
 next_actions:
-  - Deepen the new agent-owned habitats with distinct silhouettes, not just distinct content.
+  - Expand all seven agent interaction trees from the backend API tree map, with branch icons before leaf surfaces.
   - Add visual tests for all seven agent habitats, not only Eyes.
   - Give Self, Eyes, Imagination, Body, Hands, Soul, and Life distinct motion/reveal signatures.
   - Make agent petals more object-native while keeping them real DOM buttons.

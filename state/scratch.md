@@ -9,6 +9,8 @@ Current slice:
   but not broken down into aquarium-native agent organs.
 - Current implementation pass split selected-agent focus data/actions by Self,
   Imagination, Eyes, Body, Hands, Soul, and Life using `renderAgentHabitat`.
-- Next direction: give those habitats distinct silhouettes and motion grammar;
-  rename remaining smoke artifact filenames; broaden smoke around dismissal,
-  anchoring, petal identity, and one-hit audio.
+- Follow-up correction: tree depth is not capped at one level. The new direction
+  maps EpiphanyAgent API seams into recursive branch icons, and only leaf nodes
+  unfold concrete UI surfaces.
+- Added `notes/epiphany-agent-api-tree-map.md` to keep branch/leaf taxonomy
+  grounded in backend read/write/proposal/runtime surfaces.

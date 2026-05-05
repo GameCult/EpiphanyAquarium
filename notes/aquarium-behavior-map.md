@@ -107,8 +107,11 @@ flowchart TD
 ## Decomposition Pass
 
 The old `operatorSurface` slab has been removed from `src/App.tsx`. Selected
-agents now receive a generated habitat from `renderAgentHabitat(agent)`, so the
-same backend data and actions are distributed by owner:
+agents now receive a recursive interaction tree. A small organ seed opens branch
+icons radially; branch icons can open deeper branch icons; only leaf nodes unfold
+interactive surfaces. The tree is grounded in
+`notes/epiphany-agent-api-tree-map.md`, so the same backend data and actions are
+distributed by owner:
 
 - Self owns intent, command, thread/workspace binding, checkpoint, and run state.
 - Imagination owns drafts, backlog, and planning-lane actions.
