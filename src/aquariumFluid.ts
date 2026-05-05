@@ -20,6 +20,7 @@ export interface AquariumAgentFrame {
   phase: number;
   activity: number;
   harmony?: AquariumAgentHarmonyFrame;
+  heartbeat?: AquariumAgentHeartbeatFrame;
   options: AquariumOptionFrame[];
 }
 
@@ -67,6 +68,12 @@ export interface AquariumAgentHarmonyFrame {
   instrument: string;
   midi: number;
   program: number;
+}
+
+export interface AquariumAgentHeartbeatFrame {
+  active: boolean;
+  primary: boolean;
+  status: string;
 }
 
 export interface AquariumFrame {
@@ -146,6 +153,7 @@ interface AgentChirpMatrix {
   inkPulse: number;
   orbitRadius: number;
   panic: number;
+  pluck: number;
   radial: number;
   tangential: number;
 }
@@ -203,8 +211,11 @@ interface FluidParamZone {
 
 type ChirpletComponent = [number, number, number, number, number];
 
+const maxFluidAgents = 8;
+
 const fullscreenPositions: Record<string, { x: number; y: number }> = {
   coordinator: { x: 60, y: 42 },
+  face: { x: 72, y: 23 },
   imagination: { x: 60, y: 19 },
   research: { x: 90, y: 24 },
   reorientation: { x: 83, y: 43 },
@@ -215,6 +226,7 @@ const fullscreenPositions: Record<string, { x: number; y: number }> = {
 
 const compactPositions: Record<string, { x: number; y: number }> = {
   coordinator: { x: 50, y: 25 },
+  face: { x: 50, y: 33 },
   imagination: { x: 14, y: 34 },
   research: { x: 86, y: 34 },
   reorientation: { x: 50, y: 43 },
@@ -236,6 +248,19 @@ const agentPersonalities: Record<string, AgentPersonality> = {
     inkTempo: 0.22,
     precision: 0.82,
     hoverStillness: 0.9,
+  },
+  face: {
+    angle: -1.42,
+    radius: 0.42,
+    eccentricity: 0.18,
+    orbitSpeed: 0.02,
+    radialTempo: 0.32,
+    tangentialTempo: 0.28,
+    expressiveness: 0.92,
+    glowTempo: 0.72,
+    inkTempo: 0.5,
+    precision: 0.52,
+    hoverStillness: 0.84,
   },
   imagination: {
     angle: -2.22,
@@ -389,8 +414,8 @@ precision highp float;
 in vec2 vUv;
 out vec4 outColor;
 uniform sampler2D uVelocity;
-uniform vec4 uAgents[7];
-uniform float uActivity[7];
+uniform vec4 uAgents[${maxFluidAgents}];
+uniform float uActivity[${maxFluidAgents}];
 uniform int uCount;
 uniform float uAspect;
 uniform float uSplatForce;
@@ -399,7 +424,7 @@ uniform float uSwirlForce;
 uniform float uVelocityDamping;
 void main() {
   vec2 velocity = texture(uVelocity, vUv).xy * uVelocityDamping;
-  for (int i = 0; i < 7; i += 1) {
+  for (int i = 0; i < ${maxFluidAgents}; i += 1) {
     if (i >= uCount) break;
     vec2 agent = uAgents[i].xy;
     vec2 delta = vUv - agent;
@@ -597,8 +622,8 @@ export function createAquariumRenderer(canvas: HTMLCanvasElement, crispCanvas: H
 }
 
 class WebglAquariumRenderer implements AquariumRenderer {
-  private activity = new Float32Array(7);
-  private agentsUniform = new Float32Array(7 * 4);
+  private activity = new Float32Array(maxFluidAgents);
+  private agentsUniform = new Float32Array(maxFluidAgents * 4);
   private curl: FluidTarget | null = null;
   private dye: DoubleTarget | null = null;
   private draggingFluidParam: FluidParamKey | null = null;
@@ -611,6 +636,7 @@ class WebglAquariumRenderer implements AquariumRenderer {
   private hotOptions: HotZone[] = [];
   private hoveredAgentId: string | null = null;
   private acknowledgements = new Map<string, number>();
+  private heartbeatFingerprints = new Map<string, string>();
   private lastFluidParamChanged: FluidParamKey | null = null;
   private motion = new Map<string, MotionState>();
   private paramImpulse = 0;
@@ -674,6 +700,21 @@ class WebglAquariumRenderer implements AquariumRenderer {
 
   setFrame(frame: AquariumFrame) {
     this.frame = frame;
+    const now = this.time || performance.now() / 1000;
+    for (const agent of frame.agents) {
+      if (!agent.heartbeat?.primary) continue;
+      const fingerprint = `${agent.heartbeat.status}|${agent.status}|${agent.thought.slice(0, 48)}`;
+      const previous = this.heartbeatFingerprints.get(agent.id);
+      if (previous !== fingerprint) {
+        this.acknowledgements.set(agent.id, now);
+        this.ensureSoundscape()?.triggerBurst(agent, "notification");
+      }
+      this.heartbeatFingerprints.set(agent.id, fingerprint);
+    }
+    const liveAgentIds = new Set(frame.agents.map((agent) => agent.id));
+    for (const agentId of this.heartbeatFingerprints.keys()) {
+      if (!liveAgentIds.has(agentId)) this.heartbeatFingerprints.delete(agentId);
+    }
   }
 
   setHoveredAgent(id: string | null) {
@@ -863,7 +904,7 @@ class WebglAquariumRenderer implements AquariumRenderer {
       const acknowledgement = this.acknowledgementPulse(agent.id, time);
       const chirps = projectChirpMatrix(agent, personality, stateVector, time, hover, acknowledgement);
       const pull = this.pointer.active ? this.pointerPull(agent, state.x, state.y) : { x: 0, y: 0 };
-      const pointerPull = { x: pull.x * lerp(1, 0.08, hover), y: pull.y * lerp(1, 0.08, hover) };
+      const pointerPull = { x: pull.x * lerp(1, 0.72, explicitHover), y: pull.y * lerp(1, 0.72, explicitHover) };
       const orbitRadius = orbitScale * chirps.orbitRadius;
       const angle = chirps.angle;
       const normalX = Math.cos(angle);
@@ -891,20 +932,20 @@ class WebglAquariumRenderer implements AquariumRenderer {
                 pointerPull.y,
             };
       if (explicitHover) {
-        const acknowledgementMotion = acknowledgement * (2.6 + stateVector.panic * 2);
+        const acknowledgementMotion = (acknowledgement + chirps.pluck * 0.7) * (4.2 + stateVector.panic * 2);
         target = {
-          x: state.x + chirps.radial * acknowledgementMotion,
-          y: state.y + chirps.tangential * acknowledgementMotion,
+          x: target.x + chirps.radial * acknowledgementMotion,
+          y: target.y + chirps.tangential * acknowledgementMotion,
         };
       }
       const follow = (
-        0.0012 +
-        activity * 0.0032 +
-        personality.expressiveness * 0.0009 +
-        stateVector.urgency * 0.0018 +
+        0.0024 +
+        activity * 0.004 +
+        personality.expressiveness * 0.0011 +
+        stateVector.urgency * 0.002 +
         stateVector.panic * 0.005
-      ) * chirps.hoverDamping;
-      const damping = lerp(0.95, 0.86, hover) - stateVector.panic * 0.08;
+      ) * lerp(chirps.hoverDamping, 0.68, explicitHover);
+      const damping = lerp(0.92, 0.87, hover) - stateVector.panic * 0.06;
       state.vx = state.vx * damping + (target.x - state.x) * follow;
       state.vy = state.vy * damping + (target.y - state.y) * follow;
       state.x = clamp(state.x + state.vx, 42, this.simWidth - 42);
@@ -923,13 +964,11 @@ class WebglAquariumRenderer implements AquariumRenderer {
     const start = this.acknowledgements.get(id);
     if (start === undefined) return 0;
     const age = time - start;
-    if (age > 1.25) {
+    if (age > 1.45) {
       this.acknowledgements.delete(id);
       return 0;
     }
-    const ping = Math.exp(-((age - 0.18) * (age - 0.18)) / 0.018);
-    const tail = Math.max(0, 1 - age / 1.25) * 0.18;
-    return clamp(ping + tail, 0, 1);
+    return pluckedStringEnvelope(age, 9.5, 4.8);
   }
 
   private emitProjectionFrame(projected: ProjectedAgent[]) {
@@ -980,8 +1019,9 @@ class WebglAquariumRenderer implements AquariumRenderer {
     const dx = this.pointer.x - x;
     const dy = this.pointer.y - y;
     const dist = Math.hypot(dx, dy);
-    if (dist < 1 || dist > 130) return { x: 0, y: 0 };
-    const force = (1 - dist / 130) * (12 + agent.activity * 34);
+    if (dist < 1 || dist > 260) return { x: 0, y: 0 };
+    const influence = 1 - dist / 260;
+    const force = influence * influence * (34 + agent.activity * 76);
     return { x: (dx / dist) * force, y: (dy / dist) * force };
   }
 
@@ -1207,7 +1247,7 @@ class WebglAquariumRenderer implements AquariumRenderer {
     if (!this.velocity) return;
     this.agentsUniform.fill(0);
     this.activity.fill(0);
-    for (let index = 0; index < Math.min(7, projected.length); index += 1) {
+    for (let index = 0; index < Math.min(maxFluidAgents, projected.length); index += 1) {
       const agent = projected[index];
       this.agentsUniform[index * 4] = agent.x / this.simWidth;
       this.agentsUniform[index * 4 + 1] = 1 - agent.y / this.simHeight;
@@ -1220,7 +1260,7 @@ class WebglAquariumRenderer implements AquariumRenderer {
       gl.uniform1i(gl.getUniformLocation(program, "uVelocity"), 0);
       gl.uniform4fv(gl.getUniformLocation(program, "uAgents"), this.agentsUniform);
       gl.uniform1fv(gl.getUniformLocation(program, "uActivity"), this.activity);
-      gl.uniform1i(gl.getUniformLocation(program, "uCount"), Math.min(7, projected.length));
+      gl.uniform1i(gl.getUniformLocation(program, "uCount"), Math.min(maxFluidAgents, projected.length));
       gl.uniform1f(gl.getUniformLocation(program, "uAspect"), this.simWidth / Math.max(this.simHeight, 1));
       gl.uniform1f(gl.getUniformLocation(program, "uSplatForce"), this.fluidParams.splatForce * forceScale * (1 + this.paramImpulse * 2.5));
       gl.uniform1f(gl.getUniformLocation(program, "uSplatRadius"), splatFalloff(this.fluidParams.splatRadius * radiusScale));
@@ -1325,6 +1365,7 @@ class WebglAquariumRenderer implements AquariumRenderer {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, this.crispCanvas.width, this.crispCanvas.height);
     ctx.scale(scaleX, scaleY);
+    this.drawOrbitGuides(ctx, projected, time);
     if (this.frame.variant !== "fullscreen") {
       for (const agent of projected) {
         const hot = agent.id === activeAgent?.id || agent.id === this.frame.selectedAgentId;
@@ -1338,6 +1379,43 @@ class WebglAquariumRenderer implements AquariumRenderer {
       this.drawOperatorUi(ctx, time);
     }
     this.drawFluidPanel(ctx, time);
+    ctx.restore();
+  }
+
+  private drawOrbitGuides(ctx: CanvasRenderingContext2D, projected: ProjectedAgent[], time: number) {
+    const self = projected.find((agent) => agent.id === "coordinator");
+    if (!self) return;
+    const orbitScale = Math.min(this.simWidth, this.simHeight) * (this.simWidth < 540 ? 0.3 : 0.32);
+    ctx.save();
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3.5, 8]);
+    ctx.lineCap = "round";
+    for (const agent of projected) {
+      if (agent.id === "coordinator") continue;
+      const personality = personalityFor(agent.id);
+      const radius = orbitScale * agent.chirps.orbitRadius;
+      const rx = radius * (1 + personality.eccentricity);
+      const ry = radius * (0.78 - personality.eccentricity * 0.18);
+      const glow = ctx.createRadialGradient(self.x, self.y, Math.max(8, radius * 0.18), self.x, self.y, Math.max(rx, ry) * 1.18);
+      glow.addColorStop(0, hexAlpha(agent.glow, 0.02));
+      glow.addColorStop(0.32, hexAlpha(agent.glow, 0.28 + agent.chirps.pluck * 0.18));
+      glow.addColorStop(0.74, hexAlpha(agent.color, 0.17));
+      glow.addColorStop(1, hexAlpha(agent.glow, 0));
+      ctx.strokeStyle = glow;
+      ctx.globalAlpha = clamp(0.36 + agent.activity * 0.2 + agent.chirps.pluck * 0.34, 0.26, 0.82);
+      ctx.beginPath();
+      ctx.ellipse(
+        self.x,
+        self.y,
+        Math.max(18, rx),
+        Math.max(14, ry),
+        personality.angle * 0.08 + chirplet(time, agent.phase, 0.12, 0.01, 14) * 0.08,
+        0,
+        Math.PI * 2,
+      );
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
     ctx.restore();
   }
 
@@ -1759,6 +1837,7 @@ export type AgentSoundAction = "touch" | "selected" | "notification";
 
 const agentRegisters: Record<string, number> = {
   coordinator: 174.61,
+  face: 293.66,
   imagination: 523.25,
   research: 659.25,
   reorientation: 392.0,
@@ -1862,6 +1941,18 @@ const vocalProfiles: Record<string, VocalProfile> = {
       { frequency: 3650, bandwidth: 420, gain: 0.22 },
     ],
   },
+  face: {
+    f0: 293.66,
+    harmonics: 16,
+    phase: 1.12,
+    softness: 0.5,
+    formants: [
+      { frequency: 460, bandwidth: 80, gain: 0.86 },
+      { frequency: 1380, bandwidth: 180, gain: 0.92 },
+      { frequency: 2550, bandwidth: 270, gain: 0.46 },
+      { frequency: 3900, bandwidth: 460, gain: 0.24 },
+    ],
+  },
   imagination: {
     f0: 523.25,
     harmonics: 13,
@@ -1962,11 +2053,11 @@ function vocalChirpControls(agent: ProjectedAgent, time: number): VocalControls 
   const string = vocalPeriodicChirplet(time, agent.phase * 5.9 + agent.chirps.acknowledgement, 1.2 + agent.chirps.panic * 2.4, -0.6, 3.6, 0.075) * hoverCalm;
   const pulseEnergy = Math.max(Math.abs(glottis), Math.abs(tongue), Math.abs(lips), Math.abs(throat), Math.abs(vibrato), Math.abs(string));
   return {
-    breath: clamp(0.025 + agent.activity * 0.06 + pulseEnergy * 0.2 + agent.chirps.panic * 0.24 + agent.chirps.acknowledgement * 0.28, 0.01, 1),
-    glottisPitch: glottis * 0.95 + agent.chirps.tangential * 0.08 * hoverCalm + agent.chirps.acknowledgement * 0.58,
-    lips: lips * 0.8 + agent.chirps.acknowledgement * 0.2,
-    string: Math.abs(string) * (0.3 + agent.chirps.panic * 0.7 + agent.chirps.acknowledgement * 0.6),
-    tenseness: clamp(0.22 + pulseEnergy * 0.22 + agent.chirps.expression * 0.1 + agent.chirps.panic * 0.46 + agent.chirps.acknowledgement * 0.18, 0.08, 1),
+    breath: clamp(0.025 + agent.activity * 0.06 + pulseEnergy * 0.2 + agent.chirps.panic * 0.24 + agent.chirps.pluck * 0.18, 0.01, 1),
+    glottisPitch: glottis * 0.95 + agent.chirps.tangential * 0.08 * hoverCalm + agent.chirps.pluck * 0.36,
+    lips: lips * 0.8 + agent.chirps.pluck * 0.16,
+    string: Math.abs(string) * (0.3 + agent.chirps.panic * 0.7 + agent.chirps.pluck * 0.9),
+    tenseness: clamp(0.22 + pulseEnergy * 0.22 + agent.chirps.expression * 0.1 + agent.chirps.panic * 0.46 + agent.chirps.pluck * 0.26, 0.08, 1),
     throat: throat * 0.7 - agent.chirps.panic * 0.18,
     tongue: tongue * 0.85 + agent.chirps.radial * 0.08 * hoverCalm,
     vibrato,
@@ -2014,10 +2105,10 @@ function vocalOneShotChirplet(localSeconds: number, centerSeconds: number, width
 function vocalEventEnvelope(localSeconds: number, durationSeconds: number, action: AgentSoundAction) {
   if (localSeconds < 0 || localSeconds > durationSeconds) return 0;
   const x = clamp(localSeconds / Math.max(0.001, durationSeconds), 0, 1);
-  const attack = clamp(x / (action === "notification" ? 0.035 : 0.055), 0, 1);
-  const tail = Math.exp(-x * (action === "notification" ? 3.2 : action === "selected" ? 4.2 : 5.6));
-  const release = Math.sin(Math.PI * x) ** 0.38;
-  return attack * tail * release;
+  const attack = clamp(x / (action === "notification" ? 0.018 : 0.024), 0, 1);
+  const decay = action === "notification" ? 5.4 : action === "selected" ? 6.6 : 8.2;
+  const pluck = Math.abs(Math.sin(mathTau * (action === "notification" ? 9.5 : 7.4) * localSeconds));
+  return clamp(attack * Math.exp(-x * decay) * (0.36 + pluck * 0.92), 0, 1);
 }
 
 function hashString(value: string) {
@@ -2297,13 +2388,14 @@ class BufferedGpuSpectrumOutput {
     const profile = vocalProfileFor(event.agent.id);
     const tone = instrumentTone(event.agent.harmony?.program);
     const random = mulberry32(event.seed);
-    const driverSeconds = durationSeconds * 0.54;
-    const glottis = vocalOneShotChirplet(localSeconds, driverSeconds * 0.1, driverSeconds * 0.052, random() * mathTau, 10.5, 54);
-    const tongue = vocalOneShotChirplet(localSeconds, driverSeconds * 0.18, driverSeconds * 0.064, random() * mathTau, 7.6, -38);
-    const lips = vocalOneShotChirplet(localSeconds, driverSeconds * 0.28, driverSeconds * 0.072, random() * mathTau, 6.2, 30);
-    const throat = vocalOneShotChirplet(localSeconds, driverSeconds * 0.4, driverSeconds * 0.078, random() * mathTau, 4.6, -22);
-    const vibrato = vocalOneShotChirplet(localSeconds, driverSeconds * 0.54, driverSeconds * 0.086, random() * mathTau, 13.2, 62);
-    const string = vocalOneShotChirplet(localSeconds, driverSeconds * 0.7, driverSeconds * 0.095, random() * mathTau, 9.8, -48);
+    const driverSeconds = durationSeconds * 0.42;
+    const pluckBody = pluckedStringEnvelope(localSeconds, event.action === "notification" ? 10.8 : 8.6, event.action === "notification" ? 5.2 : 6.6);
+    const glottis = vocalOneShotChirplet(localSeconds, driverSeconds * 0.08, driverSeconds * 0.034, random() * mathTau, 8.5, 16) * pluckBody;
+    const tongue = vocalOneShotChirplet(localSeconds, driverSeconds * 0.14, driverSeconds * 0.046, random() * mathTau, 6.2, -12) * pluckBody;
+    const lips = vocalOneShotChirplet(localSeconds, driverSeconds * 0.22, driverSeconds * 0.052, random() * mathTau, 5.2, 10) * pluckBody;
+    const throat = vocalOneShotChirplet(localSeconds, driverSeconds * 0.32, driverSeconds * 0.06, random() * mathTau, 4.1, -8) * pluckBody;
+    const vibrato = vocalOneShotChirplet(localSeconds, driverSeconds * 0.48, driverSeconds * 0.07, random() * mathTau, 9.2, 18) * pluckBody;
+    const string = pluckBody + Math.abs(vocalOneShotChirplet(localSeconds, driverSeconds * 0.18, driverSeconds * 0.09, random() * mathTau, 7.8, -14)) * 0.42;
     const controls = {
       glottisPitch: glottis * (event.action === "notification" ? 1.1 : 0.72),
       tenseness: clamp(0.34 + envelope * (event.action === "notification" ? 0.48 : 0.3), 0.08, 1),
@@ -2312,15 +2404,15 @@ class BufferedGpuSpectrumOutput {
       lips: lips * 0.58 + (event.action === "touch" ? envelope * 0.2 : -envelope * 0.08),
       throat: throat * 0.55 + (event.action === "notification" ? -envelope * 0.18 : envelope * 0.08),
       vibrato: vibrato * (event.action === "notification" ? 0.7 : 0.42),
-      string: Math.abs(string) * (event.action === "notification" ? 1.0 : 0.64),
+      string: Math.abs(string) * (event.action === "notification" ? 1.18 : 0.86),
     };
     const formants = morphFormants(profile.formants, controls);
     const basePitch = (event.agent.harmony?.frequency ?? profile.f0) * (1 + controls.glottisPitch * 0.09 + controls.vibrato * 0.035);
     const drive = event.gain * envelope * tone.brightness * (event.action === "notification" ? 0.34 : event.action === "selected" ? 0.28 : 0.24);
     const harmonics = Math.round((event.action === "notification" ? 14 : event.action === "selected" ? 12 : 10) * tone.harmonics);
     const shape = {
-      attackPortion: event.action === "notification" ? 0.018 : 0.022,
-      decay: event.action === "notification" ? 12 : event.action === "selected" ? 15 : 18,
+      attackPortion: event.action === "notification" ? 0.012 : 0.016,
+      decay: event.action === "notification" ? 8.5 : event.action === "selected" ? 10.5 : 12.5,
       durationSamples: event.durationSamples,
       startSample: event.startSample,
     };
@@ -2328,8 +2420,8 @@ class BufferedGpuSpectrumOutput {
       const frequency = clamp(basePitch * harmonic * (1 + controls.throat * 0.002 * harmonic), 50, 15000);
       const tract = vocalFormantEnvelope(frequency, formants);
       const sourceTilt = 1 / Math.pow(harmonic, 0.94 + controls.tenseness * 0.32);
-      const amplitude = drive * tract * sourceTilt * (0.72 + controls.string * 0.38 * tone.pluck);
-      this.writeBin(bin, frequency, amplitude, random() * mathTau, controls.vibrato * 0.22 + controls.glottisPitch * 0.08, shape);
+      const amplitude = drive * tract * sourceTilt * (0.56 + controls.string * 0.72 * tone.pluck);
+      this.writeBin(bin, frequency, amplitude, random() * mathTau, controls.vibrato * 0.08 + controls.glottisPitch * 0.025, shape);
       bin += 1;
     }
     return bin;
@@ -2734,9 +2826,13 @@ function projectChirpMatrix(
   const hoverAmount = hover * personality.hoverStillness;
   const hoverFrequency = lerp(1, 0.035, hoverAmount);
   const hoverAmplitude = lerp(1, 0.035, hoverAmount);
+  const heartbeatPluck = agent.heartbeat?.active
+    ? (agent.heartbeat.primary ? 0.36 : 0.12) + heartbeatPulse(time, agent.phase) * (agent.heartbeat.primary ? 0.62 : 0.26)
+    : 0;
+  const pluck = clamp(acknowledgement + heartbeatPluck, 0, 1.35);
   const heat = clamp(state.activity * 0.3 + state.urgency * 0.22 + state.review * 0.08 + state.blocked * 0.08 + state.panic * 0.62, 0, 1);
   const expressiveGain = clamp(
-    (0.12 + personality.expressiveness * 0.18 + state.activity * 0.18 + state.urgency * 0.18 + state.panic * 0.9 + acknowledgement * 0.48) *
+    (0.12 + personality.expressiveness * 0.18 + state.activity * 0.18 + state.urgency * 0.18 + state.panic * 0.9 + pluck * 0.5) *
       hoverAmplitude,
     0.035,
     1.55,
@@ -2745,25 +2841,25 @@ function projectChirpMatrix(
     [agent.phase + personality.angle * 0.41, personality.radialTempo * hoverFrequency * (0.7 + heat * 0.38), 0.006 + state.urgency * 0.01, 10.5, 0.58],
     [agent.phase * 1.37, personality.radialTempo * 1.72 * hoverFrequency, -0.011 - personality.precision * 0.004, 7.8, 0.23],
     [agent.phase * 2.91 + state.panic, personality.radialTempo * 3.4 * hoverFrequency, 0.018 + state.panic * 0.035, 3.8, 0.08 + state.panic * 0.22],
-    ...chirpletSpectrum(agent.phase + personality.angle, personality.radialTempo, hoverFrequency, 9, 0.016 + personality.expressiveness * 0.01 + state.panic * 0.03 + acknowledgement * 0.025, 6.8),
+    ...chirpletSpectrum(agent.phase + personality.angle, personality.radialTempo, hoverFrequency, 9, 0.016 + personality.expressiveness * 0.01 + state.panic * 0.03 + pluck * 0.025, 6.8),
   ]);
   const tangential = layeredChirps(time, [
     [agent.phase * 1.73 + personality.angle, personality.tangentialTempo * hoverFrequency * (0.65 + state.activity * 0.3), -0.01 - personality.precision * 0.006, 9.2, 0.54],
     [agent.phase * 2.18, personality.tangentialTempo * 2.2 * hoverFrequency, 0.008 + personality.expressiveness * 0.006, 6.4, 0.22],
     [agent.phase * 3.5 + state.review, personality.tangentialTempo * 4.2 * hoverFrequency, -0.026 - state.panic * 0.02, 3.2, 0.08 + state.panic * 0.2],
-    ...chirpletSpectrum(agent.phase * 1.61 + personality.angle, personality.tangentialTempo, hoverFrequency, 8, 0.014 + personality.precision * 0.006 + state.panic * 0.026 + acknowledgement * 0.02, 7.4),
+    ...chirpletSpectrum(agent.phase * 1.61 + personality.angle, personality.tangentialTempo, hoverFrequency, 8, 0.014 + personality.precision * 0.006 + state.panic * 0.026 + pluck * 0.02, 7.4),
   ]);
   const flicker = layeredChirps(time, [
     [agent.phase * 2.37 + state.review * 0.9, personality.glowTempo * hoverFrequency * (0.86 + heat), 0.018 + state.blocked * 0.018, 6.8, 0.42],
-    [agent.phase * 4.1 + acknowledgement, personality.glowTempo * 2.8 * hoverFrequency, -0.024, 2.8, 0.18 + acknowledgement * 0.34],
+    [agent.phase * 4.1 + pluck, personality.glowTempo * 2.8 * hoverFrequency, -0.024, 2.8, 0.18 + pluck * 0.34],
     [agent.phase * 5.6 + state.panic, personality.glowTempo * 5.2 * hoverFrequency, 0.04 + state.panic * 0.06, 1.7, state.panic * 0.34],
-    ...chirpletSpectrum(agent.phase * 2.23 + state.review, personality.glowTempo, hoverFrequency, 10, 0.018 + heat * 0.018 + acknowledgement * 0.035, 5.2),
+    ...chirpletSpectrum(agent.phase * 2.23 + state.review, personality.glowTempo, hoverFrequency, 10, 0.018 + heat * 0.018 + pluck * 0.035, 5.2),
   ]);
   const ink = layeredChirps(time, [
     [agent.phase * 2.91 + state.urgency, personality.inkTempo * hoverFrequency * (0.72 + state.activity * 0.44), -0.011 + personality.expressiveness * 0.012, 8.4, 0.5],
     [agent.phase * 3.6, personality.inkTempo * 2.1 * hoverFrequency, 0.016, 5.6, 0.18],
-    [agent.phase * 6.2 + acknowledgement, personality.inkTempo * 4.6 * hoverFrequency, -0.032, 2.2, 0.08 + acknowledgement * 0.36 + state.panic * 0.16],
-    ...chirpletSpectrum(agent.phase * 2.87 + state.urgency, personality.inkTempo, hoverFrequency, 9, 0.016 + personality.expressiveness * 0.006 + state.panic * 0.02 + acknowledgement * 0.032, 6.1),
+    [agent.phase * 6.2 + pluck, personality.inkTempo * 4.6 * hoverFrequency, -0.032, 2.2, 0.08 + pluck * 0.36 + state.panic * 0.16],
+    ...chirpletSpectrum(agent.phase * 2.87 + state.urgency, personality.inkTempo, hoverFrequency, 9, 0.016 + personality.expressiveness * 0.006 + state.panic * 0.02 + pluck * 0.032, 6.1),
   ]);
   const panicJitter = layeredChirps(time, [
     [agent.phase * 7.1, 4.8 * hoverFrequency, 0.08, 1.9, 0.45],
@@ -2774,13 +2870,14 @@ function projectChirpMatrix(
   return {
     acknowledgement,
     angle: personality.angle + orbitDrift + tangential * 0.055 * expressiveGain + panicJitter * 0.12 + state.blocked * 0.035 - state.review * 0.025,
-    distortion: clamp(0.024 + personality.expressiveness * 0.028 + heat * 0.03 + Math.abs(flicker) * 0.02 + acknowledgement * 0.018, 0.012, 0.16),
+    distortion: clamp(0.024 + personality.expressiveness * 0.028 + heat * 0.03 + Math.abs(flicker) * 0.02 + pluck * 0.02, 0.012, 0.16),
     expression: clamp(expressiveGain, 0.035, 1.75),
-    glowPulse: clamp(0.5 + Math.abs(flicker) * 0.34 + heat * 0.34 + state.review * 0.1 + state.ready * 0.05 + acknowledgement * 0.62, 0.26, 2.1),
+    glowPulse: clamp(0.5 + Math.abs(flicker) * 0.34 + heat * 0.34 + state.review * 0.1 + state.ready * 0.05 + pluck * 0.62, 0.26, 2.1),
     hoverDamping: lerp(1, 0.06, hoverAmount),
-    inkPulse: clamp(0.24 + Math.abs(ink) * 0.34 + heat * 0.26 + state.blocked * 0.05 + acknowledgement * 0.45, 0.04, 1.8),
+    inkPulse: clamp(0.24 + Math.abs(ink) * 0.34 + heat * 0.26 + state.blocked * 0.05 + pluck * 0.45, 0.04, 1.8),
     orbitRadius: clamp(personality.radius * lerp(1.02, 0.9, state.blocked) * lerp(1, 1.04, state.ready), 0, 1.05),
     panic: state.panic,
+    pluck,
     radial: (radial + panicJitter * 0.8) * expressiveGain,
     tangential: (tangential + panicJitter * 0.52) * expressiveGain,
   };
@@ -2818,6 +2915,18 @@ function chirplet(time: number, phase: number, frequency: number, chirp: number,
   const centered = local - period / 2;
   const envelope = 0.28 + 0.72 * Math.exp(-(centered * centered) / (period * period * 0.18));
   return Math.sin(phase + frequency * local + chirp * local * local) * envelope;
+}
+
+function pluckedStringEnvelope(age: number, frequency = 8.5, decay = 5.2) {
+  if (age < 0) return 0;
+  const attack = clamp(age / 0.025, 0, 1);
+  const vibration = Math.abs(Math.sin(mathTau * frequency * age));
+  return clamp(attack * Math.exp(-age * decay) * (0.42 + vibration * 0.82), 0, 1);
+}
+
+function heartbeatPulse(time: number, phase: number) {
+  const beatAge = ((time + phase * 0.071) % 1.18 + 1.18) % 1.18;
+  return pluckedStringEnvelope(beatAge, 7.2, 7.8);
 }
 
 function toneColorFor(tone?: string) {

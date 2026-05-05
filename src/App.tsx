@@ -1544,6 +1544,7 @@ function AgentConstellation({
   const aquariumAgents = useMemo(() => {
     const optionsByKey = new globalThis.Map<string, AquariumOption>();
     const framedAgents = agents.map((agent) => {
+      const latestHeartbeatRole = text(latestHeartbeatEvent?.selectedRole, "").toLowerCase();
       const options: AquariumOptionFrame[] = (aquariumOptionsByAgent[agent.id] ?? []).map((option, index) => {
         const key = `${agent.id}:${index}:${option.label}`;
         optionsByKey.set(key, option);
@@ -1555,13 +1556,18 @@ function AgentConstellation({
       });
       return {
         ...agent,
+        heartbeat: {
+          active: Boolean(text(heartbeat?.status, "")) || Boolean(latestHeartbeatRole),
+          primary: latestHeartbeatRole === text(agent.laneId).toLowerCase() || latestHeartbeatRole === text(agent.id).toLowerCase(),
+          status: text(heartbeat?.status, "idle"),
+        },
         harmony: harmonyFrame?.agentVoices[agent.id],
         options,
       };
     });
     optionByKeyRef.current = optionsByKey;
     return framedAgents;
-  }, [agents, harmonyFrame, isActionBlocked]);
+  }, [agents, harmonyFrame, heartbeat, isActionBlocked, latestHeartbeatEvent]);
 
   useEffect(() => {
     const uiOptions = new globalThis.Map<string, AquariumOption>();

@@ -17,3 +17,8 @@ Current slice:
 - Current correction: thought bubbles are already universal, and heartbeat is
   now universal too. Every creature gets a Heartbeat branch with Status and
   Pulse leaves; Face keeps Bubble as the local public-speaking surface.
+- Current motion pass: render thin dashed gradient orbit guides in the crisp
+  canvas, keep agents spring-tethered to those orbit slots, strengthen pointer
+  attraction, and make touch/heartbeat pulses behave like damped plucked strings.
+  Heartbeat is shared across all creatures; the latest awakened role gets the
+  stronger local pluck.

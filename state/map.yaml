@@ -32,6 +32,8 @@ interaction_laws:
   - Data and controls appear only through interaction with aquarium objects.
   - Agent options are DOM controls anchored to the agent.
   - Focus surfaces are selected-agent local shells, not global panels.
+  - Agent motion stays tethered to visible orbit slots while pointer movement can attract nearby creatures.
+  - Every creature carries the shared heartbeat; the latest awakened role gets the stronger plucked-string oscillation.
   - WebGL fluid emission must correspond to visible objects.
   - Audio must respond once per deliberate input gesture.
 
@@ -48,3 +50,4 @@ landed:
   - Face is now an interactible aquarium organism. Its habitat exposes heartbeat status, heartbeat pulse, and bubble leaves over EpiphanyAgent's backend GUI action bridge.
   - The Tauri action bridge passes heartbeatStatus, runHeartbeat, and faceBubble through to EpiphanyAgent, so Face can surface local Aquarium chat bubbles without Discord.
   - Heartbeat is now shared creature anatomy. Every agent habitat has a Heartbeat branch with Status and Pulse leaves; Face keeps the Bubble leaf as the public mouth.
+  - Orbits are now visible as thin dashed gradient guides; mouse attraction pulls agents without severing orbit tethering, and touch/heartbeat chirps use plucked-string damping.

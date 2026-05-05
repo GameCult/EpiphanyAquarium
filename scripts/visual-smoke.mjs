@@ -78,6 +78,9 @@ async function smokeViewport(browser, viewport, screenshotPath, exerciseFluidPan
   if (!smokeProbe.nonBlank) {
     throw new Error(`agent smoke canvas did not render: ${smokeProbe.reason}`);
   }
+  if (!crispProbe.nonBlank) {
+    throw new Error(`agent crisp canvas did not render orbit guides: ${crispProbe.reason}`);
+  }
 
   const quietSurface = await page.evaluate(() => !document.querySelector(".agentFocusSurface"));
   if (!quietSurface) {
@@ -200,8 +203,8 @@ async function smokeViewport(browser, viewport, screenshotPath, exerciseFluidPan
       throw new Error(`research habitat did not replace the operator console: ${organProbe.reason}`);
     }
     await page.locator('[data-agent-focus="research"] .creatureRootIcon').dispatchEvent("click", { bubbles: true });
-    await page.locator('[data-agent-focus="research"] .creatureTreeNode').filter({ hasText: "Heartbeat" }).dispatchEvent("click", { bubbles: true });
-    await page.locator('[data-agent-focus="research"] .creatureTreeNode').filter({ hasText: "Status" }).dispatchEvent("click", { bubbles: true });
+    await clickCreatureTreeNode(page, "research", "Heartbeat");
+    await clickCreatureTreeNode(page, "research", "Status");
     const heartbeatLeafProbe = await page.evaluate(() => {
       const focus = document.querySelector('.agentStage [data-agent-focus="research"]');
       if (!(focus instanceof HTMLElement)) return { ok: false, reason: "research focus surface missing" };
@@ -218,10 +221,10 @@ async function smokeViewport(browser, viewport, screenshotPath, exerciseFluidPan
     if (!heartbeatLeafProbe.ok) {
       throw new Error(`research heartbeat branch did not unfold as shared creature anatomy: ${heartbeatLeafProbe.reason}`);
     }
-    await page.locator('[data-agent-focus="research"] .creatureLeafHeader button').dispatchEvent("click", { bubbles: true });
-    await page.locator('[data-agent-focus="research"] .creatureBreadcrumb button').first().dispatchEvent("click", { bubbles: true });
-    await page.locator('[data-agent-focus="research"] .creatureTreeNode').filter({ hasText: "Evidence" }).dispatchEvent("click", { bubbles: true });
-    await page.locator('[data-agent-focus="research"] .creatureTreeNode').filter({ hasText: "Graph Query" }).dispatchEvent("click", { bubbles: true });
+    await page.locator('[data-agent-focus="research"] .creatureRootIcon').dispatchEvent("click", { bubbles: true });
+    await page.locator('[data-agent-focus="research"] .creatureRootIcon').dispatchEvent("click", { bubbles: true });
+    await clickCreatureTreeNode(page, "research", "Evidence");
+    await clickCreatureTreeNode(page, "research", "Graph Query");
     const leafProbe = await page.evaluate(() => {
       const focus = document.querySelector('.agentStage [data-agent-focus="research"]');
       if (!(focus instanceof HTMLElement)) return { ok: false, reason: "research focus surface missing" };
@@ -240,13 +243,13 @@ async function smokeViewport(browser, viewport, screenshotPath, exerciseFluidPan
       await page.waitForFunction(() => {
         const audio = window.__epiphanyAquariumAudio;
         return audio?.state === "running" &&
-          audio.vocalAgentCount >= 7 &&
+          audio.vocalAgentCount >= 8 &&
           audio.lastBurstChirpDrivers >= 6 &&
           audio.spectral?.chirpDrivers === 6 &&
           audio.spectral?.lastBurstChoirVoices >= 3 &&
           audio.spectral?.reactiveFlushes >= 1 &&
           audio.spectral?.transientBins >= 24 &&
-          audio.spectral?.vocalAgents >= 7 &&
+          audio.spectral?.vocalAgents >= 8 &&
           audio.spectral?.queuedFrames >= 2048 &&
           audio.lastBurst;
       }, null, { timeout: 5000 });
@@ -292,6 +295,28 @@ async function smokeViewport(browser, viewport, screenshotPath, exerciseFluidPan
     throw new Error(`visual smoke found horizontal overflow at ${viewport.width}x${viewport.height}`);
   }
   return { smokeProbe, crispProbe, audioProbe, persistedParams };
+}
+
+async function clickCreatureTreeNode(page, agentId, title) {
+  const result = await page.evaluate(({ agentId, title }) => {
+    const focus = document.querySelector(`[data-agent-focus="${agentId}"]`);
+    if (!(focus instanceof HTMLElement)) return { ok: false, reason: "focus missing" };
+    const node = [...focus.querySelectorAll(".creatureTreeNode")]
+      .find((candidate) => candidate.getAttribute("title") === title);
+    if (!(node instanceof HTMLElement)) {
+      return {
+        ok: false,
+        reason: [...focus.querySelectorAll(".creatureTreeNode")]
+          .map((candidate) => candidate.getAttribute("title") ?? candidate.textContent?.trim())
+          .join(", "),
+      };
+    }
+    node.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    return { ok: true, reason: title };
+  }, { agentId, title });
+  if (!result.ok) {
+    throw new Error(`creature tree node ${agentId}/${title} was not clickable: ${result.reason}`);
+  }
 }
 
 async function probeCanvas(page, selector) {

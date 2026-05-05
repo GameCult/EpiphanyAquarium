@@ -25,7 +25,9 @@ The app has five cooperating layers:
 3. **Aquarium objects.** `AgentConstellation` turns eight roles into visible DOM
    creatures: Self, Face, Imagination, Eyes, Body, Hands, Soul, and Life. Each
    creature has a position, shape, tone, option halo, thought bubble, and optional
-   focus surface.
+   focus surface. The renderer draws thin dashed orbit guides behind them and
+   keeps their motion tethered to those orbit slots while allowing pointer
+   attraction.
 4. **Fluid and crisp canvas.** `src/aquariumFluid.ts` owns WebGL2 fluid
    simulation, fallback 2D rendering, hit zones, projection frames, fluid
    controls, and canvas-local picking. The smoke canvas carries dye and wakes;
@@ -65,8 +67,11 @@ flowchart TD
 - **Idle:** fullscreen water, drifting agents, crisp labels, ambient state, no
   focus surface. The initial screen is aquarium-first, not paperwork-first.
 - **Hover/touch agent:** the renderer marks that agent hot, emits CSS projection
-  variables, wakes sound on real user input, and opens the agent-local option
-  halo. Thought bubbles become readable when hot or selected.
+  variables, attracts nearby agents toward the pointer, wakes sound on real user
+  input, and opens the agent-local option halo. Every creature carries the shared
+  heartbeat; the latest awakened role gets a stronger pluck. Touch and heartbeat
+  events resolve as damped string-like oscillations through both motion and audio.
+  Thought bubbles become readable when hot or selected.
 - **Click agent:** React locks selection and mounts `agentFocusSurface` near that
   agent. This is the correct gate, but the mounted contents still behave like the
   inherited operator console.
