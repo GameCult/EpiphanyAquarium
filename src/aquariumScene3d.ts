@@ -41,6 +41,8 @@ const worldWidth = 10;
 const worldDepth = 7.2;
 const mathTau = Math.PI * 2;
 const stardustParticleCount = new URLSearchParams(globalThis.location?.search ?? "").has("smoke") ? 48_000 : 1_000_000;
+const stardustSpan = Math.ceil(Math.sqrt(stardustParticleCount));
+const stardustSpacing = (worldWidth * 3.4) / stardustSpan;
 const maxStardustSources = 8;
 
 export function createAquariumScene3d(canvas: HTMLCanvasElement): AquariumScene3d {
@@ -491,16 +493,13 @@ class ThreeAquariumScene implements AquariumScene3d {
   private createStardust() {
     const geometry = new THREE.BufferGeometry();
     const positions = new Float32Array(stardustParticleCount * 3);
-    const seeds = new Float32Array(stardustParticleCount);
     for (let index = 0; index < stardustParticleCount; index += 1) {
       const offset = index * 3;
-      positions[offset] = (hashNumber(index * 17 + 3) - 0.5) * worldWidth * 1.8;
-      positions[offset + 1] = (hashNumber(index * 31 + 5) - 0.5) * worldDepth * 1.8;
-      positions[offset + 2] = hashNumber(index * 43 + 7) * 2.8 + 0.12;
-      seeds[index] = hashNumber(index * 97 + 11);
+      positions[offset] = (index % stardustSpan) - stardustSpan / 2;
+      positions[offset + 1] = Math.floor(index / stardustSpan) - stardustSpan / 2;
+      positions[offset + 2] = 0;
     }
     geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute("aSeed", new THREE.BufferAttribute(seeds, 1));
     const points = new THREE.Points(geometry, this.stardustMaterial);
     points.frustumCulled = false;
     points.renderOrder = 4;
@@ -515,18 +514,17 @@ class ThreeAquariumScene implements AquariumScene3d {
         uGridScale: this.gravityUniforms.uGridScale,
         uGravityTex: this.gravityUniforms.uGravityTex,
         uGravitySize: this.gravityUniforms.uGravitySize,
+        uDustSpacing: { value: stardustSpacing },
         uSources: { value: sourceData },
         uTime: this.gravityUniforms.uTime,
-        uWorld: { value: new THREE.Vector2(worldWidth, worldDepth) },
       },
       vertexShader: `
-        attribute float aSeed;
         uniform vec2 uGravityOrigin;
         uniform vec2 uGridScale;
         uniform sampler2D uGravityTex;
         uniform vec2 uGravitySize;
+        uniform float uDustSpacing;
         uniform float uTime;
-        uniform vec2 uWorld;
         uniform vec4 uSources[${maxStardustSources}];
         varying float vAlpha;
         varying vec3 vColor;
@@ -535,46 +533,51 @@ class ThreeAquariumScene implements AquariumScene3d {
           return fract(sin(value * 12.9898) * 43758.5453);
         }
 
-        vec2 wrapWorld(vec2 value) {
-          vec2 size = uWorld * 1.8;
-          return mod(value + size * 0.5, size) - size * 0.5;
+        float hashCell(vec2 cell, float salt) {
+          return hash(dot(cell, vec2(127.1, 311.7)) + salt);
         }
 
         void main() {
-          vec3 p = position;
-          float pair = floor(aSeed * 2048.0);
-          float lifetime = fract(uTime * 0.11 + hash(pair));
-          float heightSeed = hash(aSeed * 173.0 + pair);
-          float sideSeed = hash(aSeed * 257.0 + 19.0);
-          float belowSeed = hash(aSeed * 331.0 + pair * 0.37);
+          vec2 cellOffset = position.xy;
+          vec2 originCell = floor(uGravityOrigin / uDustSpacing);
+          vec2 worldCell = cellOffset + originCell;
+          float cellSeed = hashCell(worldCell, 11.0);
+          float lifetime = fract(uTime * 0.11 + cellSeed);
+          float heightSeed = hashCell(worldCell, 173.0);
+          float sideSeed = hashCell(worldCell, 257.0);
+          float belowSeed = hashCell(worldCell, 331.0);
+          vec2 jitter = vec2(hashCell(worldCell, 19.0), hashCell(worldCell, 41.0)) - 0.5;
+          vec2 worldXY = (worldCell + jitter * 0.82) * uDustSpacing;
           vec2 flow = vec2(
-            sin(p.y * 1.7 + uTime * 0.23 + aSeed * 6.28318),
-            cos(p.x * 1.4 - uTime * 0.19 + aSeed * 5.31)
+            sin(worldXY.y * 1.7 + uTime * 0.23 + cellSeed * 6.28318),
+            cos(worldXY.x * 1.4 - uTime * 0.19 + cellSeed * 5.31)
           ) * 0.022;
           for (int i = 0; i < ${maxStardustSources}; i += 1) {
             vec4 source = uSources[i];
-            vec2 sourceLocal = (source.xy - uGravityOrigin) / max(uGridScale, vec2(0.001));
-            vec2 delta = sourceLocal - p.xy;
+            vec2 delta = source.xy - worldXY;
             float influence = exp(-dot(delta, delta) * 0.42) * source.z;
             vec2 tangent = normalize(vec2(-delta.y, delta.x) + vec2(0.001, 0.0));
             flow += tangent * influence * 0.038 + source.w * normalize(delta + vec2(0.001, 0.0)) * influence * 0.015;
           }
-          p.xy = wrapWorld(p.xy - flow * lifetime * 24.0 + vec2(uTime * 0.018, -uTime * 0.011));
-          vec2 gridUv = ((modelMatrix * vec4(p.xy, 0.0, 1.0)).xy - uGravityOrigin) / uGravitySize + 0.5;
+          worldXY -= flow * lifetime * 24.0;
+          vec2 fieldPosition = worldXY - uGravityOrigin;
+          vec2 gridUv = fieldPosition / uGravitySize + 0.5;
           float gravityMask = step(0.0, gridUv.x) * step(gridUv.x, 1.0) * step(0.0, gridUv.y) * step(gridUv.y, 1.0);
           vec4 field = texture2D(uGravityTex, clamp(gridUv, vec2(0.0), vec2(1.0))) * gravityMask;
           float gridHeight = -(field.r - field.g);
           float aboveHeight = -log(max(1.0 - heightSeed, 0.001)) * 0.18;
           float belowHeight = log(max(1.0 - belowSeed, 0.001)) * 0.045;
           float gridDistance = sideSeed < 0.12 ? belowHeight : aboveHeight;
-          gridDistance += sin(uTime * 0.31 + aSeed * 19.0) * 0.018;
-          p.z = gridHeight + gridDistance;
+          gridDistance += sin(uTime * 0.31 + cellSeed * 19.0) * 0.018;
+          vec3 p = vec3(fieldPosition / max(uGridScale, vec2(0.001)), gridHeight + gridDistance);
           vec4 mv = modelViewMatrix * vec4(p, 1.0);
           gl_Position = projectionMatrix * mv;
-          gl_PointSize = clamp((0.72 + hash(aSeed * 41.0) * 0.9) * (260.0 / max(-mv.z, 0.1)), 0.45, 2.4);
+          gl_PointSize = clamp((0.72 + hashCell(worldCell, 71.0) * 0.9) * (260.0 / max(-mv.z, 0.1)), 0.45, 2.4);
           float life = 1.0 - abs(lifetime - 0.5) * 1.6;
-          vAlpha = clamp(life, 0.08, 0.42) * 0.11;
-          vColor = mix(vec3(0.50, 0.98, 0.78), vec3(1.15, 1.08, 0.72), hash(aSeed * 13.0));
+          float edge = max(abs(fieldPosition.x) / max(uGravitySize.x * 0.5, 0.001), abs(fieldPosition.y) / max(uGravitySize.y * 0.5, 0.001));
+          float edgeFade = (1.0 - smoothstep(0.74, 1.0, edge)) * gravityMask;
+          vAlpha = clamp(life, 0.08, 0.42) * 0.11 * edgeFade;
+          vColor = mix(vec3(0.50, 0.98, 0.78), vec3(1.15, 1.08, 0.72), hashCell(worldCell, 13.0));
         }
       `,
       fragmentShader: `
@@ -860,8 +863,4 @@ function spectralGridWave(
     spatialFrequency,
     speed: mathTau * (breathingHertz * lowness + shimmerHertz * highness),
   };
-}
-
-function hashNumber(value: number) {
-  return ((Math.sin(value * 12.9898) * 43758.5453) % 1 + 1) % 1;
 }

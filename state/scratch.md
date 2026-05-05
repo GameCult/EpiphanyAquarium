@@ -128,3 +128,8 @@ Current slice:
   gravity sampling origin, and parented stardust now track the camera target so
   WASD/right-drag exploration moves across a continuous grid field instead of
   leaving the origin-centered floor behind.
+- Current stardust domain correction: match Aetheria's moving-domain trick.
+  Stardust buffer slots are cell offsets, not particle identities. The shader
+  maps those offsets to world-space cells around the moving gravity origin,
+  hashes world cell coordinates for jitter/height/lifetime/color, then fades at
+  the grid field edge so cells can hand off invisibly as the camera explores.
