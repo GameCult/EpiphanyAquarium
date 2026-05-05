@@ -165,6 +165,9 @@ interface ProjectedAgent extends AquariumAgentFrame, MotionState {
   index: number;
   emissionPulse: number;
   hover: number;
+  screenScale?: number;
+  screenX?: number;
+  screenY?: number;
   speed: number;
 }
 
@@ -553,8 +556,19 @@ uniform int uCount;
 uniform float uAspect;
 uniform float uExposure;
 uniform float uGlow;
+uniform vec4 uPointer;
 uniform float uSaturation;
 uniform float uTime;
+const float cameraHorizon = 0.07;
+const float cameraFarWidth = 0.45;
+const float cameraNearWidth = 1.16;
+vec3 screenToGrid(vec2 screenUv) {
+  float gridY = clamp((screenUv.y - cameraHorizon) / max(1.0 - cameraHorizon, 0.001), 0.0, 1.0);
+  float width = mix(cameraFarWidth, cameraNearWidth, pow(gridY, 0.78));
+  float gridX = (screenUv.x - 0.5) / max(width, 0.001) + 0.5;
+  float mask = step(0.0, gridX) * step(gridX, 1.0) * step(cameraHorizon, screenUv.y) * step(gridY, 1.0);
+  return vec3(gridX, gridY, mask);
+}
 vec3 acesFilm(vec3 x) {
   const float a = 2.51;
   const float b = 0.03;
@@ -607,29 +621,31 @@ float stardust(vec2 uv, float height, float slope, float density, vec2 flow) {
   return speck * exp(-dot(local, local) * 34.0) * smoothstep(0.004, 0.08, -height) * (0.22 + inkSpawn * 1.4);
 }
 void main() {
-  vec4 dye = texture(uDye, vUv);
-  vec2 flow = texture(uVelocity, vUv).xy;
+  vec3 projected = screenToGrid(vUv);
+  vec2 gridUv = clamp(projected.xy, vec2(0.0), vec2(1.0));
+  vec4 dye = texture(uDye, gridUv) * projected.z;
+  vec2 flow = texture(uVelocity, gridUv).xy * projected.z;
   vec3 color = max(dye.rgb, vec3(0.0));
   float density = max(dye.a, 0.0);
   vec3 glowColor = color;
   float glowDensity = density;
-  glowColor += texture(uDye, vUv + vec2(uTexelSize.x * 2.5, 0.0)).rgb;
-  glowColor += texture(uDye, vUv - vec2(uTexelSize.x * 2.5, 0.0)).rgb;
-  glowColor += texture(uDye, vUv + vec2(0.0, uTexelSize.y * 2.5)).rgb;
-  glowColor += texture(uDye, vUv - vec2(0.0, uTexelSize.y * 2.5)).rgb;
-  glowDensity += texture(uDye, vUv + vec2(uTexelSize.x * 4.5, uTexelSize.y * 4.5)).a;
-  glowDensity += texture(uDye, vUv + vec2(-uTexelSize.x * 4.5, uTexelSize.y * 4.5)).a;
-  glowDensity += texture(uDye, vUv + vec2(uTexelSize.x * 4.5, -uTexelSize.y * 4.5)).a;
-  glowDensity += texture(uDye, vUv + vec2(-uTexelSize.x * 4.5, -uTexelSize.y * 4.5)).a;
+  glowColor += texture(uDye, gridUv + vec2(uTexelSize.x * 2.5, 0.0)).rgb;
+  glowColor += texture(uDye, gridUv - vec2(uTexelSize.x * 2.5, 0.0)).rgb;
+  glowColor += texture(uDye, gridUv + vec2(0.0, uTexelSize.y * 2.5)).rgb;
+  glowColor += texture(uDye, gridUv - vec2(0.0, uTexelSize.y * 2.5)).rgb;
+  glowDensity += texture(uDye, gridUv + vec2(uTexelSize.x * 4.5, uTexelSize.y * 4.5)).a;
+  glowDensity += texture(uDye, gridUv + vec2(-uTexelSize.x * 4.5, uTexelSize.y * 4.5)).a;
+  glowDensity += texture(uDye, gridUv + vec2(uTexelSize.x * 4.5, -uTexelSize.y * 4.5)).a;
+  glowDensity += texture(uDye, gridUv + vec2(-uTexelSize.x * 4.5, -uTexelSize.y * 4.5)).a;
   glowColor /= 5.0;
   glowDensity /= 5.0;
   float glow = smoothstep(0.04, 3.8, glowDensity) * uGlow;
   color = color * uExposure + glowColor * glow * 0.55;
-  float h = agentHeight(vUv);
-  float hL = agentHeight(vUv - vec2(uTexelSize.x * 3.0, 0.0));
-  float hR = agentHeight(vUv + vec2(uTexelSize.x * 3.0, 0.0));
-  float hD = agentHeight(vUv - vec2(0.0, uTexelSize.y * 3.0));
-  float hU = agentHeight(vUv + vec2(0.0, uTexelSize.y * 3.0));
+  float h = agentHeight(gridUv);
+  float hL = agentHeight(gridUv - vec2(uTexelSize.x * 3.0, 0.0));
+  float hR = agentHeight(gridUv + vec2(uTexelSize.x * 3.0, 0.0));
+  float hD = agentHeight(gridUv - vec2(0.0, uTexelSize.y * 3.0));
+  float hU = agentHeight(gridUv + vec2(0.0, uTexelSize.y * 3.0));
   vec2 plan = vec2(hR - hL, hU - hD);
   vec3 normal = normalize(vec3(-plan * 24.0, 0.26));
   float slope = length(normal.xy);
@@ -638,11 +654,15 @@ void main() {
   float depth = smoothstep(0.002, 0.12, -h);
   float contour = contourLine(h, slope);
   float angles = angleLine(plan, slope, danger) * smoothstep(0.004, 0.09, -h);
-  float dust = stardust(vUv, h, slope, density, flow);
+  float dust = stardust(gridUv, h, slope, density, flow);
   vec3 terrain = mix(vec3(0.008, 0.026, 0.022), vec3(0.05, 0.19, 0.16), shade) * depth;
   terrain += mix(vec3(0.52, 0.92, 0.78), vec3(1.0, 0.48, 0.3), danger) * contour * (0.08 + slope * 0.28);
   terrain += vec3(0.42, 0.72, 1.0) * angles;
   terrain += vec3(0.8, 0.98, 0.9) * dust * (0.12 + length(flow) * 0.018);
+  float pointerDist = length((gridUv - uPointer.xy) * vec2(uAspect, 1.0));
+  float pointerRing = (1.0 - smoothstep(0.006, 0.014, abs(pointerDist - 0.026))) * uPointer.z * projected.z;
+  float pointerCore = (1.0 - smoothstep(0.0, 0.018, pointerDist)) * uPointer.z * projected.z;
+  terrain += vec3(0.92, 1.0, 0.72) * pointerRing * 0.34 + vec3(0.35, 0.95, 0.72) * pointerCore * 0.14;
   color += terrain * (0.72 - clamp(density * 0.08, 0.0, 0.42));
   color = acesFilm(color);
   color = gradeSaturation(color, uSaturation);
@@ -707,7 +727,7 @@ class WebglAquariumRenderer implements AquariumRenderer {
   private lastFluidParamChanged: FluidParamKey | null = null;
   private motion = new Map<string, MotionState>();
   private paramImpulse = 0;
-  private pointer = { active: false, x: 0, y: 0 };
+  private pointer = { active: false, screenX: 0, screenY: 0, x: 0, y: 0 };
   private pressure: DoubleTarget | null = null;
   private programs: Record<string, WebGLProgram>;
   private raf = 0;
@@ -744,7 +764,7 @@ class WebglAquariumRenderer implements AquariumRenderer {
   }
 
   clearPointer() {
-    this.pointer = { active: false, x: 0, y: 0 };
+    this.pointer = { active: false, screenX: 0, screenY: 0, x: 0, y: 0 };
   }
 
   dispose() {
@@ -758,7 +778,7 @@ class WebglAquariumRenderer implements AquariumRenderer {
   }
 
   pickOption() {
-    if (this.fluidParamZones.some((zone) => pointInRect(this.pointer.x, this.pointer.y, zone))) {
+    if (this.fluidParamZones.some((zone) => pointInRect(this.pointer.screenX, this.pointer.screenY, zone))) {
       return null;
     }
     const hit = this.hotOptions.find((zone) => hitZone(zone, this.pointer.x, this.pointer.y));
@@ -806,18 +826,19 @@ class WebglAquariumRenderer implements AquariumRenderer {
 
   setPointerClient(clientX: number, clientY: number) {
     const rect = this.canvas.getBoundingClientRect();
-    const x = ((clientX - rect.left) / Math.max(rect.width, 1)) * this.simWidth;
-    const y = ((clientY - rect.top) / Math.max(rect.height, 1)) * this.simHeight;
-    this.pointer = { active: true, x, y };
+    const screenX = ((clientX - rect.left) / Math.max(rect.width, 1)) * this.simWidth;
+    const screenY = ((clientY - rect.top) / Math.max(rect.height, 1)) * this.simHeight;
+    const grid = unprojectScreenPoint(screenX, screenY, this.simWidth, this.simHeight);
+    this.pointer = { active: true, screenX, screenY, x: grid.x, y: grid.y };
     if (this.draggingFluidParam) {
-      this.updateFluidParamFromPointer(this.draggingFluidParam, x);
+      this.updateFluidParamFromPointer(this.draggingFluidParam, screenX);
     }
   }
 
   pointerDownClient(clientX: number, clientY: number) {
     this.setPointerClient(clientX, clientY);
     this.ensureSoundscape();
-    const zone = this.fluidParamZones.find((candidate) => pointInRect(this.pointer.x, this.pointer.y, candidate));
+    const zone = this.fluidParamZones.find((candidate) => pointInRect(this.pointer.screenX, this.pointer.screenY, candidate));
     if (!zone) return;
     this.triggerInterfaceHit(`fluid-${zone.key}`);
     if (zone.key === "toggle") {
@@ -833,7 +854,7 @@ class WebglAquariumRenderer implements AquariumRenderer {
       return;
     }
     this.draggingFluidParam = zone.key;
-    this.updateFluidParamFromPointer(zone.key, this.pointer.x);
+    this.updateFluidParamFromPointer(zone.key, this.pointer.screenX);
   }
 
   pointerUp() {
@@ -1022,9 +1043,10 @@ class WebglAquariumRenderer implements AquariumRenderer {
       if (agent.id === "coordinator") {
         selfAnchor = state;
       }
-      this.hotAgents.push({ x: state.x, y: state.y, radius: 54, key: agent.id });
       const emissionPulse = chirps.inkPulse * lerp(1, 0.5, hover);
-      return { ...agent, ...state, chirps, emissionPulse, hover, index, speed: Math.hypot(state.vx, state.vy) };
+      const projected = projectGridPoint(state.x, state.y, state.z ?? 0, this.simWidth, this.simHeight);
+      this.hotAgents.push({ x: projected.x, y: projected.y, radius: 54 * projected.scale, key: agent.id });
+      return { ...agent, ...state, chirps, emissionPulse, hover, index, screenX: projected.x, screenY: projected.y, screenScale: projected.scale, speed: Math.hypot(state.vx, state.vy) };
     });
   }
 
@@ -1043,8 +1065,8 @@ class WebglAquariumRenderer implements AquariumRenderer {
     this.frame.onProjectionFrame?.(
       projected.map((agent) => ({
         id: agent.id,
-        xPercent: (agent.x / Math.max(this.simWidth, 1)) * 100,
-        yPercent: (agent.y / Math.max(this.simHeight, 1)) * 100,
+        xPercent: ((agent.screenX ?? agent.x) / Math.max(this.simWidth, 1)) * 100,
+        yPercent: ((agent.screenY ?? agent.y) / Math.max(this.simHeight, 1)) * 100,
         z: agent.z ?? 0,
         tilt: clamp(Math.atan2(agent.vy, agent.vx || 0.001) * 8, -10, 10),
         glowPulse: agent.chirps.glowPulse,
@@ -1450,7 +1472,9 @@ class WebglAquariumRenderer implements AquariumRenderer {
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.useProgram(this.programs.display);
     this.bindTexture(0, this.dye.read.texture);
+    this.bindTexture(1, this.velocity?.read.texture ?? null);
     gl.uniform1i(gl.getUniformLocation(this.programs.display, "uDye"), 0);
+    gl.uniform1i(gl.getUniformLocation(this.programs.display, "uVelocity"), 1);
     gl.uniform2f(gl.getUniformLocation(this.programs.display, "uTexelSize"), 1 / this.simWidth, 1 / this.simHeight);
     gl.uniform4fv(gl.getUniformLocation(this.programs.display, "uAgents"), this.agentsUniform);
     gl.uniform1fv(gl.getUniformLocation(this.programs.display, "uActivity"), this.activity);
@@ -1458,6 +1482,13 @@ class WebglAquariumRenderer implements AquariumRenderer {
     gl.uniform1f(gl.getUniformLocation(this.programs.display, "uAspect"), this.simWidth / Math.max(this.simHeight, 1));
     gl.uniform1f(gl.getUniformLocation(this.programs.display, "uExposure"), this.fluidParams.acesExposure);
     gl.uniform1f(gl.getUniformLocation(this.programs.display, "uGlow"), this.fluidParams.acesGlow);
+    gl.uniform4f(
+      gl.getUniformLocation(this.programs.display, "uPointer"),
+      this.pointer.x / Math.max(this.simWidth, 1),
+      this.pointer.y / Math.max(this.simHeight, 1),
+      this.pointer.active ? 1 : 0,
+      0,
+    );
     gl.uniform1f(gl.getUniformLocation(this.programs.display, "uSaturation"), this.fluidParams.acesSaturation);
     gl.uniform1f(gl.getUniformLocation(this.programs.display, "uTime"), this.time);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -1511,15 +1542,19 @@ class WebglAquariumRenderer implements AquariumRenderer {
       ctx.strokeStyle = glow;
       ctx.globalAlpha = clamp(0.36 + agent.activity * 0.2 + agent.chirps.pluck * 0.34, 0.26, 0.82);
       ctx.beginPath();
-      ctx.ellipse(
-        self.x,
-        self.y,
-        Math.max(18, rx),
-        Math.max(14, ry),
-        personality.angle * 0.08 + chirplet(time, agent.phase, 0.12, 0.01, 14) * 0.08,
-        0,
-        Math.PI * 2,
-      );
+      const rotation = personality.angle * 0.08 + chirplet(time, agent.phase, 0.12, 0.01, 14) * 0.08;
+      const cosRotation = Math.cos(rotation);
+      const sinRotation = Math.sin(rotation);
+      for (let step = 0; step <= 96; step += 1) {
+        const theta = (step / 96) * Math.PI * 2;
+        const localX = Math.cos(theta) * Math.max(18, rx);
+        const localY = Math.sin(theta) * Math.max(14, ry);
+        const gridX = self.x + localX * cosRotation - localY * sinRotation;
+        const gridY = self.y + localX * sinRotation + localY * cosRotation;
+        const projected = projectGridPoint(gridX, gridY, 0, this.simWidth, this.simHeight);
+        if (step === 0) ctx.moveTo(projected.x, projected.y);
+        else ctx.lineTo(projected.x, projected.y);
+      }
       ctx.stroke();
     }
     ctx.setLineDash([]);
@@ -1819,7 +1854,7 @@ class WebglAquariumRenderer implements AquariumRenderer {
     const iconY = this.simHeight - iconSize - 16 - inspectorGuard;
     const iconZone: FluidParamZone = { key: "toggle", x: iconX, y: iconY, width: iconSize, height: iconSize };
     this.fluidParamZones.push(iconZone);
-    const nearIcon = this.pointer.active && pointInInflatedRect(this.pointer.x, this.pointer.y, iconZone, 54);
+    const nearIcon = this.pointer.active && pointInInflatedRect(this.pointer.screenX, this.pointer.screenY, iconZone, 54);
     const open = this.fluidPanelPinned || nearIcon || this.draggingFluidParam !== null;
     const pulse = chirplet(time, 1.8, 2.4, 0.18, 2.8);
 
@@ -1873,7 +1908,7 @@ class WebglAquariumRenderer implements AquariumRenderer {
       const y = panelY + 52 + index * rowGap;
       const value = this.fluidParams[definition.key];
       const t = fluidParamToUnit(definition, value);
-      const hot = this.pointer.active && this.pointer.x >= railX - 4 && this.pointer.x <= railX + railWidth + 4 && this.pointer.y >= y - 5 && this.pointer.y <= y + 13;
+      const hot = this.pointer.active && this.pointer.screenX >= railX - 4 && this.pointer.screenX <= railX + railWidth + 4 && this.pointer.screenY >= y - 5 && this.pointer.screenY <= y + 13;
       this.fluidParamZones.push({ key: definition.key, x: railX - 5, y: y - 6, width: railWidth + 10, height: 18 });
       ctx.fillStyle = hot ? "#fbfff8" : "rgba(226, 245, 225, 0.82)";
       ctx.font = "900 8px Inter, system-ui, sans-serif";
@@ -1894,7 +1929,7 @@ class WebglAquariumRenderer implements AquariumRenderer {
 
     const resetZone: FluidParamZone = { key: "reset", x: panelX + panelWidth - 82, y: panelY + panelHeight - 34, width: 66, height: 22 };
     this.fluidParamZones.push(resetZone);
-    const resetHot = this.pointer.active && pointInRect(this.pointer.x, this.pointer.y, resetZone);
+    const resetHot = this.pointer.active && pointInRect(this.pointer.screenX, this.pointer.screenY, resetZone);
     ctx.globalAlpha = resetHot ? 0.94 : 0.72;
     ctx.fillStyle = resetHot ? "rgba(241, 95, 69, 0.26)" : "rgba(8, 14, 12, 0.74)";
     ctx.strokeStyle = "rgba(241, 95, 69, 0.56)";
@@ -3118,6 +3153,30 @@ function smoothstep(edge0: number, edge1: number, value: number) {
 
 function hoverInfluence(x: number, y: number, pointerX: number, pointerY: number, radius: number) {
   return 1 - clamp(distance(x, y, pointerX, pointerY) / Math.max(radius, 1), 0, 1);
+}
+
+function projectGridPoint(x: number, y: number, z: number, width: number, height: number) {
+  const gridX = x / Math.max(width, 1);
+  const gridY = y / Math.max(height, 1);
+  const horizon = 0.07;
+  const planeY = horizon + gridY * (1 - horizon);
+  const widthScale = lerp(0.45, 1.16, Math.pow(clamp(gridY, 0, 1), 0.78));
+  const perspectiveScale = lerp(0.74, 1.12, Math.pow(clamp(gridY, 0, 1), 0.65));
+  return {
+    scale: perspectiveScale,
+    x: (0.5 + (gridX - 0.5) * widthScale) * width,
+    y: (planeY - z * 0.09) * height,
+  };
+}
+
+function unprojectScreenPoint(x: number, y: number, width: number, height: number) {
+  const screenX = x / Math.max(width, 1);
+  const screenY = y / Math.max(height, 1);
+  const horizon = 0.07;
+  const gridY = clamp((screenY - horizon) / Math.max(1 - horizon, 0.001), 0, 1);
+  const widthScale = lerp(0.45, 1.16, Math.pow(gridY, 0.78));
+  const gridX = clamp((screenX - 0.5) / Math.max(widthScale, 0.001) + 0.5, 0, 1);
+  return { x: gridX * width, y: gridY * height };
 }
 
 function aetheriaPowerPulse(x: number, exponent: number) {

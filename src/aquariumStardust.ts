@@ -17,7 +17,7 @@ type StardustParticle = {
   velocity: [number, number];
 };
 
-const particleCount = 4096;
+const particleCount = 2048;
 const particleStrideFloats = 12;
 const maxStardustAgents = 8;
 
@@ -96,8 +96,8 @@ fn updateParticles(@builtin(global_invocation_id) id: vec3u) {
   }
 
   let speed = clamp(length(particle.velocity) / 80.0, 0.0, 1.0);
-  particle.color = vec4f(0.50 + speed * 0.34, 0.86 + speed * 0.08, 0.74 + speed * 0.22, uniforms.alpha * (0.18 + speed * 0.48));
-  particle.size = mix(0.9, 2.7, hash(particle.seed * 19.0 + uniforms.time * 0.11)) * (0.8 + speed * 0.8);
+  particle.color = vec4f(0.50 + speed * 0.34, 0.86 + speed * 0.08, 0.74 + speed * 0.22, uniforms.alpha * (0.035 + speed * 0.12));
+  particle.size = mix(0.45, 1.35, hash(particle.seed * 19.0 + uniforms.time * 0.11)) * (0.72 + speed * 0.48);
   particles[index] = particle;
 }
 `;
@@ -305,7 +305,7 @@ class WebGpuStardustOverlay implements AquariumStardustOverlay {
     this.uniforms[3] = height;
     this.uniforms[5] = particleCount;
     this.uniforms[6] = 1;
-    this.uniforms[7] = 0.56;
+    this.uniforms[7] = 0.18;
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniforms);
 
     const encoder = this.device.createCommandEncoder({ label: "stardust frame" });

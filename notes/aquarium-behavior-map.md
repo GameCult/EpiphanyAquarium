@@ -28,7 +28,8 @@ The app has five cooperating layers:
    focus surface. The renderer draws thin dashed orbit guides behind them and
    keeps their motion tethered to those orbit slots while allowing pointer
    attraction. Agents are projected as hovering objects above gravity cups, not
-   as points embedded in the surface.
+   as points embedded in the surface. Their grid coordinates project through a
+   tilted near-omniscient camera before reaching DOM.
 4. **Fluid and crisp canvas.** `src/aquariumFluid.ts` owns WebGL2 fluid
    simulation, fallback 2D rendering, hit zones, projection frames, fluid
    controls, and canvas-local picking. The smoke canvas now renders an
@@ -80,7 +81,9 @@ flowchart TD
   short-range attraction so they can be pulled out of orbit deliberately. The
   force is derived from an Aetheria-style heightfield normal and scaled by
   horizontal slope squared, so it tapers toward the center instead of jerking
-  arriving objects around. It also
+  arriving objects around. Cursor screen coordinates are unprojected to the grid
+  before force is applied, and the shader draws a landing mark on the projected
+  surface. It also
   wakes sound on real user input and opens the agent-local option halo. Every
   creature carries the shared heartbeat; the latest awakened role gets a stronger
   pluck. Touch and heartbeat events resolve as damped string-like oscillations

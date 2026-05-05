@@ -35,3 +35,7 @@ Current slice:
   as fallback. Current bridge mirrors agent projection velocity into a flow
   source buffer; a future full WebGPU fluid port can share the true velocity
   texture directly.
+- Current camera pass: the aquarium now treats agent positions as grid
+  coordinates, projects them through a tilted overhead camera for DOM/rendering,
+  unprojects cursor screen input back onto the grid, and draws a cursor landing
+  mark on the surface.

@@ -36,6 +36,7 @@ interaction_laws:
   - Agent motion stays tethered to visible orbit slots; pointer force is welcoming at range, only Soul pulls back weakly, and all creatures attract strongly up close.
   - Pointer force follows Aetheria's gravity model: derive force from a PowerPulse heightfield normal and scale by horizontal slope squared so wells taper near their centers.
   - Agents hover above their gravity cups; WebGL renders the well surface underneath, while DOM glyphs receive elevation and scale from projected height.
+  - The aquarium camera is near-omniscient: grid coordinates project through a tilted overhead camera, and cursor input unprojects back to the grid before applying force.
   - WebGPU stardust is optional progressive enhancement: real compute updates particles from mirrored flow sources, while WebGL2 remains the compatible surface/ink fallback.
   - Every creature carries the shared heartbeat; the latest awakened role gets the stronger plucked-string oscillation.
   - WebGL fluid emission must correspond to visible objects.
@@ -57,3 +58,4 @@ landed:
   - Orbits are now visible as thin dashed gradient guides; mouse attraction pulls agents without severing orbit tethering, and touch/heartbeat chirps use plucked-string damping.
   - Aetheria-style gravity cups now shape pointer attraction and the WebGL aquarium surface; agents project a hover offset above their wells.
   - Added an optional WebGPU compute stardust layer modeled after Aetheria's compute particles, keyed from agent flow instead of gravity.
+  - Added a tilted grid camera projection: shader pixels sample the grid through an inverse camera map, DOM agents project through the same view, and the cursor becomes a grid landing mark.
