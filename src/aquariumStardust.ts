@@ -51,6 +51,21 @@ fn hash(value: f32) -> f32 {
   return fract(sin(value * 12.9898) * 43758.5453);
 }
 
+fn hash2(cell: vec2f) -> f32 {
+  return hash(dot(cell, vec2f(127.1, 311.7)));
+}
+
+fn wrap2(value: vec2f, size: vec2f) -> vec2f {
+  return fract(value / size) * size;
+}
+
+fn proceduralCurl(point: vec2f, seed: f32) -> vec2f {
+  let angle =
+    sin(point.x * 0.013 + uniforms.time * 0.21 + seed * 6.28318) +
+    cos(point.y * 0.017 - uniforms.time * 0.16 + seed * 4.71);
+  return vec2f(cos(angle * 3.14159), sin(angle * 3.14159));
+}
+
 @compute @workgroup_size(128)
 fn updateParticles(@builtin(global_invocation_id) id: vec3u) {
   let index = id.x;
@@ -59,45 +74,47 @@ fn updateParticles(@builtin(global_invocation_id) id: vec3u) {
   }
 
   var particle = particles[index];
-  let dt = clamp(uniforms.dt, 0.0, 0.05);
-  var flow = vec2f(
-    sin(uniforms.time * 0.17 + particle.seed * 6.28318),
-    cos(uniforms.time * 0.13 + particle.seed * 7.31)
-  ) * 2.8;
+  let pairIndex = index / 2u;
+  let companion = index - pairIndex * 2u;
+  let span = u32(ceil(sqrt(uniforms.particleCount * 0.5)));
+  let cell = vec2f(f32(pairIndex % span), f32(pairIndex / span));
+  let center = vec2f(uniforms.width, uniforms.height) * 0.5;
+  let spacing = max(min(uniforms.width, uniforms.height) / f32(span), 14.0);
+  let scroll = vec2f(uniforms.time * 28.0, uniforms.time * -17.0);
+  let gridOffset = floor(scroll / spacing);
+  let seededCell = cell + gridOffset;
+  let seed = hash2(seededCell);
+  let period = 5.2;
+  let lifetime = fract(uniforms.time / period + seed);
+  let pairPhase = seed * 6.28318;
+  let jitter = vec2f(
+    hash2(seededCell + vec2f(17.0, 3.0)),
+    hash2(seededCell + vec2f(5.0, 29.0))
+  ) - vec2f(0.5);
+  let pairedOffset = select(-1.0, 1.0, companion == 1u) * vec2f(cos(pairPhase), sin(pairPhase)) * spacing * 0.26;
+  var base = (cell - vec2f(f32(span) * 0.5)) * spacing + center + scroll + jitter * spacing * 0.82 + pairedOffset;
+  base = wrap2(base, vec2f(uniforms.width, uniforms.height));
+  var flow = proceduralCurl(base, seed) * 9.0;
 
   for (var i = 0u; i < ${maxStardustAgents}u; i = i + 1u) {
     if (f32(i) >= uniforms.count) {
       break;
     }
     let agent = agents[i];
-    let delta = agent.xy - particle.position;
+    let delta = agent.xy - base;
     let dist2 = max(dot(delta, delta), 1.0);
     let influence = exp(-dist2 * 0.000018);
     let tangent = normalize(vec2f(-delta.y, delta.x) + vec2f(0.001, 0.0));
     flow += agent.zw * influence * 1.1 + tangent * influence * (16.0 + length(agent.zw) * 0.7);
   }
 
-  particle.velocity = mix(particle.velocity, flow * uniforms.flowGain, 0.045 + hash(particle.seed + uniforms.time) * 0.018);
-  particle.position += particle.velocity * dt * 60.0;
-  particle.life = fract(particle.life + dt * (0.05 + hash(particle.seed * 17.0) * 0.08));
-
-  if (particle.position.x < -24.0 || particle.position.x > uniforms.width + 24.0 || particle.position.y < -24.0 || particle.position.y > uniforms.height + 24.0) {
-    let edge = hash(particle.seed + floor(uniforms.time * 3.0));
-    if (edge < 0.25) {
-      particle.position = vec2f(hash(particle.seed + 1.0) * uniforms.width, -8.0);
-    } else if (edge < 0.5) {
-      particle.position = vec2f(uniforms.width + 8.0, hash(particle.seed + 2.0) * uniforms.height);
-    } else if (edge < 0.75) {
-      particle.position = vec2f(hash(particle.seed + 3.0) * uniforms.width, uniforms.height + 8.0);
-    } else {
-      particle.position = vec2f(-8.0, hash(particle.seed + 4.0) * uniforms.height);
-    }
-    particle.velocity *= 0.15;
-  }
-
+  particle.velocity = flow * uniforms.flowGain;
+  particle.position = wrap2(base - particle.velocity * lifetime * period, vec2f(uniforms.width, uniforms.height));
+  particle.life = lifetime;
+  particle.seed = seed;
   let speed = clamp(length(particle.velocity) / 80.0, 0.0, 1.0);
   particle.color = vec4f(0.50 + speed * 0.34, 0.86 + speed * 0.08, 0.74 + speed * 0.22, uniforms.alpha * (0.035 + speed * 0.12));
-  particle.size = mix(0.45, 1.35, hash(particle.seed * 19.0 + uniforms.time * 0.11)) * (0.72 + speed * 0.48);
+  particle.size = mix(0.45, 1.35, hash(seed * 19.0)) * (0.72 + speed * 0.48) * (1.0 - abs(lifetime - 0.5) * 0.9);
   particles[index] = particle;
 }
 `;

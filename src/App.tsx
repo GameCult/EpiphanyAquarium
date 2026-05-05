@@ -1737,11 +1737,18 @@ function AgentConstellation({
   }, []);
 
   const applyProjectionFrame = useCallback((projections: AquariumAgentProjection[]) => {
-    for (const projection of projections) {
+    const sceneProjections = projections.map((projection) => {
+      const agent = aquariumAgents.find((candidate) => candidate.id === projection.id);
+      return { ...projection, color: agent?.color, glow: agent?.glow };
+    });
+    scene3dRef.current?.setProjections(sceneProjections);
+    const visualProjections = scene3dRef.current?.projectProjections(sceneProjections) ?? projections;
+    for (const projection of visualProjections) {
       const agentNode = agentNodeRefs.current.get(projection.id);
       const thoughtNode = thoughtNodeRefs.current.get(projection.id);
       const optionHaloNode = optionHaloNodeRefs.current.get(projection.id);
       const focusSurfaceNode = (selectedAgentId ?? hoveredAgentId) === projection.id ? focusSurfaceRef.current : null;
+      const visualScale = projection.screenScale ?? 1;
       const properties: Array<[string, string]> = [
         ["--agent-x", `${projection.xPercent}%`],
         ["--agent-y", `${projection.yPercent}%`],
@@ -1755,7 +1762,7 @@ function AgentConstellation({
         ["--agent-expression", String(projection.expression)],
         ["--agent-hover", String(projection.hover)],
         ["--agent-ack", String(projection.acknowledgement)],
-        ["--agent-scale", String(1 + projection.acknowledgement * 0.035 + projection.hover * 0.018 + projection.z * 0.055)],
+        ["--agent-scale", String(visualScale * (1 + projection.acknowledgement * 0.035 + projection.hover * 0.018 + projection.z * 0.055))],
       ];
       for (const [name, value] of properties) {
         agentNode?.style.setProperty(name, value);
@@ -1766,13 +1773,7 @@ function AgentConstellation({
       thoughtNode?.toggleAttribute("data-agent-hot", projection.hover > 0.35);
       optionHaloNode?.toggleAttribute("data-agent-hot", projection.hover > 0.2);
     }
-    scene3dRef.current?.setProjections(
-      projections.map((projection) => {
-        const agent = aquariumAgents.find((candidate) => candidate.id === projection.id);
-        return { ...projection, color: agent?.color, glow: agent?.glow };
-      }),
-    );
-    stardustRef.current?.setProjections(projections);
+    stardustRef.current?.setProjections(visualProjections);
   }, [aquariumAgents, hoveredAgentId, selectedAgentId]);
 
   useEffect(() => {
@@ -1787,7 +1788,7 @@ function AgentConstellation({
   }, [activeDeck, activeSubdeck, applyProjectionFrame, aquariumAgents, selectedAgentId, ui, variant]);
 
   function handlePointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
-    rendererRef.current?.setPointerClient(event.clientX, event.clientY);
+    updatePointerProjection(event.clientX, event.clientY, event.currentTarget);
     if (cameraDragButtonRef.current === null && ((event.buttons & 2) !== 0 || (event.buttons & 4) !== 0)) {
       cameraDragButtonRef.current = (event.buttons & 4) !== 0 ? 1 : 2;
       scene3dRef.current?.pointerDown(pointerPercent(event.clientX, event.clientY, event.currentTarget), cameraDragButtonRef.current);
@@ -1800,6 +1801,7 @@ function AgentConstellation({
     event.currentTarget.setPointerCapture(event.pointerId);
     if (event.button === 0) {
       rendererRef.current?.pointerDownClient(event.clientX, event.clientY);
+      updatePointerProjection(event.clientX, event.clientY, event.currentTarget);
     }
     if (event.button === 1 || event.button === 2) {
       cameraDragButtonRef.current = event.button;
@@ -1890,14 +1892,12 @@ function AgentConstellation({
 
   function handleAgentPointerEnter(agentId: string, event: React.PointerEvent<HTMLElement>) {
     setHoveredAgentId(agentId);
-    rendererRef.current?.setPointerClient(event.clientX, event.clientY);
-    scene3dRef.current?.setPointer(pointerPercent(event.clientX, event.clientY, event.currentTarget.closest(".agentStage")));
+    updatePointerProjection(event.clientX, event.clientY, event.currentTarget.closest(".agentStage"));
     rendererRef.current?.setHoveredAgent(agentId);
   }
 
   function handleAgentPointerMove(event: React.PointerEvent<HTMLElement>) {
-    rendererRef.current?.setPointerClient(event.clientX, event.clientY);
-    scene3dRef.current?.setPointer(pointerPercent(event.clientX, event.clientY, event.currentTarget.closest(".agentStage")));
+    updatePointerProjection(event.clientX, event.clientY, event.currentTarget.closest(".agentStage"));
   }
 
   function handleAgentPointerLeave() {
@@ -1937,6 +1937,17 @@ function AgentConstellation({
       xPercent: clampNumber(((clientX - rect.left) / Math.max(rect.width, 1)) * 100, 0, 100),
       yPercent: clampNumber(((clientY - rect.top) / Math.max(rect.height, 1)) * 100, 0, 100),
     };
+  }
+
+  function updatePointerProjection(clientX: number, clientY: number, target: Element | null) {
+    const pointer = pointerPercent(clientX, clientY, target);
+    scene3dRef.current?.setPointer(pointer);
+    const grid = scene3dRef.current?.projectPointerToGrid(pointer);
+    if (grid) {
+      rendererRef.current?.setPointerGridPercent(clientX, clientY, grid.xPercent, grid.yPercent);
+    } else {
+      rendererRef.current?.setPointerClient(clientX, clientY);
+    }
   }
 
   function handleInterfacePointerDown(event: React.PointerEvent<HTMLElement>) {
@@ -2069,10 +2080,10 @@ function AgentConstellation({
             onPointerLeave={handleAgentPointerLeave}
             onMouseEnter={(event) => {
               setHoveredAgentId(agent.id);
-              rendererRef.current?.setPointerClient(event.clientX, event.clientY);
+              updatePointerProjection(event.clientX, event.clientY, event.currentTarget.closest(".agentStage"));
               rendererRef.current?.setHoveredAgent(agent.id);
             }}
-            onMouseMove={(event) => rendererRef.current?.setPointerClient(event.clientX, event.clientY)}
+            onMouseMove={(event) => updatePointerProjection(event.clientX, event.clientY, event.currentTarget.closest(".agentStage"))}
             onMouseLeave={handleAgentPointerLeave}
             title={`${agent.name}: ${agent.thought}`}
             style={
@@ -2126,10 +2137,10 @@ function AgentConstellation({
               data-agent-options={agent.id}
               onPointerEnter={(event) => {
                 setHoveredAgentId(agent.id);
-                rendererRef.current?.setPointerClient(event.clientX, event.clientY);
+                updatePointerProjection(event.clientX, event.clientY, event.currentTarget.closest(".agentStage"));
                 rendererRef.current?.setHoveredAgent(agent.id);
               }}
-              onPointerMove={(event) => rendererRef.current?.setPointerClient(event.clientX, event.clientY)}
+              onPointerMove={(event) => updatePointerProjection(event.clientX, event.clientY, event.currentTarget.closest(".agentStage"))}
               onPointerLeave={handleAgentPointerLeave}
               style={
                 {

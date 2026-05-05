@@ -105,6 +105,15 @@ flowchart TD
   XY plane, while WASD pans along the projected view basis. Mouse coordinates
   are projected through the camera ray onto XY so cursor deltas and distances to
   agents stay consistent.
+- **Projection ownership:** Three camera projection is the placement authority
+  for DOM agents, thought bubbles, radial option halos, focus surfaces, and
+  stardust attractors. Fluid still owns creature motion in grid coordinates, but
+  visible UI positions come from projecting those grid coordinates through the
+  same camera that renders the grid.
+- **Stardust:** WebGPU stardust follows Aetheria's compute pattern: particles
+  are regenerated from moving grid cells with hash-stable paired phases, then
+  offset along the sampled flow field by lifetime. It reads as continuous flow
+  without pretending every mote needs long-lived stored integration state.
 - **Click agent:** React locks selection and mounts `agentFocusSurface` near that
   agent. This is the correct gate, but the mounted contents still behave like the
   inherited operator console.

@@ -61,3 +61,11 @@ Current slice:
 - Pan correction: right-drag samples previous/current mouse ray intersections
   with XY and shifts the camera target by their difference; this avoids bespoke
   pan-vector compensation because the grid projection provides the delta.
+- Projection repair pass: DOM creature icons, thought bubbles, radial option
+  halos, focus surfaces, stardust attractors, and pointer-to-grid input should
+  use the Three camera projection/unprojection rather than the old percent-space
+  faux perspective.
+- Aetheria stardust reference: `Assets/Shaders/Compute/Stardust/Stardust.compute`
+  derives particles from moving grid cells, hashes paired cell seeds for stable
+  lifetime phase, samples height/tint, and subtracts `flow(position) *
+  lifetime * period` so motion appears continuous without storing much state.

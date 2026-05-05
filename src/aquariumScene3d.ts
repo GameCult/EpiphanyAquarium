@@ -16,6 +16,8 @@ type CameraDragMode = "orbit" | "pan";
 
 export interface AquariumScene3d {
   dispose(): void;
+  projectPointerToGrid(pointer: PointerState): { xPercent: number; yPercent: number } | null;
+  projectProjections(projections: SceneProjection[]): SceneProjection[];
   pointerDown(pointer: PointerState, button: number): void;
   pointerMove(pointer: PointerState): void;
   pointerUp(): void;
@@ -147,6 +149,26 @@ class ThreeAquariumScene implements AquariumScene3d {
     this.dragPointer = null;
   }
 
+  projectPointerToGrid(pointer: PointerState) {
+    const projected = this.projectPointerToPlane(pointer);
+    if (!projected) return null;
+    return worldToGridPercent(projected.x, projected.y);
+  }
+
+  projectProjections(projections: SceneProjection[]) {
+    return projections.map((projection) => {
+      const target = gridToWorld(projection.gridXPercent, projection.gridYPercent);
+      const height = this.agentHeight(projection);
+      const screen = this.projectWorldToScreen(new THREE.Vector3(target.x, target.y, height));
+      return {
+        ...projection,
+        xPercent: screen.xPercent,
+        yPercent: screen.yPercent,
+        screenScale: screen.scale,
+      };
+    });
+  }
+
   wheel(deltaY: number) {
     this.cameraDistance = clamp(this.cameraDistance * Math.exp(deltaY * 0.001), 4.8, 18);
     this.updateCamera();
@@ -159,7 +181,7 @@ class ThreeAquariumScene implements AquariumScene3d {
       live.add(projection.id);
       const group = this.agentGroups.get(projection.id) ?? this.createAgent(projection);
       const target = gridToWorld(projection.gridXPercent, projection.gridYPercent);
-      const height = 0.44 + projection.z * 0.95;
+      const height = this.agentHeight(projection);
       group.position.lerp(new THREE.Vector3(target.x, target.y, height), 0.22);
       group.scale.setScalar(0.9 + projection.z * 0.22 + projection.hover * 0.08);
       group.rotation.y += 0.006 + projection.expression * 0.004;
@@ -429,6 +451,20 @@ class ThreeAquariumScene implements AquariumScene3d {
     return this.raycaster.ray.intersectPlane(this.worldPlane, hit);
   }
 
+  private projectWorldToScreen(point: THREE.Vector3) {
+    const projected = point.clone().project(this.camera);
+    const distance = this.camera.position.distanceTo(point);
+    return {
+      scale: clamp((this.cameraDistance / Math.max(distance, 0.001)) * 0.96, 0.62, 1.72),
+      xPercent: (projected.x * 0.5 + 0.5) * 100,
+      yPercent: (0.5 - projected.y * 0.5) * 100,
+    };
+  }
+
+  private agentHeight(projection: Pick<SceneProjection, "z">) {
+    return 0.44 + projection.z * 0.95;
+  }
+
   private updateCamera() {
     this.clampCameraTarget();
     const horizontal = Math.cos(this.cameraPitch) * this.cameraDistance;
@@ -487,6 +523,13 @@ function gridToWorld(xPercent: number, yPercent: number) {
   return {
     x: (xPercent / 100 - 0.5) * worldWidth,
     y: (0.5 - yPercent / 100) * worldDepth,
+  };
+}
+
+function worldToGridPercent(x: number, y: number) {
+  return {
+    xPercent: clamp((x / worldWidth + 0.5) * 100, 0, 100),
+    yPercent: clamp((0.5 - y / worldDepth) * 100, 0, 100),
   };
 }
 

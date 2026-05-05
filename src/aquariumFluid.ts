@@ -58,6 +58,7 @@ export interface AquariumAgentProjection {
   gridYPercent: number;
   xPercent: number;
   yPercent: number;
+  screenScale?: number;
   z: number;
   tilt: number;
   glowPulse: number;
@@ -102,6 +103,7 @@ export interface AquariumRenderer {
   setFrame(frame: AquariumFrame): void;
   setHoveredAgent(id: string | null): void;
   setPointerClient(clientX: number, clientY: number): void;
+  setPointerGridPercent(clientX: number, clientY: number, gridXPercent: number, gridYPercent: number): void;
   triggerInterfaceHit(kind?: string): void;
   wakeSoundscape(): void;
 }
@@ -836,6 +838,22 @@ class WebglAquariumRenderer implements AquariumRenderer {
     const screenY = ((clientY - rect.top) / Math.max(rect.height, 1)) * this.simHeight;
     const grid = unprojectScreenPoint(screenX, screenY, this.simWidth, this.simHeight);
     this.pointer = { active: true, screenX, screenY, x: grid.x, y: grid.y };
+    if (this.draggingFluidParam) {
+      this.updateFluidParamFromPointer(this.draggingFluidParam, screenX);
+    }
+  }
+
+  setPointerGridPercent(clientX: number, clientY: number, gridXPercent: number, gridYPercent: number) {
+    const rect = this.canvas.getBoundingClientRect();
+    const screenX = ((clientX - rect.left) / Math.max(rect.width, 1)) * this.simWidth;
+    const screenY = ((clientY - rect.top) / Math.max(rect.height, 1)) * this.simHeight;
+    this.pointer = {
+      active: true,
+      screenX,
+      screenY,
+      x: (gridXPercent / 100) * this.simWidth,
+      y: (gridYPercent / 100) * this.simHeight,
+    };
     if (this.draggingFluidParam) {
       this.updateFluidParamFromPointer(this.draggingFluidParam, screenX);
     }
@@ -2835,6 +2853,10 @@ class CanvasAquariumRenderer implements AquariumRenderer {
       x: ((clientX - rect.left) / Math.max(rect.width, 1)) * this.canvas.width,
       y: ((clientY - rect.top) / Math.max(rect.height, 1)) * this.canvas.height,
     };
+  }
+
+  setPointerGridPercent(clientX: number, clientY: number) {
+    this.setPointerClient(clientX, clientY);
   }
 
   pointerDownClient(clientX: number, clientY: number) {
