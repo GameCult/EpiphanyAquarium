@@ -46,6 +46,18 @@
       "Use mipmapped/filterable bricks as anti-aliasing and performance machinery. The renderer should approximate a pixel cone, not worship infinitesimal rays when footprint demands coarser integration.",
       "For Aquarium, apply Gigavoxels thinking to huge agent/memory/evidence fields: sparse pages, visible-demand refinement, coarse fallback, temporal streaming, and field-space caches that can exceed the resident GPU budget without revealing the machinery."
     ],
+    "wronski_fog_doctrine": [
+      "Build volumetric fog as a low-resolution froxel pipeline, not as per-pixel raymarch vanity. Inject density and lighting into a camera-aligned 3D volume, then run a depth-wise scattering/transmittance scan and sample the resulting volume during composition.",
+      "Separate injection from integration. First compute per-froxel density, ambient/direct light, shadowing, anisotropy, local fog volumes, and noise; then solve Beer-Lambert transmittance/in-scattering as a parallel scan along view depth.",
+      "Use camera/frustum-shaped volume coordinates so every opaque and transparent surface can sample the same accumulated fog by screen UV plus depth. The volume is a reusable lighting field, not a one-off postprocess.",
+      "Depth distribution is a production choice. Linear Z is stable and scan-friendly; exponential/log Z extends range but invites temporal aliasing and flicker. Pick the distribution for the shot and compensate density per world meter.",
+      "Low froxel resolution is acceptable only when features are low-pass enough. Blur/downsample volumetric shadows, soften gradients, jitter samples, and filter temporally; otherwise the froxel grid aliases because the scene is asking it to represent frequencies it cannot hold.",
+      "Shadowing for fog is allowed to be approximate. Exponential shadow maps are cheap and filterable but leak/tune badly; Unity's Adam implementation switched to blurred VSMs for more constant penumbra and easier production tuning.",
+      "Local fog volumes are density modifiers, not separate renderers. Ellipsoids/noise/height fog feed the injection pass so all scattering, transmittance, and composition stay coherent.",
+      "Handle special lights with honest approximations. Tube/area light scattering, shadow planes, frustum-limited area lights, NaN clamps, and baked BRDF lookup tables are acceptable if the artifact budget is explicit and the renderer remains stable.",
+      "Composition should multiply scene color by transmittance and add accumulated in-scattering at the sampled depth. Banding is not aliasing: solve aliasing by lowering feature frequency or raising froxel resolution; solve banding with dithering/jitter/temporal filtering.",
+      "For Aquarium, fog should be a shared froxel/field pass tied to the camera/grid domain, with light/agent/particle sources injecting into it. It should run after shadow/source fields are available, avoid CPU readback, and degrade by resolution, blur, range, and temporal accumulation instead of abandoning coherence."
+    ],
     "compute_and_audio": [
       "For realtime audio, keep enough queued samples ahead of playback.",
       "Use GPU or batched generation for expensive spectral work.",

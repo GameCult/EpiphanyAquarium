@@ -143,3 +143,9 @@ Current slice:
   Use sparse metadata plus brick pools, request only visible refinements, fall
   back to coarser resident data, and let temporal coherence/LRU keep the working
   set bounded while the virtual field exceeds resident memory.
+- Current research meal: Wroński fog adds froxel-field doctrine. Volumetric fog
+  is a camera/frustum-aligned 3D lighting field: inject density/light/shadows
+  into froxels, scan along depth for Beer-Lambert transmittance and in-scatter,
+  then sample by screen UV + scene depth. Production reality matters: shadow
+  filtering, temporal/jitter tricks, low-pass feature discipline, local fog
+  volumes, and explicit ugly approximations keep the field stable.
