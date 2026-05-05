@@ -213,15 +213,10 @@ class ThreeAquariumScene implements AquariumScene3d {
     let sourceIndex = 0;
     for (const projection of projections) {
       live.add(projection.id);
-      const existingGroup = this.agentGroups.get(projection.id);
-      const group = existingGroup ?? this.createAgent(projection);
+      const group = this.agentGroups.get(projection.id) ?? this.createAgent(projection);
       const target = gridToWorld(projection.gridXPercent, projection.gridYPercent);
       const height = this.agentHeight(projection);
-      if (existingGroup) {
-        group.position.lerp(new THREE.Vector3(target.x, target.y, height), 0.22);
-      } else {
-        group.position.set(target.x, target.y, height);
-      }
+      group.position.set(target.x, target.y, height);
       group.scale.setScalar(0.9 + projection.z * 0.22 + projection.hover * 0.08);
       group.rotation.set(0.18 + projection.expression * 0.04, 0, projection.tilt * 0.01);
       const cup = group.userData.cup as THREE.Mesh | undefined;
