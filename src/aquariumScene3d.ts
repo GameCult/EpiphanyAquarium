@@ -803,7 +803,9 @@ function spectralGridWave(
   const octaveRank = clamp((octave + 0.35) / 4.6, 0, 1);
   const highness = Math.max(rank, octaveRank);
   const lowness = 1 - highness;
-  const depthRollOff = 1 / (1 + highness * highness * 8.5);
+  const octaveStep = Math.max(0, octave + rank * 0.65);
+  const amplitudeLacunarity = 0.42;
+  const depthRollOff = amplitudeLacunarity ** octaveStep / (1 + highness * highness * 5.5);
   const excitation = 1 + acknowledgement * (0.42 - highness * 0.24) + hover * 0.12;
   const radius = 0.62 + lowness * 1.42 + elevation * 0.32 + hover * 0.16;
   const wavelength = 0.92 - highness * 0.68;
