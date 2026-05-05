@@ -166,7 +166,7 @@ class ThreeAquariumScene implements AquariumScene3d {
     return projections.map((projection) => {
       const target = gridToWorld(projection.gridXPercent, projection.gridYPercent);
       const height = this.agentHeight(projection);
-      const body = new THREE.Vector3(target.x, target.y, height);
+      const body = this.agentGroups.get(projection.id)?.position.clone() ?? new THREE.Vector3(target.x, target.y, height);
       const screen = this.projectWorldToScreen(body);
       const right = this.cameraRight();
       const up = this.cameraUp();
@@ -213,10 +213,15 @@ class ThreeAquariumScene implements AquariumScene3d {
     let sourceIndex = 0;
     for (const projection of projections) {
       live.add(projection.id);
-      const group = this.agentGroups.get(projection.id) ?? this.createAgent(projection);
+      const existingGroup = this.agentGroups.get(projection.id);
+      const group = existingGroup ?? this.createAgent(projection);
       const target = gridToWorld(projection.gridXPercent, projection.gridYPercent);
       const height = this.agentHeight(projection);
-      group.position.lerp(new THREE.Vector3(target.x, target.y, height), 0.22);
+      if (existingGroup) {
+        group.position.lerp(new THREE.Vector3(target.x, target.y, height), 0.22);
+      } else {
+        group.position.set(target.x, target.y, height);
+      }
       group.scale.setScalar(0.9 + projection.z * 0.22 + projection.hover * 0.08);
       group.rotation.set(0.18 + projection.expression * 0.04, 0, projection.tilt * 0.01);
       const cup = group.userData.cup as THREE.Mesh | undefined;
