@@ -184,16 +184,10 @@ class ThreeAquariumScene implements AquariumScene3d {
   }
 
   projectProjectLabels(labels: Array<{ id: string; label: string; subLabel?: string }>) {
-    const count = Math.max(labels.length, 1);
     const zoomOpacity = smoothstep(8.5, 15.5, this.cameraDistance);
-    return labels.map((label, index) => {
-      const angle = -Math.PI / 2 + (index / count) * Math.PI * 2;
-      const ring = Math.min(worldWidth, worldDepth) * (0.45 + Math.min(count, 6) * 0.015);
-      const point = new THREE.Vector3(
-        Math.cos(angle) * ring * 0.86,
-        Math.sin(angle) * ring * 0.62,
-        1.35 + zoomOpacity * 0.28,
-      );
+    const centroid = this.agentCentroid();
+    return labels.map((label) => {
+      const point = centroid.clone();
       const screen = this.projectWorldToScreen(point);
       return {
         ...label,
@@ -203,6 +197,18 @@ class ThreeAquariumScene implements AquariumScene3d {
         yPercent: screen.yPercent,
       };
     });
+  }
+
+  private agentCentroid() {
+    const centroid = new THREE.Vector3();
+    let count = 0;
+    for (const group of this.agentGroups.values()) {
+      centroid.add(group.position);
+      count += 1;
+    }
+    if (count === 0) return new THREE.Vector3(0, 0, 1.25);
+    centroid.multiplyScalar(1 / count);
+    return centroid;
   }
 
   projectProjections(projections: SceneProjection[]) {

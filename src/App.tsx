@@ -1301,6 +1301,7 @@ export function App() {
         latestHeartbeatEvent={latestHeartbeatEvent}
         jobs={jobs}
         swarmMembers={swarmMembers}
+        activeMember={activeMember}
         variant="fullscreen"
         activeDeck={activeDeck}
         activeSubdeck={activeSubdeck}
@@ -1517,6 +1518,7 @@ function AgentConstellation({
   latestHeartbeatEvent,
   jobs,
   swarmMembers,
+  activeMember,
   variant = "band",
   activeDeck,
   activeSubdeck,
@@ -1538,6 +1540,7 @@ function AgentConstellation({
   latestHeartbeatEvent: any;
   jobs: any[];
   swarmMembers?: SwarmMember[];
+  activeMember?: SwarmMember;
   variant?: "band" | "fullscreen";
   activeDeck?: DeckId;
   activeSubdeck?: string;
@@ -1627,6 +1630,10 @@ function AgentConstellation({
       };
     });
   }, [coordinator, crrc, heartbeat, jobs, latestFaceArtifact, latestHeartbeatEvent, pressure, reorient, reorientResult, roleResults, roles]);
+  const visibleHarnessMembers = useMemo(() => {
+    const member = activeMember ?? swarmMembers?.[0];
+    return member ? [member] : [];
+  }, [activeMember, swarmMembers]);
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0];
   const aquariumAgents = useMemo(() => {
     const optionsByKey = new globalThis.Map<string, AquariumOption>();
@@ -1784,7 +1791,7 @@ function AgentConstellation({
     scene3dRef.current?.setProjections(sceneProjections);
     const visualProjections = scene3dRef.current?.projectProjections(sceneProjections) ?? projections;
     const projectLabels = scene3dRef.current?.projectProjectLabels(
-      (swarmMembers ?? []).map((member) => ({ id: member.id, label: workspaceLabel(member.workspaceRoot), subLabel: member.label })),
+      visibleHarnessMembers.map((member) => ({ id: member.id, label: workspaceLabel(member.workspaceRoot), subLabel: member.label })),
     ) ?? [];
     const swarmLabelOpacity = Math.max(0, ...projectLabels.map((label) => label.opacity));
     for (const projection of visualProjections) {
@@ -1835,7 +1842,7 @@ function AgentConstellation({
       applyProjectLabelProjection(projectHaloNodeRefs.current.get(label.id), label);
     }
     stardustRef.current?.setProjections(visualProjections);
-  }, [aquariumAgents, hoveredAgentId, selectedAgentId, swarmMembers]);
+  }, [aquariumAgents, hoveredAgentId, selectedAgentId, visibleHarnessMembers]);
 
   useEffect(() => {
     rendererRef.current?.setFrame({
@@ -2274,7 +2281,7 @@ function AgentConstellation({
             </div>
           );
         })}
-        {(swarmMembers ?? []).map((member) => (
+        {visibleHarnessMembers.map((member) => (
           <div key={`project-shell-${member.id}`}>
             <div
               className={`projectWorldLabel ${member.kind}`}
