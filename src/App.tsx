@@ -180,12 +180,14 @@ const deckSubmenus = {
   command: ["run", "connection", "signals"],
   state: ["environment", "planning", "graph"],
   agents: ["lanes", "findings", "jobs"],
+  swarm: ["members", "messages"],
   artifacts: ["bundles"],
 } as const;
 const deckLabels: Record<keyof typeof deckSubmenus, string> = {
   command: "Command",
   state: "State",
   agents: "Agents",
+  swarm: "Swarm",
   artifacts: "Artifacts",
 };
 type DeckId = keyof typeof deckSubmenus;
@@ -193,6 +195,7 @@ const aquariumOptionsByAgent: Record<string, AquariumOption[]> = {
   coordinator: [
     { label: "Signals", deck: "command", subdeck: "signals" },
     { label: "Run", deck: "command", subdeck: "run" },
+    { label: "Swarm", deck: "swarm", subdeck: "messages" },
     { label: "Checkpoint", action: "prepareCheckpoint" },
   ],
   face: [
@@ -247,6 +250,7 @@ const actionButtons: Array<{
   requiresReorientResult?: boolean;
   requiresPlanningDraft?: boolean;
   requiresContinueImplementation?: boolean;
+  requiresSwarmPeer?: boolean;
   icon: "file" | "check" | "play" | "eye" | "accept" | "runtime" | "plan" | "ide" | "message";
 }> = [
   {
@@ -282,6 +286,14 @@ const actionButtons: Array<{
     label: "Face Bubble",
     runningLabel: "Opening",
     title: "Open a Discord-independent Face bubble in the Aquarium",
+    icon: "message",
+  },
+  {
+    action: "requestSwarmHelp",
+    label: "Ask Coordinator",
+    runningLabel: "Asking",
+    title: "Ask another Epiphany coordinator to inspect its own workspace and call back",
+    requiresSwarmPeer: true,
     icon: "message",
   },
   {
@@ -718,10 +730,13 @@ export function App() {
     command: "run",
     state: "environment",
     agents: "lanes",
+    swarm: "members",
     artifacts: "bundles",
   });
   const status = snapshot?.status;
   const swarmMembers = snapshot?.swarmMembers ?? [];
+  const communications = snapshot?.communications ?? [];
+  const openCommunications = communications.filter((message) => text(message.status).toLowerCase() !== "resolved");
   const activeMember = snapshot?.activeMember ?? swarmMembers.find((member) => member.id === request.memberId) ?? swarmMembers[0];
   const scene = status?.scene?.scene ?? {};
   const pressure = status?.pressure?.pressure ?? {};
@@ -829,7 +844,8 @@ export function App() {
         (button.requiresReorientResult && !canAcceptReorient) ||
         (button.requiresPlanningDraft && !canAdoptDraft) ||
         (button.requiresContinueImplementation && !canContinueImplementation) ||
-        (button.requiresContinueImplementation && implementationNoDiffPending),
+        (button.requiresContinueImplementation && implementationNoDiffPending) ||
+        (button.requiresSwarmPeer && swarmMembers.length < 2),
     );
   }
 
@@ -855,6 +871,7 @@ export function App() {
     const needsPlanningDraft = button.requiresPlanningDraft && !canAdoptDraft;
     const needsImplementation = button.requiresContinueImplementation && !canContinueImplementation;
     const needsNoDiffReview = button.requiresContinueImplementation && implementationNoDiffPending;
+    const needsSwarmPeer = button.requiresSwarmPeer && swarmMembers.length < 2;
     const disabled =
       runningAction !== null ||
       needsThread ||
@@ -865,7 +882,8 @@ export function App() {
       needsReorient ||
       needsPlanningDraft ||
       needsImplementation ||
-      needsNoDiffReview;
+      needsNoDiffReview ||
+      needsSwarmPeer;
     const title = needsThread
       ? "Prepare a checkpoint or enter a persisted thread id first"
       : needsState
@@ -884,6 +902,8 @@ export function App() {
                     ? "Run the coordinator and clear review gates before continuing implementation"
                     : needsNoDiffReview
                       ? "Review the latest no-diff implementation artifact or run another lane before retrying"
+                      : needsSwarmPeer
+                        ? "Register another swarm coordinator before sending a cross-agent request"
                       : button.title;
     return (
       <button
@@ -968,6 +988,16 @@ export function App() {
     if (activeDeck === "agents" && activeSubdeck === "jobs") {
       return jobs.length ? jobs.slice(0, 8).map((job) => `${text(job.id)}: ${text(job.status)} / ${text(job.kind)}`) : ["No jobs loaded."];
     }
+    if (activeDeck === "swarm" && activeSubdeck === "members") {
+      return swarmMembers.length
+        ? swarmMembers.map((member) => `${member.label}: ${member.kind} / ${text(member.status)} / ${member.workspaceRoot}`)
+        : ["No swarm members registered."];
+    }
+    if (activeDeck === "swarm" && activeSubdeck === "messages") {
+      return communications.length
+        ? communications.slice(0, 8).map((message) => `${message.status} ${message.fromMemberId} -> ${message.toMemberId}: ${message.subject}`)
+        : ["No coordinator messages. Cross-workspace blockers should be asked here, not solved by rummaging."];
+    }
     return (snapshot?.artifacts ?? []).length
       ? (snapshot?.artifacts ?? []).slice(0, 8).map((artifact) => `${artifact.name}: ${artifact.files.length} files`)
       : ["No dogfood artifact bundles found."];
@@ -981,7 +1011,7 @@ export function App() {
     statuses: [
       { label: text(activeMember?.label, "swarm unknown"), tone: memberTone(activeMember) },
       { label: displayLabel(coordinator.action ?? crrc.action, "unknown"), tone: statusClass(coordinator.action ?? crrc.action) },
-      { label: `pressure ${text(pressure.level, "unknown")}`, tone: statusClass(pressure.level) },
+      { label: openCommunications.length ? `messages ${openCommunications.length}` : `pressure ${text(pressure.level, "unknown")}`, tone: openCommunications.length ? "warn" : statusClass(pressure.level) },
     ],
     deckButtons: (Object.keys(deckSubmenus) as DeckId[]).map((deck) => ({
       key: `ui:deck:${deck}`,
@@ -1001,6 +1031,16 @@ export function App() {
             disabled: actionBlocked(button.action),
             tone: actionBlocked(button.action) ? "neutral" : "ok",
           }))
+        : activeDeck === "swarm" && activeSubdeck === "messages"
+          ? ["requestSwarmHelp"].map((action) => {
+              const button = actionButtons.find((candidate) => candidate.action === action as OperatorAction)!;
+              return {
+                key: `ui:action:${button.action}`,
+                label: runningAction === button.action ? button.runningLabel : button.label,
+                disabled: actionBlocked(button.action),
+                tone: actionBlocked(button.action) ? "neutral" : "ok",
+              };
+            })
         : [],
     panelTitle: `${activeDeckTitle} / ${activeSubdeck}`,
     panelLines: aquariumPanelLines,
@@ -1038,7 +1078,7 @@ export function App() {
         <section className="leafGrid two">
           <label>Swarm<select value={activeMember?.id ?? request.memberId ?? ""} onChange={(event) => selectMember(event.target.value)} disabled={swarmMembers.length === 0}>{swarmMembers.map((member) => <option value={member.id} key={member.id}>{member.label} [{member.kind}]</option>)}</select></label>
           <label>Thread ID<input placeholder="auto-load persistent status thread" value={request.threadId ?? ""} onChange={(event) => setRequest({ ...request, threadId: event.target.value || undefined })} /></label>
-          <label>Workspace<input placeholder={snapshot?.repoRoot ?? "repo root"} value={request.cwd ?? ""} onChange={(event) => setRequest({ ...request, cwd: event.target.value || undefined })} /></label>
+          <label>Workspace<input readOnly placeholder={snapshot?.repoRoot ?? "repo root"} value={activeMember?.workspaceRoot ?? request.cwd ?? ""} /></label>
           <dl className="facts"><div><dt>Member</dt><dd>{text(activeMember?.label)}</dd></div><div><dt>Thread</dt><dd>{text(status?.threadId)}</dd></div><div><dt>State</dt><dd>{text(scene.stateStatus)} rev {text(scene.revision)}</dd></div><div><dt>Artifacts</dt><dd>{text(activeMember?.artifactRoot)}</dd></div></dl>
         </section>
       );
@@ -1507,6 +1547,7 @@ function AgentConstellation({
   const stardustCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const optionByKeyRef = useRef(new globalThis.Map<string, AquariumOption>());
   const uiOptionByKeyRef = useRef(new globalThis.Map<string, AquariumOption>());
+  const cameraDragButtonRef = useRef<number | null>(null);
   const rendererRef = useRef<AquariumRenderer | null>(null);
   const scene3dRef = useRef<AquariumScene3d | null>(null);
   const stardustRef = useRef<AquariumStardustOverlay | null>(null);
@@ -1747,13 +1788,26 @@ function AgentConstellation({
 
   function handlePointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
     rendererRef.current?.setPointerClient(event.clientX, event.clientY);
-    scene3dRef.current?.setPointer(pointerPercent(event.clientX, event.clientY, event.currentTarget));
+    if (cameraDragButtonRef.current === null && ((event.buttons & 2) !== 0 || (event.buttons & 4) !== 0)) {
+      cameraDragButtonRef.current = (event.buttons & 4) !== 0 ? 1 : 2;
+      scene3dRef.current?.pointerDown(pointerPercent(event.clientX, event.clientY, event.currentTarget), cameraDragButtonRef.current);
+      return;
+    }
+    scene3dRef.current?.pointerMove(pointerPercent(event.clientX, event.clientY, event.currentTarget));
   }
 
   function handlePointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
     event.currentTarget.setPointerCapture(event.pointerId);
-    rendererRef.current?.pointerDownClient(event.clientX, event.clientY);
-    scene3dRef.current?.setPointer(pointerPercent(event.clientX, event.clientY, event.currentTarget));
+    if (event.button === 0) {
+      rendererRef.current?.pointerDownClient(event.clientX, event.clientY);
+    }
+    if (event.button === 1 || event.button === 2) {
+      cameraDragButtonRef.current = event.button;
+    }
+    scene3dRef.current?.pointerDown(pointerPercent(event.clientX, event.clientY, event.currentTarget), event.button);
+    if (event.button === 1 || event.button === 2) {
+      event.preventDefault();
+    }
   }
 
   function handlePointerUp(event: React.PointerEvent<HTMLCanvasElement>) {
@@ -1761,12 +1815,77 @@ function AgentConstellation({
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
     rendererRef.current?.pointerUp();
+    scene3dRef.current?.pointerUp();
+    cameraDragButtonRef.current = null;
   }
 
   function handlePointerLeave() {
     rendererRef.current?.clearPointer();
     rendererRef.current?.pointerUp();
+    scene3dRef.current?.pointerUp();
+    cameraDragButtonRef.current = null;
     scene3dRef.current?.setPointer({ active: false, xPercent: 50, yPercent: 50 });
+  }
+
+  function handleWheel(event: React.WheelEvent<HTMLCanvasElement>) {
+    scene3dRef.current?.wheel(event.deltaY);
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function handleStagePointerDownCapture(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.button !== 1 && event.button !== 2) return;
+    cameraDragButtonRef.current = event.button;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    scene3dRef.current?.pointerDown(pointerPercent(event.clientX, event.clientY, event.currentTarget), event.button);
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function handleStagePointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    if ((event.buttons & 2) === 0 && (event.buttons & 4) === 0) return;
+    if (cameraDragButtonRef.current === null) {
+      cameraDragButtonRef.current = (event.buttons & 4) !== 0 ? 1 : 2;
+      scene3dRef.current?.pointerDown(pointerPercent(event.clientX, event.clientY, event.currentTarget), cameraDragButtonRef.current);
+      return;
+    }
+    scene3dRef.current?.pointerMove(pointerPercent(event.clientX, event.clientY, event.currentTarget));
+  }
+
+  function handleStagePointerUp(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    scene3dRef.current?.pointerUp();
+    cameraDragButtonRef.current = null;
+  }
+
+  function handleStageWheel(event: React.WheelEvent<HTMLDivElement>) {
+    scene3dRef.current?.wheel(event.deltaY);
+    event.preventDefault();
+  }
+
+  function handleStageMouseDownCapture(event: React.MouseEvent<HTMLDivElement>) {
+    if (event.button !== 1 && event.button !== 2) return;
+    cameraDragButtonRef.current = event.button;
+    scene3dRef.current?.pointerDown(pointerPercent(event.clientX, event.clientY, event.currentTarget), event.button);
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function handleStageMouseMove(event: React.MouseEvent<HTMLDivElement>) {
+    if ((event.buttons & 2) === 0 && (event.buttons & 4) === 0) return;
+    if (cameraDragButtonRef.current === null) {
+      cameraDragButtonRef.current = (event.buttons & 4) !== 0 ? 1 : 2;
+      scene3dRef.current?.pointerDown(pointerPercent(event.clientX, event.clientY, event.currentTarget), cameraDragButtonRef.current);
+      return;
+    }
+    scene3dRef.current?.pointerMove(pointerPercent(event.clientX, event.clientY, event.currentTarget));
+  }
+
+  function handleStageMouseUp() {
+    scene3dRef.current?.pointerUp();
+    cameraDragButtonRef.current = null;
   }
 
   function handleAgentPointerEnter(agentId: string, event: React.PointerEvent<HTMLElement>) {
@@ -1876,7 +1995,17 @@ function AgentConstellation({
           </div>
         </div>
       )}
-      <div className="agentStage">
+      <div
+        className="agentStage"
+        onContextMenu={(event) => event.preventDefault()}
+        onPointerDownCapture={handleStagePointerDownCapture}
+        onPointerMove={handleStagePointerMove}
+        onPointerUp={handleStagePointerUp}
+        onMouseDownCapture={handleStageMouseDownCapture}
+        onMouseMove={handleStageMouseMove}
+        onMouseUp={handleStageMouseUp}
+        onWheel={handleStageWheel}
+      >
         <canvas
           ref={sceneCanvasRef}
           className="agentThreeCanvas"
@@ -1890,6 +2019,7 @@ function AgentConstellation({
           onPointerMove={handlePointerMove}
           onPointerLeave={handlePointerLeave}
           onPointerUp={handlePointerUp}
+          onWheel={handleWheel}
           onClick={handleCanvasClick}
         />
         <canvas

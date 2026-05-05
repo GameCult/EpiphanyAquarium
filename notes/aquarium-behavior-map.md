@@ -34,7 +34,9 @@ The app has five cooperating layers:
    hovering agent bodies, cursor landing object, and Aetheria-style gravity
    texture. Agent wells and low chirp-bank modes are rendered as additive
    top-down splat quads into a grid-aligned render target; the visible mesh
-   samples that accumulated texture for displacement.
+   samples that accumulated texture for displacement. The scene is Z-up over a
+   shared XY interaction plane, with middle-drag orbit, wheel zoom, and
+   right-drag/WASD panning around that plane.
 5. **Fluid and crisp canvas.** `src/aquariumFluid.ts` owns WebGL2 fluid
    simulation, fallback 2D rendering, hit zones, projection frames, fluid
    controls, and canvas-local picking. The smoke canvas now renders an
@@ -96,6 +98,10 @@ flowchart TD
   pluck. Touch and heartbeat events resolve as damped string-like oscillations
   through both motion and audio. Thought bubbles become readable when hot or
   selected.
+- **Camera controls:** wheel zooms the Three camera through a light exponential
+  distance curve; middle drag orbits yaw/pitch around the XY plane; right drag
+  and WASD pan the camera target. Mouse coordinates are projected through the
+  camera ray onto XY so cursor deltas and distances to agents stay consistent.
 - **Click agent:** React locks selection and mounts `agentFocusSurface` near that
   agent. This is the correct gate, but the mounted contents still behave like the
   inherited operator console.

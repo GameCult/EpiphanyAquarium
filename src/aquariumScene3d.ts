@@ -12,10 +12,16 @@ type PointerState = {
   yPercent: number;
 };
 
+type CameraDragMode = "orbit" | "pan";
+
 export interface AquariumScene3d {
   dispose(): void;
+  pointerDown(pointer: PointerState, button: number): void;
+  pointerMove(pointer: PointerState): void;
+  pointerUp(): void;
   setPointer(pointer: PointerState): void;
   setProjections(projections: SceneProjection[]): void;
+  wheel(deltaY: number): void;
 }
 
 const worldWidth = 10;
@@ -28,7 +34,13 @@ export function createAquariumScene3d(canvas: HTMLCanvasElement): AquariumScene3
 class ThreeAquariumScene implements AquariumScene3d {
   private agentGroups = new Map<string, THREE.Group>();
   private camera = new THREE.PerspectiveCamera(42, 1, 0.1, 80);
+  private cameraDistance = 10;
+  private cameraPitch = 0.68;
+  private cameraTarget = new THREE.Vector3(0, 0, 0);
+  private cameraYaw = 0;
   private cursor = new THREE.Group();
+  private dragMode: CameraDragMode | null = null;
+  private dragPointer: PointerState | null = null;
   private disposed = false;
   private gravityCamera = new THREE.OrthographicCamera(-worldWidth / 2, worldWidth / 2, worldDepth / 2, -worldDepth / 2, 0.1, 10);
   private gravityRenderTarget = new THREE.WebGLRenderTarget(256, 256, {
@@ -47,10 +59,14 @@ class ThreeAquariumScene implements AquariumScene3d {
     uTime: { value: 0 },
   };
   private pointer: PointerState = { active: false, xPercent: 50, yPercent: 50 };
+  private pointerWorld = new THREE.Vector3(0, 0, 0);
   private raf = 0;
+  private raycaster = new THREE.Raycaster();
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
   private splatMeshes: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>[] = [];
+  private worldPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+  private readonly handleKeyDown = (event: KeyboardEvent) => this.keyPan(event);
 
   constructor(private canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({
@@ -67,20 +83,21 @@ class ThreeAquariumScene implements AquariumScene3d {
     this.gravityCamera.position.set(0, 0, 5);
     this.gravityCamera.lookAt(0, 0, 0);
     this.createSplatPool(48);
-    this.camera.position.set(0, 6.2, 7.8);
-    this.camera.lookAt(0, 0, 0.2);
+    this.updateCamera();
     this.scene.add(new THREE.AmbientLight(0xbfffe8, 0.74));
     const key = new THREE.DirectionalLight(0xd8fff0, 1.2);
     key.position.set(-4.5, 8, 5.2);
     this.scene.add(key);
     this.scene.add(this.createGrid());
     this.scene.add(this.createCursor());
+    window.addEventListener("keydown", this.handleKeyDown);
     this.raf = requestAnimationFrame(this.render);
   }
 
   dispose() {
     this.disposed = true;
     cancelAnimationFrame(this.raf);
+    window.removeEventListener("keydown", this.handleKeyDown);
     this.scene.traverse((object) => {
       if (object instanceof THREE.Mesh || object instanceof THREE.LineSegments || object instanceof THREE.Line) {
         object.geometry?.dispose();
@@ -102,6 +119,38 @@ class ThreeAquariumScene implements AquariumScene3d {
     this.pointer = pointer;
   }
 
+  pointerDown(pointer: PointerState, button: number) {
+    this.pointer = pointer;
+    this.dragPointer = pointer;
+    this.dragMode = button === 1 ? "orbit" : button === 2 ? "pan" : null;
+  }
+
+  pointerMove(pointer: PointerState) {
+    if (this.dragMode && this.dragPointer) {
+      const dx = pointer.xPercent - this.dragPointer.xPercent;
+      const dy = pointer.yPercent - this.dragPointer.yPercent;
+      if (this.dragMode === "orbit") {
+        this.cameraYaw -= dx * 0.012;
+        this.cameraPitch = clamp(this.cameraPitch + dy * 0.008, 0.18, 1.38);
+      } else {
+        this.panCamera(dx, dy);
+      }
+      this.updateCamera();
+      this.dragPointer = pointer;
+    }
+    this.pointer = pointer;
+  }
+
+  pointerUp() {
+    this.dragMode = null;
+    this.dragPointer = null;
+  }
+
+  wheel(deltaY: number) {
+    this.cameraDistance = clamp(this.cameraDistance * Math.exp(deltaY * 0.001), 4.8, 18);
+    this.updateCamera();
+  }
+
   setProjections(projections: SceneProjection[]) {
     const live = new Set<string>();
     let splatIndex = 0;
@@ -110,7 +159,7 @@ class ThreeAquariumScene implements AquariumScene3d {
       const group = this.agentGroups.get(projection.id) ?? this.createAgent(projection);
       const target = gridToWorld(projection.gridXPercent, projection.gridYPercent);
       const height = 0.44 + projection.z * 0.95;
-      group.position.lerp(new THREE.Vector3(target.x, height, target.z), 0.22);
+      group.position.lerp(new THREE.Vector3(target.x, target.y, height), 0.22);
       group.scale.setScalar(0.9 + projection.z * 0.22 + projection.hover * 0.08);
       group.rotation.y += 0.006 + projection.expression * 0.004;
       const cup = group.userData.cup as THREE.Mesh | undefined;
@@ -120,7 +169,7 @@ class ThreeAquariumScene implements AquariumScene3d {
       if (splatIndex < this.splatMeshes.length) {
         const strength = 0.46 + projection.z * 0.74 + projection.expression * 0.16;
         const radius = 1.65 + projection.acknowledgement * 0.34 + projection.hover * 0.26;
-        this.configureSplat(this.splatMeshes[splatIndex], target.x, target.z, radius, strength, 2.18, 0, 0, 1.25);
+        this.configureSplat(this.splatMeshes[splatIndex], target.x, target.y, radius, strength, 2.18, 0, 0, 1.25);
         splatIndex += 1;
       }
       if (splatIndex < this.splatMeshes.length) {
@@ -134,7 +183,7 @@ class ThreeAquariumScene implements AquariumScene3d {
           const spatialFrequency = 3.8 + temporalFrequency * 5.6 + bandIndex * 0.85;
           const speed = 0.22 + temporalFrequency * 1.7 + Math.abs(chirp) * 4.5 + projection.acknowledgement * 0.9;
           const sinePower = 1.05 + bandIndex * 0.08 + Math.min(0.5, Math.abs(chirp) * 18);
-          this.configureSplat(this.splatMeshes[splatIndex], target.x, target.z, waveRadius, waveDepth, 8, spatialFrequency, phase + bandIndex * 0.7, sinePower, speed);
+          this.configureSplat(this.splatMeshes[splatIndex], target.x, target.y, waveRadius, waveDepth, 8, spatialFrequency, phase + bandIndex * 0.7, sinePower, speed);
           splatIndex += 1;
         }
       }
@@ -155,9 +204,7 @@ class ThreeAquariumScene implements AquariumScene3d {
     const geometry = new THREE.PlaneGeometry(worldWidth, worldDepth, 96, 72);
     const field = new THREE.Mesh(geometry, this.createGravityGridMaterial(0.12, false));
     const wire = new THREE.Mesh(geometry.clone(), this.createGravityGridMaterial(0.46, true));
-    field.rotation.x = -Math.PI / 2;
-    wire.rotation.x = -Math.PI / 2;
-    wire.position.y = 0.018;
+    wire.position.z = 0.018;
     group.add(field, wire);
     return group;
   }
@@ -291,12 +338,12 @@ class ThreeAquariumScene implements AquariumScene3d {
       new THREE.TorusGeometry(0.22, 0.012, 8, 48),
       new THREE.MeshBasicMaterial({ color: 0xe9ffb0, opacity: 0.62, transparent: true, depthWrite: false }),
     );
-    ring.rotation.x = Math.PI / 2;
     const beam = new THREE.Mesh(
       new THREE.CylinderGeometry(0.012, 0.028, 1.2, 10, 1, true),
       new THREE.MeshBasicMaterial({ color: 0x80ffd5, opacity: 0.18, transparent: true, depthWrite: false }),
     );
-    beam.position.y = 0.6;
+    beam.rotation.x = Math.PI / 2;
+    beam.position.z = 0.6;
     this.cursor.add(ring, beam);
     this.cursor.visible = false;
     return this.cursor;
@@ -310,13 +357,13 @@ class ThreeAquariumScene implements AquariumScene3d {
       new THREE.TorusGeometry(0.42, 0.035, 12, 64),
       new THREE.MeshBasicMaterial({ color: glow, opacity: 0.46, transparent: true, depthWrite: false }),
     );
-    cup.rotation.x = Math.PI / 2;
-    cup.position.y = -0.43;
+    cup.position.z = -0.43;
     const anchor = new THREE.Mesh(
       new THREE.CylinderGeometry(0.015, 0.015, 0.78, 8),
       new THREE.MeshBasicMaterial({ color: glow, opacity: 0.36, transparent: true, depthWrite: false }),
     );
-    anchor.position.y = -0.04;
+    anchor.rotation.x = Math.PI / 2;
+    anchor.position.z = -0.04;
     const body = new THREE.Mesh(
       new THREE.OctahedronGeometry(0.24, 0),
       new THREE.MeshStandardMaterial({
@@ -336,6 +383,64 @@ class ThreeAquariumScene implements AquariumScene3d {
     return group;
   }
 
+  private keyPan(event: KeyboardEvent) {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    const target = event.target;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target instanceof HTMLButtonElement) return;
+    const key = event.key.toLowerCase();
+    if (!["w", "a", "s", "d"].includes(key)) return;
+    const step = this.cameraDistance * 0.035;
+    const forward = this.cameraForwardOnPlane();
+    const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 0, 1)).normalize();
+    if (key === "w") this.cameraTarget.addScaledVector(forward, step);
+    if (key === "s") this.cameraTarget.addScaledVector(forward, -step);
+    if (key === "d") this.cameraTarget.addScaledVector(right, step);
+    if (key === "a") this.cameraTarget.addScaledVector(right, -step);
+    this.clampCameraTarget();
+    this.updateCamera();
+    event.preventDefault();
+  }
+
+  private panCamera(dxPercent: number, dyPercent: number) {
+    const scale = this.cameraDistance * 0.012;
+    const forward = this.cameraForwardOnPlane();
+    const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 0, 1)).normalize();
+    this.cameraTarget.addScaledVector(right, -dxPercent * scale);
+    this.cameraTarget.addScaledVector(forward, dyPercent * scale);
+    this.clampCameraTarget();
+  }
+
+  private cameraForwardOnPlane() {
+    return new THREE.Vector3(Math.sin(this.cameraYaw), Math.cos(this.cameraYaw), 0).normalize();
+  }
+
+  private clampCameraTarget() {
+    const marginX = worldWidth * 0.55;
+    const marginY = worldDepth * 0.55;
+    this.cameraTarget.x = clamp(this.cameraTarget.x, -marginX, marginX);
+    this.cameraTarget.y = clamp(this.cameraTarget.y, -marginY, marginY);
+    this.cameraTarget.z = 0;
+  }
+
+  private projectPointerToPlane(pointer: PointerState) {
+    const ndc = new THREE.Vector2(pointer.xPercent / 50 - 1, 1 - pointer.yPercent / 50);
+    const hit = new THREE.Vector3();
+    this.raycaster.setFromCamera(ndc, this.camera);
+    return this.raycaster.ray.intersectPlane(this.worldPlane, hit);
+  }
+
+  private updateCamera() {
+    const horizontal = Math.cos(this.cameraPitch) * this.cameraDistance;
+    const z = Math.sin(this.cameraPitch) * this.cameraDistance;
+    const offset = new THREE.Vector3(
+      Math.sin(this.cameraYaw) * horizontal,
+      -Math.cos(this.cameraYaw) * horizontal,
+      z,
+    );
+    this.camera.position.copy(this.cameraTarget).add(offset);
+    this.camera.lookAt(this.cameraTarget);
+  }
+
   private render = (millis: number) => {
     if (this.disposed) return;
     const rect = this.canvas.getBoundingClientRect();
@@ -347,8 +452,10 @@ class ThreeAquariumScene implements AquariumScene3d {
     if (this.pointer.active) {
       const world = gridToWorld(this.pointer.xPercent, this.pointer.yPercent);
       this.cursor.visible = true;
-      this.cursor.position.set(world.x, 0.04, world.z);
-      this.cursor.rotation.y = millis * 0.0014;
+      const projected = this.projectPointerToPlane(this.pointer);
+      this.pointerWorld.copy(projected ?? new THREE.Vector3(world.x, world.y, 0));
+      this.cursor.position.set(this.pointerWorld.x, this.pointerWorld.y, 0.04);
+      this.cursor.rotation.z = millis * 0.0014;
     } else {
       this.cursor.visible = false;
     }
@@ -363,6 +470,14 @@ class ThreeAquariumScene implements AquariumScene3d {
     this.renderer.render(this.scene, this.camera);
     this.canvas.dataset.threeReady = "true";
     this.canvas.dataset.threeAgents = String(this.agentGroups.size);
+    this.canvas.dataset.threeCamera = [
+      this.cameraDistance.toFixed(3),
+      this.cameraYaw.toFixed(3),
+      this.cameraPitch.toFixed(3),
+      this.cameraTarget.x.toFixed(3),
+      this.cameraTarget.y.toFixed(3),
+    ].join(",");
+    this.canvas.dataset.threeCursor = [this.pointerWorld.x.toFixed(3), this.pointerWorld.y.toFixed(3)].join(",");
     this.raf = requestAnimationFrame(this.render);
   };
 }
@@ -370,8 +485,12 @@ class ThreeAquariumScene implements AquariumScene3d {
 function gridToWorld(xPercent: number, yPercent: number) {
   return {
     x: (xPercent / 100 - 0.5) * worldWidth,
-    z: (yPercent / 100 - 0.5) * worldDepth,
+    y: (0.5 - yPercent / 100) * worldDepth,
   };
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function stablePhase(id: string) {

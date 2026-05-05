@@ -42,6 +42,7 @@ interaction_laws:
   - The Three.js spatial layer owns the visible 3D grid: gravity cups and chirp waves splat into a grid-aligned render target, then the mesh samples that accumulated gravity texture for displacement.
   - Aetheria's current PowerPulse envelope is the cup/mask curve; low chirp-bank partials become multiple radial wave emitters so excited agents vibrate the grid like small speakers.
   - The aquarium camera is near-omniscient: grid coordinates project through a tilted overhead camera, and cursor input unprojects back to the grid before applying force.
+  - Three.js camera controls orbit the shared XY plane with middle drag, zoom distance exponentially with wheel, and pan with WASD or right drag; cursor and interactible deltas are measured on that same plane.
   - WebGPU stardust is optional progressive enhancement: real compute updates particles from mirrored flow sources, while WebGL2 remains the compatible surface/ink fallback.
   - Every creature carries the shared heartbeat; the latest awakened role gets the stronger plucked-string oscillation.
   - WebGL fluid emission must correspond to visible objects.

@@ -50,3 +50,8 @@ Current slice:
   accumulated height texture. Aquarium's Three layer now follows that model:
   static wells and low chirp-bank radial waves are splats, and the visible grid
   mesh samples the render target.
+- Camera/control pass: the Three scene is now Z-up over a shared XY interaction
+  plane. Middle drag orbits yaw/pitch around the plane, wheel zooms with an
+  exponential distance curve, and right drag/WASD pan the camera target. Mouse
+  coordinates project through the camera ray onto XY, so cursor, interactible,
+  distance, drag, and force math can use one consistent plane.
