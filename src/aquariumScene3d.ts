@@ -120,7 +120,7 @@ class ThreeAquariumScene implements AquariumScene3d {
     this.gridGroup = this.createGrid();
     this.scene.add(this.gridGroup);
     this.stardustMaterial = this.createStardustMaterial();
-    this.scene.add(this.createStardust());
+    this.gridGroup.add(this.createStardust());
     this.scene.add(this.createCursor());
     window.addEventListener("keydown", this.handleKeyDown);
     this.raf = requestAnimationFrame(this.render);
@@ -507,12 +507,16 @@ class ThreeAquariumScene implements AquariumScene3d {
     const sourceData = Array.from({ length: maxStardustSources }, () => new THREE.Vector4(999, 999, 0, 0));
     return new THREE.ShaderMaterial({
       uniforms: {
+        uGravityTex: this.gravityUniforms.uGravityTex,
+        uGravitySize: this.gravityUniforms.uGravitySize,
         uSources: { value: sourceData },
         uTime: this.gravityUniforms.uTime,
         uWorld: { value: new THREE.Vector2(worldWidth, worldDepth) },
       },
       vertexShader: `
         attribute float aSeed;
+        uniform sampler2D uGravityTex;
+        uniform vec2 uGravitySize;
         uniform float uTime;
         uniform vec2 uWorld;
         uniform vec4 uSources[${maxStardustSources}];
@@ -532,6 +536,9 @@ class ThreeAquariumScene implements AquariumScene3d {
           vec3 p = position;
           float pair = floor(aSeed * 2048.0);
           float lifetime = fract(uTime * 0.11 + hash(pair));
+          float heightSeed = hash(aSeed * 173.0 + pair);
+          float sideSeed = hash(aSeed * 257.0 + 19.0);
+          float belowSeed = hash(aSeed * 331.0 + pair * 0.37);
           vec2 flow = vec2(
             sin(p.y * 1.7 + uTime * 0.23 + aSeed * 6.28318),
             cos(p.x * 1.4 - uTime * 0.19 + aSeed * 5.31)
@@ -544,7 +551,15 @@ class ThreeAquariumScene implements AquariumScene3d {
             flow += tangent * influence * 0.038 + source.w * normalize(delta + vec2(0.001, 0.0)) * influence * 0.015;
           }
           p.xy = wrapWorld(p.xy - flow * lifetime * 24.0 + vec2(uTime * 0.018, -uTime * 0.011));
-          p.z += sin(uTime * 0.31 + aSeed * 19.0) * 0.08;
+          vec2 gridUv = (modelMatrix * vec4(p.xy, 0.0, 1.0)).xy / uGravitySize + 0.5;
+          float gravityMask = step(0.0, gridUv.x) * step(gridUv.x, 1.0) * step(0.0, gridUv.y) * step(gridUv.y, 1.0);
+          vec4 field = texture2D(uGravityTex, clamp(gridUv, vec2(0.0), vec2(1.0))) * gravityMask;
+          float gridHeight = -(field.r - field.g);
+          float aboveHeight = -log(max(1.0 - heightSeed, 0.001)) * 0.18;
+          float belowHeight = log(max(1.0 - belowSeed, 0.001)) * 0.045;
+          float gridDistance = sideSeed < 0.12 ? belowHeight : aboveHeight;
+          gridDistance += sin(uTime * 0.31 + aSeed * 19.0) * 0.018;
+          p.z = gridHeight + gridDistance;
           vec4 mv = modelViewMatrix * vec4(p, 1.0);
           gl_Position = projectionMatrix * mv;
           gl_PointSize = clamp((0.72 + hash(aSeed * 41.0) * 0.9) * (260.0 / max(-mv.z, 0.1)), 0.45, 2.4);

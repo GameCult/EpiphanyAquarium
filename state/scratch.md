@@ -120,3 +120,7 @@ Current slice:
   spectral logic. Low bands get slow 0.5-1 Hz wide breathing waves; high bands
   get sharply attenuated amplitude, smaller radii, and sub-unit world
   wavelengths so treble reads as fine shimmer instead of huge surface heaving.
+- Current stardust correction: Three stardust is parented to the grid group and
+  samples the gravity texture for displaced grid height. Particle positions, not
+  alpha, now follow an exponential vertical distribution around the grid surface
+  with a tighter below-grid falloff.
