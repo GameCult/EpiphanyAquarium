@@ -53,6 +53,8 @@ export interface AquariumUiFrame {
 
 export interface AquariumAgentProjection {
   id: string;
+  gridXPercent: number;
+  gridYPercent: number;
   xPercent: number;
   yPercent: number;
   z: number;
@@ -1065,6 +1067,8 @@ class WebglAquariumRenderer implements AquariumRenderer {
     this.frame.onProjectionFrame?.(
       projected.map((agent) => ({
         id: agent.id,
+        gridXPercent: (agent.x / Math.max(this.simWidth, 1)) * 100,
+        gridYPercent: (agent.y / Math.max(this.simHeight, 1)) * 100,
         xPercent: ((agent.screenX ?? agent.x) / Math.max(this.simWidth, 1)) * 100,
         yPercent: ((agent.screenY ?? agent.y) / Math.max(this.simHeight, 1)) * 100,
         z: agent.z ?? 0,
@@ -2856,6 +2860,8 @@ class CanvasAquariumRenderer implements AquariumRenderer {
       this.hotAgents.push({ x, y, radius: 60, key: agent.id });
       projections.push({
         id: agent.id,
+        gridXPercent: (x / Math.max(this.canvas.width, 1)) * 100,
+        gridYPercent: (y / Math.max(this.canvas.height, 1)) * 100,
         xPercent: (x / Math.max(this.canvas.width, 1)) * 100,
         yPercent: (y / Math.max(this.canvas.height, 1)) * 100,
         z: 0.18 + agent.activity * 0.18,

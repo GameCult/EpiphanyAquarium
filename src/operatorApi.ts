@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { OperatorAction, OperatorActionResult, OperatorSnapshot, StatusRequest } from "./types";
+import type { OperatorAction, OperatorActionResult, OperatorSnapshot, StatusRequest, SwarmMember } from "./types";
 
 export async function loadOperatorSnapshot(request: StatusRequest): Promise<OperatorSnapshot> {
   if (hasTauriRuntime()) {
@@ -10,7 +10,13 @@ export async function loadOperatorSnapshot(request: StatusRequest): Promise<Oper
   if (!response.ok) {
     throw new Error(`sample operator snapshot failed: ${response.status}`);
   }
-  return (await response.json()) as OperatorSnapshot;
+  const sample = (await response.json()) as OperatorSnapshot;
+  const swarmMembers = sample.swarmMembers ?? sampleSwarmMembers;
+  return {
+    ...sample,
+    activeMember: swarmMembers.find((member) => member.id === request.memberId) ?? swarmMembers[0],
+    swarmMembers,
+  };
 }
 
 export async function runOperatorAction(action: OperatorAction, request: StatusRequest): Promise<OperatorActionResult> {
@@ -30,3 +36,30 @@ export async function runOperatorAction(action: OperatorAction, request: StatusR
 function hasTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
+
+const sampleSwarmMembers: SwarmMember[] = [
+  {
+    id: "epiphany-agent",
+    label: "Epiphany",
+    kind: "harness",
+    harnessRoot: "E:\\Projects\\EpiphanyAgent",
+    workspaceRoot: "E:\\Projects\\EpiphanyAgent",
+    stateRoot: "E:\\Projects\\EpiphanyAgent\\state",
+    codexHome: "E:\\Projects\\EpiphanyAgent\\.epiphany-gui\\codex-home",
+    artifactRoot: "E:\\Projects\\EpiphanyAgent\\.epiphany-gui",
+    description: "Main harness instance",
+    status: "active",
+  },
+  {
+    id: "aetheria-lore",
+    label: "Aetheria Lore",
+    kind: "workspace",
+    harnessRoot: "E:\\Projects\\EpiphanyAgent",
+    workspaceRoot: "E:\\Projects\\AetheriaLore",
+    stateRoot: "E:\\Projects\\AetheriaLore\\.epiphany",
+    codexHome: "E:\\Projects\\AetheriaLore\\.epiphany\\codex-home",
+    artifactRoot: "E:\\Projects\\AetheriaLore\\.epiphany\\artifacts",
+    description: "Vault and website swarm instance",
+    status: "bootstrap",
+  },
+];

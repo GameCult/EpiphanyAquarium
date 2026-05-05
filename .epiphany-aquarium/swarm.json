@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "epiphany.aquarium.swarm.v0",
+  "members": [
+    {
+      "id": "epiphany-agent",
+      "label": "Epiphany",
+      "kind": "harness",
+      "harnessRoot": "E:\\Projects\\EpiphanyAgent",
+      "workspaceRoot": "E:\\Projects\\EpiphanyAgent",
+      "stateRoot": "E:\\Projects\\EpiphanyAgent\\state",
+      "codexHome": "E:\\Projects\\EpiphanyAgent\\.epiphany-gui\\codex-home",
+      "artifactRoot": "E:\\Projects\\EpiphanyAgent\\.epiphany-gui",
+      "description": "Main Epiphany harness instance.",
+      "status": "active"
+    },
+    {
+      "id": "aetheria-lore",
+      "label": "Aetheria Lore",
+      "kind": "workspace",
+      "harnessRoot": "E:\\Projects\\EpiphanyAgent",
+      "workspaceRoot": "E:\\Projects\\AetheriaLore",
+      "stateRoot": "E:\\Projects\\AetheriaLore\\.epiphany",
+      "codexHome": "E:\\Projects\\AetheriaLore\\.epiphany\\codex-home",
+      "artifactRoot": "E:\\Projects\\AetheriaLore\\.epiphany\\artifacts",
+      "description": "Aetheria vault and website swarm instance.",
+      "status": "bootstrap"
+    }
+  ]
+}

@@ -20,6 +20,9 @@ current_model:
     description: >
       Tauri commands call scripts in the sibling EpiphanyAgent repo. The
       aquarium is a client and operator surface, not a harness source of truth.
+      A swarm registry can now point multiple workspace-scoped Epiphany
+      instances at the shared harness while keeping cwd, codex-home, state, and
+      artifacts separate.
     env:
       - EPIPHANY_AGENT_ROOT
   artifacts:
@@ -50,6 +53,7 @@ next_actions:
   - Add visual tests for empty-water dismissal, offscreen-safe focus anchoring, agent-specific petals, and one-hit control audio.
   - Consider a debug-only keyboard chord for utilitarian always-on panels.
   - Deepen Face as the chat/aura organism now that backend heartbeatStatus, runHeartbeat, and faceBubble actions exist.
+  - Render swarm members as first-class aquarium organisms instead of only selecting them through Self's connection leaf.
 
 landed:
   - Face is now an interactible aquarium organism. Its habitat exposes heartbeat status, heartbeat pulse, and bubble leaves over EpiphanyAgent's backend GUI action bridge.
@@ -59,3 +63,4 @@ landed:
   - Aetheria-style gravity cups now shape pointer attraction and the WebGL aquarium surface; agents project a hover offset above their wells.
   - Added an optional WebGPU compute stardust layer modeled after Aetheria's compute particles, keyed from agent flow instead of gravity.
   - Added a tilted grid camera projection: shader pixels sample the grid through an inverse camera map, DOM agents project through the same view, and the cursor becomes a grid landing mark.
+  - Added a swarm registry seam. `.epiphany-aquarium/swarm.json` registers EpiphanyAgent and AetheriaLore, and the Tauri backend scopes status, actions, codex-home, workspace root, and artifact roots to the selected member.

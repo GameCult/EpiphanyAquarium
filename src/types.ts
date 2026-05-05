@@ -1,4 +1,5 @@
 export interface StatusRequest {
+  memberId?: string;
   threadId?: string;
   cwd?: string;
   codexHome?: string;
@@ -99,6 +100,21 @@ export interface ArtifactBundle {
 export interface OperatorSnapshot {
   generatedAt: string;
   repoRoot: string;
+  activeMember?: SwarmMember;
+  swarmMembers?: SwarmMember[];
   status: any;
   artifacts: ArtifactBundle[];
+}
+
+export interface SwarmMember {
+  id: string;
+  label: string;
+  kind: "harness" | "workspace";
+  harnessRoot: string;
+  workspaceRoot: string;
+  stateRoot: string;
+  codexHome: string;
+  artifactRoot: string;
+  description?: string;
+  status?: string;
 }

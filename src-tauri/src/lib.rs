@@ -8,11 +8,27 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StatusRequest {
+    member_id: Option<String>,
     thread_id: Option<String>,
     cwd: Option<String>,
     codex_home: Option<String>,
     app_server: Option<String>,
     planning_draft_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SwarmMember {
+    id: String,
+    label: String,
+    kind: String,
+    harness_root: PathBuf,
+    workspace_root: PathBuf,
+    state_root: PathBuf,
+    codex_home: PathBuf,
+    artifact_root: PathBuf,
+    description: Option<String>,
+    status: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -118,18 +134,24 @@ struct InstalledUnityEditor {
 struct OperatorSnapshot {
     generated_at: String,
     repo_root: String,
+    active_member: SwarmMember,
+    swarm_members: Vec<SwarmMember>,
     status: Value,
     artifacts: Vec<ArtifactBundle>,
 }
 
 #[tauri::command]
 fn load_operator_snapshot(request: Option<StatusRequest>) -> Result<OperatorSnapshot, String> {
-    let repo_root = repo_root()?;
-    let status = load_status(&repo_root, request.unwrap_or_default())?;
-    let artifacts = list_artifacts(&repo_root)?;
+    let request = request.unwrap_or_default();
+    let swarm_members = load_swarm_members()?;
+    let active_member = resolve_swarm_member(&swarm_members, request.member_id.as_deref())?;
+    let status = load_status(&active_member, request)?;
+    let artifacts = list_artifacts(&active_member)?;
     Ok(OperatorSnapshot {
         generated_at: unix_millis().to_string(),
-        repo_root: repo_root.display().to_string(),
+        repo_root: active_member.harness_root.display().to_string(),
+        active_member,
+        swarm_members,
         status,
         artifacts,
     })
@@ -140,15 +162,16 @@ fn run_operator_action(
     action: String,
     request: Option<StatusRequest>,
 ) -> Result<OperatorActionResult, String> {
-    let repo_root = repo_root()?;
     let request = request.unwrap_or_default();
+    let swarm_members = load_swarm_members()?;
+    let active_member = resolve_swarm_member(&swarm_members, request.member_id.as_deref())?;
     match action.as_str() {
-        "statusSnapshot" => run_status_snapshot(&repo_root, request),
-        "coordinatorPlan" => run_coordinator_plan(&repo_root, request),
-        "inspectUnity" => run_unity_inspection(&repo_root, request),
-        "inspectRider" => run_rider_inspection(&repo_root, request),
+        "statusSnapshot" => run_status_snapshot(&active_member, request),
+        "coordinatorPlan" => run_coordinator_plan(&active_member, request),
+        "inspectUnity" => run_unity_inspection(&active_member, request),
+        "inspectRider" => run_rider_inspection(&active_member, request),
         "heartbeatStatus" | "runHeartbeat" | "faceBubble" => {
-            run_gui_action_bridge(&repo_root, request, action)
+            run_gui_action_bridge(&active_member, request, action)
         }
         "launchImagination"
         | "readImaginationResult"
@@ -164,26 +187,26 @@ fn run_operator_action(
         | "readReorientResult"
         | "acceptReorient"
         | "continueImplementation"
-        | "prepareCheckpoint" => run_gui_action_bridge(&repo_root, request, action),
+        | "prepareCheckpoint" => run_gui_action_bridge(&active_member, request, action),
         _ => Err(format!("unknown operator action: {action}")),
     }
 }
 
 fn run_rider_inspection(
-    repo_root: &Path,
+    member: &SwarmMember,
     request: StatusRequest,
 ) -> Result<OperatorActionResult, String> {
     let python = find_python()?;
-    let artifact_root = repo_root.join(".epiphany-gui").join("rider");
+    let artifact_root = member.artifact_root.join("rider");
     let workspace = request
         .cwd
         .map(PathBuf::from)
-        .unwrap_or_else(|| repo_root.to_path_buf());
+        .unwrap_or_else(|| member.workspace_root.clone());
 
     let mut command = Command::new(python);
     command
-        .current_dir(repo_root)
-        .arg(repo_root.join("tools").join("epiphany_rider_bridge.py"))
+        .current_dir(&member.harness_root)
+        .arg(member.harness_root.join("tools").join("epiphany_rider_bridge.py"))
         .arg("status")
         .arg("--project-root")
         .arg(workspace)
@@ -203,20 +226,20 @@ fn run_rider_inspection(
 }
 
 fn run_unity_inspection(
-    repo_root: &Path,
+    member: &SwarmMember,
     request: StatusRequest,
 ) -> Result<OperatorActionResult, String> {
     let python = find_python()?;
-    let artifact_root = repo_root.join(".epiphany-gui").join("runtime");
+    let artifact_root = member.artifact_root.join("runtime");
     let workspace = request
         .cwd
         .map(PathBuf::from)
-        .unwrap_or_else(|| repo_root.to_path_buf());
+        .unwrap_or_else(|| member.workspace_root.clone());
 
     let mut command = Command::new(python);
     command
-        .current_dir(repo_root)
-        .arg(repo_root.join("tools").join("epiphany_unity_bridge.py"))
+        .current_dir(&member.harness_root)
+        .arg(member.harness_root.join("tools").join("epiphany_unity_bridge.py"))
         .arg("inspect")
         .arg("--project-path")
         .arg(workspace)
@@ -235,27 +258,27 @@ fn run_unity_inspection(
     })
 }
 
-fn load_status(repo_root: &Path, request: StatusRequest) -> Result<Value, String> {
+fn load_status(member: &SwarmMember, request: StatusRequest) -> Result<Value, String> {
     let python = find_python()?;
-    let status_script = repo_root.join("tools").join("epiphany_mvp_status.py");
+    let status_script = member.harness_root.join("tools").join("epiphany_mvp_status.py");
     let workspace = request
         .cwd
         .map(PathBuf::from)
-        .unwrap_or_else(|| repo_root.to_path_buf());
+        .unwrap_or_else(|| member.workspace_root.clone());
     let codex_home = request
         .codex_home
         .map(PathBuf::from)
-        .unwrap_or_else(|| repo_root.join(".epiphany-gui").join("codex-home"));
-    let transcript = repo_root
-        .join(".epiphany-gui")
+        .unwrap_or_else(|| member.codex_home.clone());
+    let transcript = member
+        .artifact_root
         .join("status-transcript.jsonl");
-    let stderr = repo_root
-        .join(".epiphany-gui")
+    let stderr = member
+        .artifact_root
         .join("status-server.stderr.log");
 
     let mut command = Command::new(python);
     command
-        .current_dir(repo_root)
+        .current_dir(&member.harness_root)
         .arg(status_script)
         .arg("--json")
         .arg("--cwd")
@@ -291,12 +314,12 @@ fn load_status(repo_root: &Path, request: StatusRequest) -> Result<Value, String
 }
 
 fn run_status_snapshot(
-    repo_root: &Path,
+    member: &SwarmMember,
     request: StatusRequest,
 ) -> Result<OperatorActionResult, String> {
     let python = find_python()?;
-    let artifact_root = repo_root
-        .join(".epiphany-gui")
+    let artifact_root = member
+        .artifact_root
         .join("status-snapshots")
         .join(unix_millis().to_string());
     fs::create_dir_all(&artifact_root)
@@ -307,16 +330,16 @@ fn run_status_snapshot(
     let workspace = request
         .cwd
         .map(PathBuf::from)
-        .unwrap_or_else(|| repo_root.to_path_buf());
+        .unwrap_or_else(|| member.workspace_root.clone());
     let codex_home = request
         .codex_home
         .map(PathBuf::from)
-        .unwrap_or_else(|| repo_root.join(".epiphany-gui").join("codex-home"));
+        .unwrap_or_else(|| member.codex_home.clone());
 
     let mut command = Command::new(python);
     command
-        .current_dir(repo_root)
-        .arg(repo_root.join("tools").join("epiphany_mvp_status.py"))
+        .current_dir(&member.harness_root)
+        .arg(member.harness_root.join("tools").join("epiphany_mvp_status.py"))
         .arg("--json")
         .arg("--cwd")
         .arg(workspace)
@@ -345,26 +368,27 @@ fn run_status_snapshot(
 }
 
 fn run_coordinator_plan(
-    repo_root: &Path,
+    member: &SwarmMember,
     request: StatusRequest,
 ) -> Result<OperatorActionResult, String> {
     let python = find_python()?;
-    let artifact_dir = repo_root
-        .join(".epiphany-dogfood")
+    let artifact_dir = member
+        .artifact_root
+        .join("coordinator")
         .join(format!("gui-coordinator-plan-{}", unix_millis()));
     let workspace = request
         .cwd
         .map(PathBuf::from)
-        .unwrap_or_else(|| repo_root.to_path_buf());
+        .unwrap_or_else(|| member.workspace_root.clone());
     let codex_home = request
         .codex_home
         .map(PathBuf::from)
-        .unwrap_or_else(|| repo_root.join(".epiphany-gui").join("codex-home"));
+        .unwrap_or_else(|| member.codex_home.clone());
 
     let mut command = Command::new(python);
     command
-        .current_dir(repo_root)
-        .arg(repo_root.join("tools").join("epiphany_mvp_coordinator.py"))
+        .current_dir(&member.harness_root)
+        .arg(member.harness_root.join("tools").join("epiphany_mvp_coordinator.py"))
         .arg("--mode")
         .arg("plan")
         .arg("--max-steps")
@@ -391,26 +415,26 @@ fn run_coordinator_plan(
 }
 
 fn run_gui_action_bridge(
-    repo_root: &Path,
+    member: &SwarmMember,
     request: StatusRequest,
     action: String,
 ) -> Result<OperatorActionResult, String> {
     let thread_id = request.thread_id.clone();
     let python = find_python()?;
-    let artifact_root = repo_root.join(".epiphany-gui").join("actions");
+    let artifact_root = member.artifact_root.join("actions");
     let workspace = request
         .cwd
         .map(PathBuf::from)
-        .unwrap_or_else(|| repo_root.to_path_buf());
+        .unwrap_or_else(|| member.workspace_root.clone());
     let codex_home = request
         .codex_home
         .map(PathBuf::from)
-        .unwrap_or_else(|| repo_root.join(".epiphany-gui").join("codex-home"));
+        .unwrap_or_else(|| member.codex_home.clone());
 
     let mut command = Command::new(python);
     command
-        .current_dir(repo_root)
-        .arg(repo_root.join("tools").join("epiphany_gui_action.py"))
+        .current_dir(&member.harness_root)
+        .arg(member.harness_root.join("tools").join("epiphany_gui_action.py"))
         .arg("--action")
         .arg(&action)
         .arg("--cwd")
@@ -471,29 +495,33 @@ fn json_string(value: &Value, key: &str) -> Result<String, String> {
         .ok_or_else(|| format!("missing string field in GUI action result: {key}"))
 }
 
-fn list_artifacts(repo_root: &Path) -> Result<Vec<ArtifactBundle>, String> {
+fn list_artifacts(member: &SwarmMember) -> Result<Vec<ArtifactBundle>, String> {
     let mut bundles = Vec::new();
-    collect_artifact_root(&mut bundles, &repo_root.join(".epiphany-dogfood"), "")?;
+    collect_artifact_root(&mut bundles, &member.artifact_root.join("coordinator"), "coordinator/")?;
+    collect_artifact_root(&mut bundles, &member.artifact_root.join("dogfood"), "dogfood/")?;
     collect_artifact_root(
         &mut bundles,
-        &repo_root.join(".epiphany-gui").join("actions"),
+        &member.artifact_root.join("actions"),
         "actions/",
     )?;
     collect_artifact_root(
         &mut bundles,
-        &repo_root.join(".epiphany-gui").join("status-snapshots"),
+        &member.artifact_root.join("status-snapshots"),
         "status/",
     )?;
     collect_artifact_root(
         &mut bundles,
-        &repo_root.join(".epiphany-gui").join("runtime"),
+        &member.artifact_root.join("runtime"),
         "runtime/",
     )?;
     collect_artifact_root(
         &mut bundles,
-        &repo_root.join(".epiphany-gui").join("rider"),
+        &member.artifact_root.join("rider"),
         "rider/",
     )?;
+    if member.id == "epiphany-agent" {
+        collect_artifact_root(&mut bundles, &member.harness_root.join(".epiphany-dogfood"), "")?;
+    }
 
     bundles.sort_by(|a, b| b.modified_millis.cmp(&a.modified_millis));
     Ok(bundles)
@@ -700,6 +728,89 @@ fn read_implementation_audit(root: &Path) -> Option<ImplementationAudit> {
             })
             .unwrap_or_default(),
     })
+}
+
+fn load_swarm_members() -> Result<Vec<SwarmMember>, String> {
+    let config_path = swarm_config_path()?;
+    if config_path.exists() {
+        let text = fs::read_to_string(&config_path)
+            .map_err(|err| format!("failed to read swarm config {}: {err}", config_path.display()))?;
+        let value: Value = serde_json::from_str(&text)
+            .map_err(|err| format!("failed to parse swarm config {}: {err}", config_path.display()))?;
+        let members = value
+            .get("members")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "swarm config missing members array".to_string())?;
+        let parsed: Result<Vec<_>, _> = members
+            .iter()
+            .cloned()
+            .map(serde_json::from_value::<SwarmMember>)
+            .collect();
+        let parsed = parsed.map_err(|err| format!("failed to decode swarm member: {err}"))?;
+        if !parsed.is_empty() {
+            return Ok(parsed);
+        }
+    }
+    default_swarm_members()
+}
+
+fn resolve_swarm_member(members: &[SwarmMember], member_id: Option<&str>) -> Result<SwarmMember, String> {
+    if let Some(member_id) = member_id {
+        if let Some(member) = members.iter().find(|member| member.id == member_id) {
+            return Ok(member.clone());
+        }
+        return Err(format!("unknown swarm member: {member_id}"));
+    }
+    members
+        .first()
+        .cloned()
+        .ok_or_else(|| "swarm registry has no members".to_string())
+}
+
+fn default_swarm_members() -> Result<Vec<SwarmMember>, String> {
+    let harness_root = repo_root()?;
+    let aetheria_root = harness_root
+        .parent()
+        .map(|path| path.join("AetheriaLore"))
+        .unwrap_or_else(|| PathBuf::from(r"E:\Projects\AetheriaLore"));
+    Ok(vec![
+        SwarmMember {
+            id: "epiphany-agent".to_string(),
+            label: "Epiphany".to_string(),
+            kind: "harness".to_string(),
+            harness_root: harness_root.clone(),
+            workspace_root: harness_root.clone(),
+            state_root: harness_root.join("state"),
+            codex_home: harness_root.join(".epiphany-gui").join("codex-home"),
+            artifact_root: harness_root.join(".epiphany-gui"),
+            description: Some("Main Epiphany harness instance.".to_string()),
+            status: Some("active".to_string()),
+        },
+        SwarmMember {
+            id: "aetheria-lore".to_string(),
+            label: "Aetheria Lore".to_string(),
+            kind: "workspace".to_string(),
+            harness_root,
+            workspace_root: aetheria_root.clone(),
+            state_root: aetheria_root.join(".epiphany"),
+            codex_home: aetheria_root.join(".epiphany").join("codex-home"),
+            artifact_root: aetheria_root.join(".epiphany").join("artifacts"),
+            description: Some("Aetheria vault and website swarm instance.".to_string()),
+            status: Some("bootstrap".to_string()),
+        },
+    ])
+}
+
+fn swarm_config_path() -> Result<PathBuf, String> {
+    Ok(aquarium_root()?.join(".epiphany-aquarium").join("swarm.json"))
+}
+
+fn aquarium_root() -> Result<PathBuf, String> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    manifest_dir
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| "failed to locate Aquarium project root".to_string())
 }
 
 fn repo_root() -> Result<PathBuf, String> {

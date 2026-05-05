@@ -69,12 +69,14 @@ async function smokeViewport(browser, viewport, screenshotPath, exerciseFluidPan
   await page.goto(url, { waitUntil: "networkidle" });
   await page.locator(".immersiveShell").waitFor();
   await page.locator('[data-agent-node="coordinator"]').waitFor({ state: "attached" });
+  await page.locator(".agentThreeCanvas").waitFor();
   await page.locator(".agentSmokeCanvas").waitFor();
   await page.locator(".agentStardustCanvas").waitFor();
   await page.locator(".agentCrispCanvas").waitFor();
   await page.waitForTimeout(1000);
 
   const smokeProbe = await probeCanvas(page, ".agentSmokeCanvas");
+  const threeProbe = await probeCanvas(page, ".agentThreeCanvas");
   const crispProbe = await probeCanvas(page, ".agentCrispCanvas");
   const stardustProbe = await page.evaluate(() => {
     const canvas = document.querySelector(".agentStardustCanvas");
@@ -85,6 +87,9 @@ async function smokeViewport(browser, viewport, screenshotPath, exerciseFluidPan
   });
   if (!smokeProbe.nonBlank) {
     throw new Error(`agent smoke canvas did not render: ${smokeProbe.reason}`);
+  }
+  if (!threeProbe.nonBlank) {
+    throw new Error(`agent three scene did not render: ${threeProbe.reason}`);
   }
   if (!crispProbe.nonBlank) {
     throw new Error(`agent crisp canvas did not render orbit guides: ${crispProbe.reason}`);
@@ -304,7 +309,7 @@ async function smokeViewport(browser, viewport, screenshotPath, exerciseFluidPan
   if (result.horizontalOverflow) {
     throw new Error(`visual smoke found horizontal overflow at ${viewport.width}x${viewport.height}`);
   }
-  return { smokeProbe, crispProbe, stardustProbe, audioProbe, persistedParams };
+  return { smokeProbe, threeProbe, crispProbe, stardustProbe, audioProbe, persistedParams };
 }
 
 async function clickCreatureTreeNode(page, agentId, title) {
@@ -336,13 +341,26 @@ async function probeCanvas(page, selector) {
     }
     const gl = canvas.getContext("webgl2");
     if (gl) {
-      const width = Math.min(12, canvas.width);
-      const height = Math.min(12, canvas.height);
-      const pixels = new Uint8Array(width * height * 4);
-      gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+      const width = Math.min(96, canvas.width);
+      const height = Math.min(96, canvas.height);
+      const points = [
+        [0.5, 0.5],
+        [0.28, 0.36],
+        [0.72, 0.36],
+        [0.32, 0.68],
+        [0.68, 0.68],
+      ];
+      let nonBlank = false;
+      for (const [xRatio, yRatio] of points) {
+        const pixels = new Uint8Array(width * height * 4);
+        const x = Math.max(0, Math.floor(canvas.width * xRatio - width * 0.5));
+        const y = Math.max(0, Math.floor(canvas.height * yRatio - height * 0.5));
+        gl.readPixels(x, y, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        nonBlank ||= pixels.some((value) => value !== 0);
+      }
       return {
-        nonBlank: pixels.some((value) => value !== 0),
-        reason: "webgl2 sample",
+        nonBlank,
+        reason: "webgl2 multi-region sample",
       };
     }
     const context = canvas.getContext("2d");

@@ -18,12 +18,14 @@ import {
 import { EpiphanyGraphViewer, validateEpiphanyGraphsState } from "@epiphanygraph/epiphany-graph-viewer";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createAquariumRenderer } from "./aquariumFluid";
+import { createAquariumScene3d } from "./aquariumScene3d";
 import { createAquariumStardustOverlay } from "./aquariumStardust";
 import { createHarmonyRuntime, loadNextHarmony, loadShuffledDefaultHarmony, pickHarmonyFolder } from "./midiHarmony";
 import { loadOperatorSnapshot, runOperatorAction } from "./operatorApi";
-import type { ArtifactBundle, OperatorAction, OperatorActionResult, OperatorSnapshot, StatusRequest } from "./types";
+import type { ArtifactBundle, OperatorAction, OperatorActionResult, OperatorSnapshot, StatusRequest, SwarmMember } from "./types";
 import type { EpiphanyCodeRef, EpiphanyGraphsState } from "@epiphanygraph/epiphany-graph-viewer";
 import type { AquariumAgentProjection, AquariumOptionFrame, AquariumRenderer, AquariumUiFrame } from "./aquariumFluid";
+import type { AquariumScene3d } from "./aquariumScene3d";
 import type { AquariumStardustOverlay } from "./aquariumStardust";
 import type { AquariumHarmonyFrame, HarmonyRuntime, HarmonySource, MidiCorpusFile } from "./midiHarmony";
 
@@ -446,6 +448,10 @@ function text(value: unknown, fallback = "none"): string {
   return fallback;
 }
 
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
 function displayLabel(value: unknown, fallback = "none"): string {
   return text(value, fallback).replace(/([a-z])([A-Z])/g, "$1 $2");
 }
@@ -492,6 +498,13 @@ function projectedActivity(status: unknown, jobCount = 0): number {
 function findingSummary(result: any): string | undefined {
   const finding = result?.finding;
   return finding?.summary ?? finding?.nextSafeMove ?? finding?.mode ?? finding?.verdict ?? result?.note;
+}
+
+function memberTone(member?: SwarmMember): string {
+  const lower = text(member?.status ?? member?.kind).toLowerCase();
+  if (lower.includes("active") || lower.includes("ready")) return "ok";
+  if (lower.includes("bootstrap") || lower.includes("workspace")) return "warn";
+  return "neutral";
 }
 
 const emptyGraphState: EpiphanyGraphsState = {
@@ -571,6 +584,9 @@ function useSnapshot() {
     try {
       const result = await loadOperatorSnapshot(nextRequest);
       setSnapshot(result);
+      if (result.activeMember?.id && !nextRequest.memberId) {
+        setRequest((current) => (current.memberId ? current : { ...current, memberId: result.activeMember?.id }));
+      }
       const loadedThreadId = result.status?.threadId;
       const loadedState = result.status?.scene?.scene?.stateStatus;
       if (
@@ -705,6 +721,8 @@ export function App() {
     artifacts: "bundles",
   });
   const status = snapshot?.status;
+  const swarmMembers = snapshot?.swarmMembers ?? [];
+  const activeMember = snapshot?.activeMember ?? swarmMembers.find((member) => member.id === request.memberId) ?? swarmMembers[0];
   const scene = status?.scene?.scene ?? {};
   const pressure = status?.pressure?.pressure ?? {};
   const reorient = status?.reorient?.decision ?? {};
@@ -777,6 +795,18 @@ export function App() {
   const riderChangedFiles = latestRiderAudit?.vcs?.changedFiles ?? [];
   const activeSubdeck = subdeckByDeck[activeDeck];
   const activeDeckTitle = deckLabels[activeDeck];
+
+  function selectMember(memberId: string) {
+    const member = swarmMembers.find((candidate) => candidate.id === memberId);
+    const nextRequest: StatusRequest = {
+      memberId,
+      cwd: member?.workspaceRoot,
+      codexHome: member?.codexHome,
+    };
+    setRequest(nextRequest);
+    setSelectedCodeRef(null);
+    void refresh(nextRequest);
+  }
 
   function selectDeck(deck: DeckId) {
     setActiveDeck(deck);
@@ -883,9 +913,10 @@ export function App() {
     }
     if (activeDeck === "command" && activeSubdeck === "connection") {
       return [
+        `Swarm: ${text(activeMember?.label, "unknown")} / ${text(activeMember?.kind)}`,
         `Thread: ${text(status?.threadId)}`,
         `State: ${text(scene.stateStatus)} rev ${text(scene.revision)}`,
-        `Repo: ${text(snapshot?.repoRoot)}`,
+        `Workspace: ${text(activeMember?.workspaceRoot ?? request.cwd ?? snapshot?.repoRoot)}`,
         `Draft: ${text(request.planningDraftId)}`,
       ];
     }
@@ -948,9 +979,9 @@ export function App() {
     activeDeckLabel: activeDeckTitle,
     activeSubdeck,
     statuses: [
+      { label: text(activeMember?.label, "swarm unknown"), tone: memberTone(activeMember) },
       { label: displayLabel(coordinator.action ?? crrc.action, "unknown"), tone: statusClass(coordinator.action ?? crrc.action) },
       { label: `pressure ${text(pressure.level, "unknown")}`, tone: statusClass(pressure.level) },
-      { label: `continuity ${text(reorient.action, "unknown")}`, tone: statusClass(reorient.action) },
     ],
     deckButtons: (Object.keys(deckSubmenus) as DeckId[]).map((deck) => ({
       key: `ui:deck:${deck}`,
@@ -1005,9 +1036,10 @@ export function App() {
     if (agentId === "coordinator" && leafId === "thread") {
       return (
         <section className="leafGrid two">
+          <label>Swarm<select value={activeMember?.id ?? request.memberId ?? ""} onChange={(event) => selectMember(event.target.value)} disabled={swarmMembers.length === 0}>{swarmMembers.map((member) => <option value={member.id} key={member.id}>{member.label} [{member.kind}]</option>)}</select></label>
           <label>Thread ID<input placeholder="auto-load persistent status thread" value={request.threadId ?? ""} onChange={(event) => setRequest({ ...request, threadId: event.target.value || undefined })} /></label>
           <label>Workspace<input placeholder={snapshot?.repoRoot ?? "repo root"} value={request.cwd ?? ""} onChange={(event) => setRequest({ ...request, cwd: event.target.value || undefined })} /></label>
-          <dl className="facts"><div><dt>Thread</dt><dd>{text(status?.threadId)}</dd></div><div><dt>State</dt><dd>{text(scene.stateStatus)} rev {text(scene.revision)}</dd></div></dl>
+          <dl className="facts"><div><dt>Member</dt><dd>{text(activeMember?.label)}</dd></div><div><dt>Thread</dt><dd>{text(status?.threadId)}</dd></div><div><dt>State</dt><dd>{text(scene.stateStatus)} rev {text(scene.revision)}</dd></div><div><dt>Artifacts</dt><dd>{text(activeMember?.artifactRoot)}</dd></div></dl>
         </section>
       );
     }
@@ -1471,10 +1503,12 @@ function AgentConstellation({
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const crispCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const sceneCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const stardustCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const optionByKeyRef = useRef(new globalThis.Map<string, AquariumOption>());
   const uiOptionByKeyRef = useRef(new globalThis.Map<string, AquariumOption>());
   const rendererRef = useRef<AquariumRenderer | null>(null);
+  const scene3dRef = useRef<AquariumScene3d | null>(null);
   const stardustRef = useRef<AquariumStardustOverlay | null>(null);
   const agentNodeRefs = useRef(new globalThis.Map<string, HTMLButtonElement>());
   const thoughtNodeRefs = useRef(new globalThis.Map<string, HTMLDivElement>());
@@ -1609,6 +1643,17 @@ function AgentConstellation({
   }, []);
 
   useEffect(() => {
+    const canvas = sceneCanvasRef.current;
+    if (!canvas) return;
+    const scene = createAquariumScene3d(canvas);
+    scene3dRef.current = scene;
+    return () => {
+      scene.dispose();
+      scene3dRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
     const canvas = stardustCanvasRef.current;
     if (!canvas) return;
     let cancelled = false;
@@ -1680,8 +1725,14 @@ function AgentConstellation({
       thoughtNode?.toggleAttribute("data-agent-hot", projection.hover > 0.35);
       optionHaloNode?.toggleAttribute("data-agent-hot", projection.hover > 0.2);
     }
+    scene3dRef.current?.setProjections(
+      projections.map((projection) => {
+        const agent = aquariumAgents.find((candidate) => candidate.id === projection.id);
+        return { ...projection, color: agent?.color, glow: agent?.glow };
+      }),
+    );
     stardustRef.current?.setProjections(projections);
-  }, [hoveredAgentId, selectedAgentId]);
+  }, [aquariumAgents, hoveredAgentId, selectedAgentId]);
 
   useEffect(() => {
     rendererRef.current?.setFrame({
@@ -1696,11 +1747,13 @@ function AgentConstellation({
 
   function handlePointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
     rendererRef.current?.setPointerClient(event.clientX, event.clientY);
+    scene3dRef.current?.setPointer(pointerPercent(event.clientX, event.clientY, event.currentTarget));
   }
 
   function handlePointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
     event.currentTarget.setPointerCapture(event.pointerId);
     rendererRef.current?.pointerDownClient(event.clientX, event.clientY);
+    scene3dRef.current?.setPointer(pointerPercent(event.clientX, event.clientY, event.currentTarget));
   }
 
   function handlePointerUp(event: React.PointerEvent<HTMLCanvasElement>) {
@@ -1713,16 +1766,19 @@ function AgentConstellation({
   function handlePointerLeave() {
     rendererRef.current?.clearPointer();
     rendererRef.current?.pointerUp();
+    scene3dRef.current?.setPointer({ active: false, xPercent: 50, yPercent: 50 });
   }
 
   function handleAgentPointerEnter(agentId: string, event: React.PointerEvent<HTMLElement>) {
     setHoveredAgentId(agentId);
     rendererRef.current?.setPointerClient(event.clientX, event.clientY);
+    scene3dRef.current?.setPointer(pointerPercent(event.clientX, event.clientY, event.currentTarget.closest(".agentStage")));
     rendererRef.current?.setHoveredAgent(agentId);
   }
 
   function handleAgentPointerMove(event: React.PointerEvent<HTMLElement>) {
     rendererRef.current?.setPointerClient(event.clientX, event.clientY);
+    scene3dRef.current?.setPointer(pointerPercent(event.clientX, event.clientY, event.currentTarget.closest(".agentStage")));
   }
 
   function handleAgentPointerLeave() {
@@ -1751,6 +1807,16 @@ function AgentConstellation({
     return {
       left: `calc(50% + ${Math.cos(angle) * radius}px)`,
       top: `calc(50% + ${Math.sin(angle) * radius}px)`,
+    };
+  }
+
+  function pointerPercent(clientX: number, clientY: number, target: Element | null) {
+    const rect = target?.getBoundingClientRect();
+    if (!rect) return { active: false, xPercent: 50, yPercent: 50 };
+    return {
+      active: true,
+      xPercent: clampNumber(((clientX - rect.left) / Math.max(rect.width, 1)) * 100, 0, 100),
+      yPercent: clampNumber(((clientY - rect.top) / Math.max(rect.height, 1)) * 100, 0, 100),
     };
   }
 
@@ -1811,6 +1877,11 @@ function AgentConstellation({
         </div>
       )}
       <div className="agentStage">
+        <canvas
+          ref={sceneCanvasRef}
+          className="agentThreeCanvas"
+          aria-hidden="true"
+        />
         <canvas
           ref={canvasRef}
           className="agentSmokeCanvas"
