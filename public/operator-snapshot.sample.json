@@ -1,0 +1,487 @@
+{
+  "generatedAt": "1777475847000",
+  "repoRoot": "E:\\Projects\\EpiphanyAgent",
+  "status": {
+    "threadId": "019dd9d1-045b-7f13-b0e1-38ed89b31495",
+    "read": {
+      "thread": {
+        "id": "019dd9d1-045b-7f13-b0e1-38ed89b31495",
+        "epiphanyState": {
+          "graphs": {
+            "architecture": {
+              "nodes": [
+                {
+                  "id": "gui-operator-console",
+                  "title": "Tauri/React operator console",
+                  "purpose": "Human-facing surface for status, artifacts, graph state, and bounded lane actions.",
+                  "code_refs": [
+                    {
+                      "path": "src/App.tsx",
+                      "start_line": 1,
+                      "symbol": "App"
+                    }
+                  ]
+                },
+                {
+                  "id": "rider-context-bridge",
+                  "title": "Rider context bridge",
+                  "purpose": "Operator-safe source, solution, VCS, and selected-code context receipts for modeling and review.",
+                  "code_refs": [
+                    {
+                      "path": "tools/epiphany_rider_bridge.py",
+                      "start_line": 1,
+                      "symbol": "status_rider"
+                    }
+                  ]
+                },
+                {
+                  "id": "unity-runtime-bridge",
+                  "title": "Unity runtime bridge",
+                  "purpose": "Pinned-editor runtime, package, compilation, probe, and test receipts for Unity projects.",
+                  "code_refs": [
+                    {
+                      "path": "tools/epiphany_unity_bridge.py",
+                      "start_line": 1,
+                      "symbol": "probe_unity"
+                    }
+                  ]
+                }
+              ],
+              "edges": [
+                {
+                  "source_id": "gui-operator-console",
+                  "target_id": "rider-context-bridge",
+                  "kind": "requests-source-context",
+                  "label": "Rider facts"
+                },
+                {
+                  "source_id": "gui-operator-console",
+                  "target_id": "unity-runtime-bridge",
+                  "kind": "requests-runtime-facts",
+                  "label": "Unity facts"
+                }
+              ]
+            },
+            "dataflow": {
+              "nodes": [
+                {
+                  "id": "operator-bridge-flow",
+                  "title": "Operator bridge flow",
+                  "purpose": "GUI button or Rider plugin action writes an artifact, then Epiphany reads the projected receipt."
+                },
+                {
+                  "id": "graph-review-flow",
+                  "title": "Graph review flow",
+                  "purpose": "Modeling state renders into a graph viewer, code refs become Rider-friendly navigation targets."
+                }
+              ],
+              "edges": [
+                {
+                  "source_id": "operator-bridge-flow",
+                  "target_id": "graph-review-flow",
+                  "kind": "feeds-review"
+                }
+              ]
+            },
+            "links": [
+              {
+                "dataflow_node_id": "operator-bridge-flow",
+                "architecture_node_id": "gui-operator-console",
+                "relationship": "operator-surface"
+              },
+              {
+                "dataflow_node_id": "operator-bridge-flow",
+                "architecture_node_id": "rider-context-bridge",
+                "relationship": "source-organ"
+              },
+              {
+                "dataflow_node_id": "operator-bridge-flow",
+                "architecture_node_id": "unity-runtime-bridge",
+                "relationship": "runtime-organ"
+              },
+              {
+                "dataflow_node_id": "graph-review-flow",
+                "architecture_node_id": "gui-operator-console",
+                "relationship": "graph-dashboard"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "scene": {
+      "scene": {
+        "availableActions": [
+          "index",
+          "retrieve",
+          "distill",
+          "context",
+          "jobs",
+          "roles",
+          "planning",
+          "coordinator",
+          "roleLaunch",
+          "roleResult",
+          "jobLaunch",
+          "freshness",
+          "pressure",
+          "reorient",
+          "crrc",
+          "update"
+        ],
+        "source": "live",
+        "stateStatus": "missing"
+      }
+    },
+    "pressure": {
+      "pressure": {
+        "basis": "unknown",
+        "level": "unknown",
+        "note": "No token usage telemetry has been recorded for this thread yet.",
+        "shouldPrepareCompaction": false,
+        "status": "unknown"
+      }
+    },
+    "reorient": {
+      "decision": {
+        "action": "regather",
+        "checkpointStatus": "missing",
+        "graphStatus": "missing",
+        "nextAction": "Re-gather source context before editing.",
+        "note": "No Epiphany state survived, so there is no authoritative checkpoint to resume.",
+        "pressureLevel": "unknown",
+        "reasons": ["missingState", "missingCheckpoint"],
+        "retrievalStatus": "ready",
+        "watcherStatus": "clean"
+      }
+    },
+    "jobs": {
+      "jobs": [
+        {
+          "id": "retrieval-index",
+          "kind": "indexing",
+          "ownerRole": "epiphany-core",
+          "progressNote": "Retrieval catalog is ready.",
+          "scope": "E:\\Projects\\EpiphanyAgent",
+          "status": "idle"
+        },
+        {
+          "blockingReason": "Epiphany state is missing, so there is no graph to remap.",
+          "id": "graph-remap",
+          "kind": "remap",
+          "ownerRole": "epiphany-harness",
+          "scope": "architecture/dataflow graphs",
+          "status": "blocked"
+        },
+        {
+          "blockingReason": "Epiphany state is missing, so there are no invariants to verify.",
+          "id": "verification",
+          "kind": "verification",
+          "ownerRole": "epiphany-harness",
+          "scope": "invariants/evidence",
+          "status": "blocked"
+        }
+      ]
+    },
+    "roles": {
+      "roles": [
+        {
+          "id": "implementation",
+          "note": "Wait for CRRC action: RegatherManually.",
+          "ownerRole": "coding-agent",
+          "status": "blocked",
+          "title": "Implementation"
+        },
+        {
+          "id": "imagination",
+          "note": "Planning material ready: 2 captures, 1 backlog items, 1 roadmap streams, 1 objective drafts.",
+          "ownerRole": "epiphany-imagination",
+          "recommendedAction": "roleLaunch",
+          "status": "ready",
+          "title": "Imagination / Planning"
+        },
+        {
+          "id": "modeling",
+          "note": "Checkpoint missing: Re-gather source context before editing.",
+          "ownerRole": "epiphany-modeler",
+          "recommendedAction": "update",
+          "status": "needed",
+          "title": "Modeling / Checkpoint"
+        },
+        {
+          "id": "verification",
+          "note": "Epiphany state is missing, so there are no invariants to verify.",
+          "ownerRole": "epiphany-verifier",
+          "status": "blocked",
+          "title": "Verification / Review"
+        },
+        {
+          "id": "reorientation",
+          "note": "Regather verdict, result MissingState, pressure Unknown. No authoritative Epiphany state exists; re-gather source context before editing.",
+          "ownerRole": "epiphany-reorient",
+          "status": "needed",
+          "title": "Reorientation"
+        }
+      ]
+    },
+    "planning": {
+      "threadId": "019dd9d1-045b-7f13-b0e1-38ed89b31495",
+      "source": "live",
+      "stateStatus": "ready",
+      "stateRevision": 3,
+      "planning": {
+        "workspace_root": "E:\\Projects\\EpiphanyAgent",
+        "captures": [
+          {
+            "id": "capture-github-planning",
+            "title": "Import GitHub issue into planning inbox",
+            "body": "Issues should become planning captures before becoming objectives.",
+            "confidence": "observed",
+            "status": "inbox",
+            "speaker": "human",
+            "tags": ["github", "backlog"],
+            "source": {
+              "kind": "github_issue",
+              "provider": "github",
+              "repo": "GameCult/EpiphanyAgent",
+              "issue_number": 42,
+              "url": "https://github.com/GameCult/EpiphanyAgent/issues/42",
+              "state": "open",
+              "labels": ["planning", "mvp"],
+              "assignees": ["Meta"],
+              "author": "Meta",
+              "created_at": "2026-05-01T10:00:00Z",
+              "updated_at": "2026-05-01T10:05:00Z",
+              "imported_at": "2026-05-01T10:10:00Z"
+            },
+            "created_at": "2026-05-01T10:10:00Z",
+            "updated_at": "2026-05-01T10:10:00Z"
+          },
+          {
+            "id": "capture-chat-planning",
+            "title": "Draft objectives from chat after bounding them",
+            "body": "Discussion remains planning material until it becomes a firm artifact.",
+            "confidence": "medium",
+            "status": "triaged",
+            "speaker": "human",
+            "tags": ["chat", "objective"],
+            "source": {
+              "kind": "chat",
+              "uri": "codex://threads/planning-smoke",
+              "external_id": "turn-planning-smoke"
+            },
+            "created_at": "2026-05-01T10:12:00Z",
+            "updated_at": "2026-05-01T10:12:00Z"
+          }
+        ],
+        "backlog_items": [
+          {
+            "id": "backlog-planning-dashboard",
+            "title": "Expose planning state in the Epiphany dashboard",
+            "kind": "feature",
+            "summary": "Show captures, backlog, roadmap streams, and objective drafts.",
+            "status": "ready",
+            "horizon": "near",
+            "priority": {
+              "value": "high",
+              "rationale": "Planning needs a visible user review loop before automation.",
+              "impact": "user-steering",
+              "urgency": "soon",
+              "confidence": "medium",
+              "effort": "small",
+              "unblocks": ["objective-adoption"]
+            },
+            "confidence": "medium",
+            "product_area": "epiphany-aquarium",
+            "lane_hints": ["imagination", "hands", "soul"],
+            "acceptance_sketch": ["Dashboard can render typed planning records."],
+            "source_refs": [],
+            "updated_at": "2026-05-01T10:15:00Z"
+          }
+        ],
+        "roadmap_streams": [
+          {
+            "id": "stream-user-steering",
+            "title": "Human-steered planning",
+            "purpose": "Keep future work visible and bounded before implementation starts.",
+            "status": "active",
+            "item_ids": ["backlog-planning-dashboard"],
+            "near_term_focus": "backlog-planning-dashboard",
+            "review_cadence": "per objective"
+          }
+        ],
+        "objective_drafts": [
+          {
+            "id": "draft-planning-dashboard",
+            "title": "Build the planning dashboard slice",
+            "summary": "Render planning records and let the user adopt one bounded objective.",
+            "source_item_ids": ["backlog-planning-dashboard"],
+            "scope": {
+              "includes": ["read-only planning projection", "objective draft review"],
+              "excludes": ["automatic objective adoption"]
+            },
+            "acceptance_criteria": [
+              "Planning records render without changing thread state.",
+              "A draft objective remains review-gated."
+            ],
+            "evidence_required": ["live smoke", "GUI screenshot"],
+            "lane_plan": {
+              "imagination": "organize planning records into a bounded objective candidate",
+              "eyes": "check prior art and GitHub issue metadata shape",
+              "hands": "wire dashboard controls after the read-only surface is stable",
+              "soul": "verify no planning record silently becomes active objective"
+            },
+            "risks": ["accidental objective adoption"],
+            "review_gates": ["human adoption"],
+            "status": "draft"
+          }
+        ]
+      },
+      "summary": {
+        "captureCount": 2,
+        "pendingCaptureCount": 1,
+        "githubIssueCaptureCount": 1,
+        "backlogItemCount": 1,
+        "readyBacklogItemCount": 1,
+        "roadmapStreamCount": 1,
+        "objectiveDraftCount": 1,
+        "draftObjectiveCount": 1,
+        "activeObjective": "Reach a testable Epiphany MVP through the local GUI/operator workflow.",
+        "note": "Planning substrate is available. These records are planning state only until a human explicitly adopts an objective."
+      }
+    },
+    "roleResults": {
+      "imagination": {
+        "bindingId": "planning-synthesis-worker",
+        "note": "No authoritative Epiphany state exists for this thread.",
+        "roleId": "imagination",
+        "status": "missingState"
+      },
+      "modeling": {
+        "bindingId": "modeling-checkpoint-worker",
+        "note": "No authoritative Epiphany state exists for this thread.",
+        "roleId": "modeling",
+        "status": "missingState"
+      },
+      "verification": {
+        "bindingId": "verification-review-worker",
+        "note": "No authoritative Epiphany state exists for this thread.",
+        "roleId": "verification",
+        "status": "missingState"
+      }
+    },
+    "reorientResult": {
+      "bindingId": "reorient-worker",
+      "note": "No authoritative Epiphany state exists for this thread.",
+      "status": "missingState"
+    },
+    "crrc": {
+      "recommendation": {
+        "action": "regatherManually",
+        "reason": "No authoritative Epiphany state exists; re-gather source context before editing."
+      }
+    },
+    "coordinator": {
+      "action": "prepareCheckpoint",
+      "canAutoRun": false,
+      "reason": "Authoritative state or investigation checkpoint is missing; prepare a checkpoint before coordination can continue.",
+      "recommendedSceneAction": "update",
+      "requiresReview": false,
+      "targetRole": "modeling"
+    }
+  },
+  "artifacts": [
+    {
+      "name": "runtime/unity-inspect-sample",
+      "path": "E:\\Projects\\EpiphanyAgent\\.epiphany-gui\\runtime\\unity-inspect-sample",
+      "files": [
+        "unity-bridge-inspection.md",
+        "unity-bridge-summary.json"
+      ],
+      "summaryPath": "E:\\Projects\\EpiphanyAgent\\.epiphany-gui\\runtime\\unity-inspect-sample\\unity-bridge-summary.json",
+      "runtimeAudit": {
+        "resultPath": "E:\\Projects\\EpiphanyAgent\\.epiphany-gui\\runtime\\unity-inspect-sample\\unity-bridge-summary.json",
+        "status": "missingEditor",
+        "projectPath": "E:\\Projects\\Aetheria-Economy",
+        "projectVersion": "6000.1.10f1",
+        "note": "Project pins Unity 6000.1.10f1, but no exact editor was found.",
+        "editorBridge": {
+          "exists": true,
+          "path": "E:\\Projects\\Aetheria-Economy\\Assets\\Editor\\Epiphany\\EpiphanyEditorBridge.cs",
+          "relativePath": "Assets/Editor/Epiphany/EpiphanyEditorBridge.cs",
+          "executeMethod": "GameCult.Epiphany.Unity.EpiphanyEditorBridge.RunProbe"
+        },
+        "installedEditors": [
+          {
+            "version": "6000.4.2f1",
+            "editorPath": "C:\\Program Files\\Unity\\Hub\\Editor\\6000.4.2f1\\Editor\\Unity.exe"
+          }
+        ],
+        "candidatePaths": [
+          "C:\\Program Files\\Unity\\Hub\\Editor\\6000.1.10f1\\Editor\\Unity.exe",
+          "C:\\Program Files (x86)\\Unity\\Hub\\Editor\\6000.1.10f1\\Editor\\Unity.exe"
+        ],
+        "searchRoots": [
+          "C:\\Program Files\\Unity\\Hub\\Editor",
+          "C:\\Program Files (x86)\\Unity\\Hub\\Editor"
+        ]
+      },
+      "modifiedMillis": 1777475848000
+    },
+    {
+      "name": "rider/rider-inspect-sample",
+      "path": "E:\\Projects\\EpiphanyAgent\\.epiphany-gui\\rider\\rider-inspect-sample",
+      "files": [
+        "rider-bridge-status.md",
+        "rider-bridge-summary.json"
+      ],
+      "summaryPath": "E:\\Projects\\EpiphanyAgent\\.epiphany-gui\\rider\\rider-inspect-sample\\rider-bridge-summary.json",
+      "riderAudit": {
+        "resultPath": "E:\\Projects\\EpiphanyAgent\\.epiphany-gui\\rider\\rider-inspect-sample\\rider-bridge-summary.json",
+        "status": "ready",
+        "workspace": "E:\\Projects\\Aetheria-Economy",
+        "solutionPath": "E:\\Projects\\Aetheria-Economy\\Aetheria.sln",
+        "solutionStatus": "ready",
+        "riderPath": "C:\\Program Files\\JetBrains\\JetBrains Rider 2026.1.0.1\\bin\\rider64.exe",
+        "installationCount": 1,
+        "note": "Rider executable is available for explicit source navigation and context capture.",
+        "vcs": {
+          "status": "ready",
+          "branch": "codex/epiphany-unity-editor-bridge",
+          "dirty": false,
+          "changedFiles": [
+            "Assets/Editor/Epiphany/EpiphanyEditorBridge.cs"
+          ],
+          "stagedFiles": [],
+          "changedRangesKnown": true
+        },
+        "installations": [
+          {
+            "path": "C:\\Program Files\\JetBrains\\JetBrains Rider 2026.1.0.1\\bin\\rider64.exe",
+            "versionHint": "JetBrains Rider 2026.1.0.1"
+          }
+        ],
+        "searchRoots": [
+          "C:\\Program Files\\JetBrains"
+        ]
+      },
+      "modifiedMillis": 1777475847500
+    },
+    {
+      "name": "mvp-loop-selfdogfood-vanilla2-20260429",
+      "path": "E:\\Projects\\EpiphanyAgent\\.epiphany-dogfood\\mvp-loop-selfdogfood-vanilla2-20260429",
+      "files": [
+        "artifact-manifest.json",
+        "comparison.md",
+        "epiphany-dogfood-summary.json",
+        "epiphany-final-status.json",
+        "epiphany-transcript.jsonl",
+        "vanilla-reference.md"
+      ],
+      "summaryPath": "E:\\Projects\\EpiphanyAgent\\.epiphany-dogfood\\mvp-loop-selfdogfood-vanilla2-20260429\\epiphany-dogfood-summary.json",
+      "finalStatusPath": "E:\\Projects\\EpiphanyAgent\\.epiphany-dogfood\\mvp-loop-selfdogfood-vanilla2-20260429\\epiphany-final-status.json",
+      "comparisonPath": "E:\\Projects\\EpiphanyAgent\\.epiphany-dogfood\\mvp-loop-selfdogfood-vanilla2-20260429\\comparison.md",
+      "modifiedMillis": 1777475847000
+    }
+  ]
+}

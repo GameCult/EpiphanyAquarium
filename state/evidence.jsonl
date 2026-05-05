@@ -1,0 +1,2 @@
+{"type":"seed","status":"ok","note":"Epiphany Aquarium split from EpiphanyAgent so the UI can evolve under its own pseudo-Epiphany state, memory, and taste doctrine. Backend harness scripts still live in EpiphanyAgent; the aquarium repo owns interaction, WebGL, audio, and visual smoke."}
+

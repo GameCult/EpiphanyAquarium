@@ -1,0 +1,1792 @@
+:root {
+  color: #172018;
+  background: #f7f8f5;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    linear-gradient(180deg, rgba(240, 243, 237, 0.88), rgba(248, 249, 246, 1)),
+    #f7f8f5;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+.shell {
+  width: min(1440px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 24px 0 36px;
+}
+
+.topbar,
+.controls,
+.statusGrid,
+.twoColumn {
+  display: grid;
+  gap: 16px;
+}
+
+.topbar {
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  margin-bottom: 18px;
+}
+
+.eyebrow {
+  margin: 0 0 4px;
+  color: #5f6b61;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(1.6rem, 3vw, 2.35rem);
+  line-height: 1.08;
+}
+
+h2 {
+  font-size: 0.94rem;
+}
+
+h3 {
+  font-size: 0.92rem;
+  line-height: 1.2;
+}
+
+.primaryButton,
+.secondaryButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 38px;
+  border: 1px solid #244d3a;
+  border-radius: 6px;
+  padding: 0 14px;
+  color: #f8fff8;
+  background: #244d3a;
+  cursor: pointer;
+}
+
+.secondaryButton {
+  border-color: #b8c4bc;
+  color: #244d3a;
+  background: #ffffff;
+}
+
+.primaryButton:disabled,
+.secondaryButton:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.controls {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 10px;
+}
+
+.actionStrip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.actionResult {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  color: #3e493f;
+  font-size: 0.86rem;
+}
+
+.actionResult code {
+  max-width: min(580px, 70vw);
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  color: #465047;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+input,
+select {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid #ccd4ca;
+  border-radius: 6px;
+  padding: 0 11px;
+  color: #172018;
+  background: #ffffff;
+}
+
+select {
+  appearance: none;
+  padding-right: 34px;
+  background:
+    linear-gradient(45deg, transparent 50%, #526157 50%),
+    linear-gradient(135deg, #526157 50%, transparent 50%),
+    #ffffff;
+  background-position:
+    calc(100% - 17px) 16px,
+    calc(100% - 11px) 16px,
+    0 0;
+  background-size:
+    6px 6px,
+    6px 6px,
+    100% 100%;
+  background-repeat: no-repeat;
+}
+
+.notice,
+.panel,
+.laneCard,
+.findingCard,
+.jobRow,
+.artifactTable {
+  border: 1px solid #d9ded5;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(23, 32, 24, 0.04);
+}
+
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 12px;
+}
+
+.notice span {
+  min-width: 0;
+}
+
+.dangerNotice {
+  border-color: #d9b1a4;
+  color: #6b2418;
+  background: #fff7f4;
+}
+
+.warnNotice {
+  border-color: #dfc36f;
+  color: #76520b;
+  background: #fff8df;
+}
+
+.okNotice {
+  border-color: #9ac8aa;
+  color: #1d5d39;
+  background: #edf8f0;
+}
+
+.notice code {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.statusGrid {
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
+  margin-bottom: 22px;
+}
+
+.panel,
+.sectionBand {
+  padding: 16px;
+}
+
+.sectionBand {
+  margin-top: 18px;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  margin-bottom: 12px;
+  color: #263229;
+}
+
+.actionBanner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 46px;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+
+.actionBanner strong {
+  overflow-wrap: anywhere;
+}
+
+.actionBanner span {
+  color: rgba(23, 32, 24, 0.68);
+  font-size: 0.84rem;
+}
+
+.ok {
+  background: #e7f3eb;
+  color: #1d5d39;
+}
+
+.warn {
+  background: #fff4d9;
+  color: #76520b;
+}
+
+.danger {
+  background: #fde8e1;
+  color: #8d2d1c;
+}
+
+.neutral {
+  background: #edf0f2;
+  color: #39454b;
+}
+
+.reason {
+  color: #3e493f;
+  line-height: 1.45;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 14px 0 0;
+}
+
+.facts.compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.facts div {
+  min-width: 0;
+}
+
+dt {
+  color: #667168;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+  color: #172018;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  max-width: 100%;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.cardGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.environmentGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(260px, 0.75fr) minmax(300px, 0.9fr);
+  gap: 12px;
+}
+
+.environmentCard {
+  min-width: 0;
+  border: 1px solid #d9ded5;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.planningGrid {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.9fr) repeat(3, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.planningColumn {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.planningColumnHeader {
+  min-height: 30px;
+}
+
+.graphBand {
+  display: grid;
+  gap: 12px;
+}
+
+.graphSummary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, auto);
+  gap: 12px;
+  align-items: end;
+}
+
+.selectedCodeRef {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid #d9ded5;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #3e493f;
+  background: #ffffff;
+  font-size: 0.84rem;
+}
+
+.selectedCodeRef span {
+  color: #667168;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.graphIssues {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.graphViewerFrame {
+  min-height: 560px;
+  overflow: hidden;
+  border: 1px solid #d9ded5;
+  border-radius: 8px;
+  background: #07101e;
+}
+
+.embeddedGraphViewer {
+  min-height: 560px;
+}
+
+body:has(.immersiveShell) {
+  overflow: hidden;
+  background: #07110e;
+}
+
+.immersiveShell {
+  position: relative;
+  width: 100vw;
+  height: 100dvh;
+  min-width: 320px;
+  min-height: 720px;
+  overflow: hidden;
+  color: #f7fff7;
+  background: #07110e;
+}
+
+.immersiveConstellation {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.immersiveConstellation .agentStage {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  border: 0;
+  border-radius: 0;
+  background:
+    radial-gradient(circle at 16% 22%, rgba(47, 155, 103, 0.34), transparent 32%),
+    radial-gradient(circle at 82% 18%, rgba(79, 99, 182, 0.32), transparent 30%),
+    radial-gradient(circle at 62% 78%, rgba(207, 90, 47, 0.32), transparent 32%),
+    linear-gradient(135deg, #07110e, #171124 46%, #16241d);
+  box-shadow: none;
+}
+
+.immersiveConstellation .agentStageVignette {
+  display: none;
+}
+
+.immersiveConstellation .constellationInspector {
+  right: 24px;
+  bottom: 24px;
+  left: auto;
+  width: min(560px, 38vw);
+  color: #172018;
+}
+
+.hudGrid {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(224, 255, 225, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(224, 255, 225, 0.045) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(circle at 50% 50%, rgba(0, 0, 0, 0.8), transparent 72%);
+}
+
+.immersiveTopbar,
+.deckRail,
+.diegeticPanel,
+.hudToastStack {
+  position: absolute;
+  z-index: 8;
+}
+
+.agentFocusSurface {
+  position: absolute;
+  left: var(--agent-x);
+  top: var(--agent-y);
+  z-index: 7;
+  display: grid;
+  grid-template-areas:
+    "top top"
+    "rail panel"
+    "toast panel";
+  grid-template-columns: 86px minmax(360px, min(680px, 44vw));
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  max-width: calc(100vw - 32px);
+  max-height: min(78vh, 820px);
+  opacity: 0;
+  pointer-events: auto;
+  transform: translate(var(--focus-x, -12%), var(--focus-y, -8%)) scale(0.94);
+  transform-origin: 18% 12%;
+  transition:
+    opacity 170ms ease,
+    filter 170ms ease,
+    transform 170ms ease;
+  filter: drop-shadow(0 0 22px color-mix(in srgb, var(--agent-glow) 32%, transparent));
+}
+
+.agentFocusSurface.preview,
+.agentFocusSurface.locked {
+  opacity: 1;
+  transform: translate(var(--focus-x, -12%), var(--focus-y, -8%)) scale(1);
+}
+
+.agentFocusSurface.anchorLeft {
+  --focus-x: -92%;
+}
+
+.agentFocusSurface.anchorRight {
+  --focus-x: 10%;
+}
+
+.agentFocusSurface.anchorCenter {
+  --focus-x: -48%;
+}
+
+.agentFocusSurface.anchorUp {
+  --focus-y: -86%;
+}
+
+.agentFocusSurface.anchorDown {
+  --focus-y: -10%;
+}
+
+.agentFocusSurface .immersiveTopbar,
+.agentFocusSurface .deckRail,
+.agentFocusSurface .diegeticPanel,
+.agentFocusSurface .hudToastStack {
+  position: relative;
+  top: auto;
+  right: auto;
+  bottom: auto;
+  left: auto;
+  z-index: auto;
+}
+
+.agentFocusSurface .immersiveTopbar {
+  grid-area: top;
+  align-items: center;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(219, 238, 216, 0.28);
+  border-radius: 10px;
+  background: rgba(8, 17, 14, 0.74);
+  backdrop-filter: blur(16px);
+}
+
+.agentFocusSurface .deckRail {
+  grid-area: rail;
+  width: auto;
+  align-content: start;
+}
+
+.agentFocusSurface .diegeticPanel {
+  grid-area: panel;
+  width: min(680px, 44vw);
+  min-width: 360px;
+  max-height: min(66vh, 700px);
+}
+
+.agentFocusSurface .hudToastStack {
+  grid-area: toast;
+  width: auto;
+}
+
+.agentFocusSurface .operatorIdentity {
+  max-width: min(420px, 34vw);
+}
+
+.agentFocusSurface .operatorTopControls {
+  max-width: min(360px, 32vw);
+}
+
+.agentFocusSurface .deckRail button {
+  min-height: 60px;
+}
+
+.agentFocusSurface .deckBody {
+  max-height: calc(min(66vh, 700px) - 68px);
+}
+
+.immersiveTopbar {
+  top: 18px;
+  right: 24px;
+  left: 24px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  pointer-events: none;
+}
+
+.operatorIdentity {
+  max-width: min(760px, 48vw);
+  border-left: 3px solid rgba(147, 216, 118, 0.76);
+  padding-left: 13px;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.54);
+}
+
+.operatorIdentity .eyebrow {
+  color: rgba(232, 255, 234, 0.78);
+}
+
+.operatorIdentity h1 {
+  color: #f7fff7;
+}
+
+.operatorIdentity span {
+  display: block;
+  max-width: 100%;
+  margin-top: 6px;
+  overflow: hidden;
+  color: rgba(239, 255, 241, 0.74);
+  font-size: 0.84rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.operatorTopControls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  max-width: 560px;
+  pointer-events: auto;
+}
+
+.operatorTopControls .primaryButton {
+  border-color: rgba(209, 241, 214, 0.42);
+  background: rgba(36, 77, 58, 0.82);
+  backdrop-filter: blur(12px);
+}
+
+.playlistControl {
+  position: relative;
+  min-width: 172px;
+  color: rgba(244, 255, 245, 0.86);
+}
+
+.playlistControl summary {
+  display: grid;
+  gap: 1px;
+  min-height: 40px;
+  border: 1px solid rgba(247, 189, 88, 0.42);
+  border-radius: 999px;
+  padding: 5px 14px;
+  background: rgba(10, 19, 16, 0.72);
+  box-shadow: 0 0 18px rgba(247, 189, 88, 0.12);
+  cursor: pointer;
+  list-style: none;
+}
+
+.playlistControl summary::-webkit-details-marker {
+  display: none;
+}
+
+.playlistControl summary span {
+  color: rgba(247, 189, 88, 0.82);
+  font-size: 0.62rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.playlistControl summary strong {
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.playlistBody {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(420px, 72vw);
+  border: 1px solid rgba(247, 189, 88, 0.28);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(8, 14, 12, 0.92);
+  box-shadow: 0 20px 46px rgba(0, 0, 0, 0.4);
+}
+
+.playlistBody p {
+  margin: 0 0 8px;
+  color: rgba(244, 255, 245, 0.74);
+  font-size: 0.74rem;
+  overflow-wrap: anywhere;
+}
+
+.playlistButtons {
+  display: flex;
+  gap: 8px;
+}
+
+.playlistButtons button {
+  flex: 1;
+  min-height: 32px;
+  border: 1px solid rgba(219, 238, 216, 0.28);
+  border-radius: 999px;
+  color: rgba(244, 255, 245, 0.84);
+  background: rgba(36, 77, 58, 0.72);
+  cursor: pointer;
+}
+
+.playlistButtons button:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.deckRail {
+  top: 152px;
+  bottom: 24px;
+  left: 24px;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  width: 96px;
+}
+
+.deckRail button,
+.subdeckTabs button {
+  border: 1px solid rgba(219, 238, 216, 0.28);
+  color: rgba(244, 255, 245, 0.78);
+  background: rgba(10, 19, 16, 0.66);
+  backdrop-filter: blur(12px);
+  cursor: pointer;
+}
+
+.deckRail button {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  min-height: 72px;
+  border-radius: 8px;
+  padding: 9px 6px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.deckRail button.active,
+.subdeckTabs button.active {
+  border-color: rgba(247, 189, 88, 0.72);
+  color: #fff8df;
+  background: rgba(116, 71, 36, 0.72);
+  box-shadow: 0 0 24px rgba(241, 173, 78, 0.18);
+}
+
+.diegeticPanel {
+  top: 152px;
+  bottom: 24px;
+  left: 136px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(720px, 44vw);
+  min-width: 460px;
+  overflow: hidden;
+  border: 1px solid rgba(219, 238, 216, 0.32);
+  border-radius: 8px;
+  background: rgba(8, 17, 14, 0.72);
+  box-shadow: 0 22px 62px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(16px);
+}
+
+.diegeticPanel.widePanel {
+  right: 24px;
+  width: auto;
+  min-width: 0;
+}
+
+.deckHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  border-bottom: 1px solid rgba(219, 238, 216, 0.18);
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.deckHeader span {
+  color: rgba(216, 235, 214, 0.66);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.deckHeader h2 {
+  margin-top: 2px;
+  color: #f7fff7;
+  font-size: 1rem;
+  text-transform: capitalize;
+}
+
+.subdeckTabs {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.subdeckTabs button {
+  min-height: 32px;
+  border-radius: 999px;
+  padding: 0 11px;
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.deckBody {
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+  scrollbar-color: rgba(212, 236, 211, 0.32) transparent;
+}
+
+.hudActionGrid,
+.hudFormGrid,
+.signalStack {
+  display: grid;
+  gap: 10px;
+}
+
+.hudActionGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.hudActionButton {
+  width: 100%;
+  min-width: 0;
+  border-color: rgba(219, 238, 216, 0.36);
+  color: #f5fff5;
+  background: rgba(244, 255, 245, 0.08);
+}
+
+.hudActionButton:disabled {
+  color: rgba(228, 242, 228, 0.48);
+  background: rgba(244, 255, 245, 0.045);
+}
+
+.hudResult {
+  margin-top: 12px;
+  color: rgba(240, 255, 241, 0.82);
+}
+
+.hudFormGrid {
+  grid-template-columns: 1fr;
+}
+
+.diegeticPanel label {
+  color: rgba(232, 255, 234, 0.78);
+}
+
+.diegeticPanel input,
+.diegeticPanel select {
+  border-color: rgba(219, 238, 216, 0.28);
+  color: #f7fff7;
+  background: rgba(244, 255, 245, 0.1);
+}
+
+.diegeticPanel input::placeholder {
+  color: rgba(232, 255, 234, 0.48);
+}
+
+.diegeticPanel .environmentCard,
+.diegeticPanel .planningItem,
+.diegeticPanel .laneCard,
+.diegeticPanel .findingCard,
+.diegeticPanel .jobRow,
+.diegeticPanel .artifactTable,
+.diegeticPanel .selectedCodeRef,
+.diegeticPanel .emptyState {
+  border-color: rgba(219, 238, 216, 0.24);
+  color: #f7fff7;
+  background: rgba(244, 255, 245, 0.09);
+  box-shadow: none;
+}
+
+.diegeticPanel h3,
+.diegeticPanel dd,
+.diegeticPanel strong {
+  color: #f7fff7;
+}
+
+.diegeticPanel p,
+.diegeticPanel .reason,
+.diegeticPanel .environmentNote,
+.diegeticPanel .laneCard p,
+.diegeticPanel .findingCard p,
+.diegeticPanel .jobRow span,
+.diegeticPanel .owner,
+.diegeticPanel .pathList span,
+.diegeticPanel code,
+.diegeticPanel .planningMeta {
+  color: rgba(237, 255, 239, 0.72);
+}
+
+.diegeticPanel dt,
+.diegeticPanel .pathList strong,
+.diegeticPanel .selectedCodeRef span {
+  color: rgba(218, 239, 215, 0.58);
+}
+
+.diegeticPanel .artifactHeader {
+  color: rgba(218, 239, 215, 0.68);
+  background: rgba(244, 255, 245, 0.1);
+}
+
+.diegeticPanel .artifactRow + .artifactRow {
+  border-top-color: rgba(219, 238, 216, 0.16);
+}
+
+.hudEnvironmentGrid,
+.hudPlanningGrid {
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
+}
+
+.hudCardGrid {
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+}
+
+.hudGraphBand .graphViewerFrame {
+  height: min(62vh, 620px);
+  min-height: 360px;
+}
+
+.hudGraphBand .embeddedGraphViewer {
+  min-height: 100%;
+}
+
+.hudToastStack {
+  top: 96px;
+  right: 24px;
+  display: grid;
+  gap: 8px;
+  width: min(520px, 34vw);
+  pointer-events: none;
+}
+
+.hudToast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  border: 1px solid rgba(219, 238, 216, 0.28);
+  border-radius: 8px;
+  padding: 9px 11px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(14px);
+}
+
+.hudToast span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agentConstellation {
+  display: grid;
+  gap: 12px;
+}
+
+.constellationHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.constellationHeader .sectionHeader {
+  margin-bottom: 0;
+}
+
+.constellationSignals {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.agentStage {
+  position: relative;
+  min-height: clamp(500px, 42vw, 560px);
+  overflow: hidden;
+  border: 1px solid #283c35;
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 24% 28%, rgba(100, 152, 100, 0.26), transparent 30%),
+    radial-gradient(circle at 76% 24%, rgba(101, 89, 160, 0.24), transparent 28%),
+    radial-gradient(circle at 68% 78%, rgba(202, 96, 52, 0.24), transparent 32%),
+    #18251f;
+  isolation: isolate;
+  box-shadow: 0 12px 34px rgba(23, 32, 24, 0.16);
+}
+
+.agentSmokeCanvas,
+.agentCrispCanvas,
+.agentStageVignette {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.agentSmokeCanvas {
+  z-index: 0;
+  display: block;
+  cursor: crosshair;
+}
+
+.agentCrispCanvas {
+  z-index: 2;
+  display: block;
+  pointer-events: none;
+}
+
+.simulationOnlyControls {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.agentStageVignette {
+  z-index: 1;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(13, 22, 19, 0.22), transparent 28%, rgba(8, 12, 10, 0.32)),
+    radial-gradient(circle at 50% 52%, transparent 32%, rgba(6, 13, 11, 0.38) 100%);
+}
+
+.agentCharacter,
+.thoughtBubble,
+.agentOptionHalo {
+  left: var(--agent-x);
+  top: var(--agent-y);
+}
+
+.agentCharacter {
+  position: absolute;
+  z-index: 3;
+  display: grid;
+  justify-items: center;
+  width: 118px;
+  min-height: 92px;
+  border: 0;
+  padding: 0;
+  color: #fbfff8;
+  background: transparent;
+  cursor: pointer;
+  text-shadow: 0 1px 8px rgba(4, 8, 6, 0.72);
+  filter: drop-shadow(0 0 var(--agent-hover-glow, 0px) color-mix(in srgb, var(--agent-glow) 72%, transparent));
+  transform:
+    translate(-50%, -50%)
+    rotate(var(--agent-tilt, 0deg))
+    scale(var(--agent-scale, 1));
+  transition:
+    filter 160ms ease,
+    opacity 160ms ease;
+}
+
+.agentCharacter:hover,
+.agentCharacter:focus-visible,
+.agentCharacter.selected {
+  filter: drop-shadow(0 0 var(--agent-glow-radius, 18px) color-mix(in srgb, var(--agent-glow) 78%, transparent));
+  outline: none;
+}
+
+.agentCharacter:focus-visible .agentGlyph {
+  outline: 3px solid rgba(255, 255, 255, 0.74);
+  outline-offset: 4px;
+}
+
+.agentGlyph {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  border: 1px solid rgba(255, 255, 255, 0.56);
+  color: #ffffff;
+  background:
+    radial-gradient(circle at 32% 24%, rgba(255, 255, 255, 0.7), transparent 18px),
+    linear-gradient(135deg, var(--agent-glow), var(--agent-color));
+  box-shadow:
+    0 0 var(--agent-glow-radius, 22px) color-mix(in srgb, var(--agent-color) 62%, transparent),
+    inset 0 -10px 18px rgba(5, 11, 8, 0.24);
+  font-weight: 900;
+  line-height: 1;
+}
+
+.agentCharacter.core .agentGlyph {
+  border-radius: 50%;
+}
+
+.agentCharacter.kite .agentGlyph {
+  clip-path: polygon(50% 0, 94% 40%, 50% 100%, 6% 40%);
+}
+
+.agentCharacter.lens .agentGlyph {
+  border-radius: 50% 8px 50% 8px;
+  transform: rotate(45deg);
+}
+
+.agentCharacter.lens .agentGlyph::first-letter {
+  transform: rotate(-45deg);
+}
+
+.agentCharacter.hex .agentGlyph {
+  clip-path: polygon(24% 5%, 76% 5%, 100% 50%, 76% 95%, 24% 95%, 0 50%);
+}
+
+.agentCharacter.capsule .agentGlyph {
+  width: 68px;
+  border-radius: 28px 12px 28px 12px;
+}
+
+.agentCharacter.diamond .agentGlyph {
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+}
+
+.agentCharacter.seed .agentGlyph {
+  border-radius: 52% 52% 52% 12%;
+  transform: rotate(42deg);
+}
+
+.agentCaption {
+  display: grid;
+  gap: 2px;
+  max-width: 118px;
+  margin-top: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 7px;
+  padding: 5px 7px;
+  background: rgba(15, 25, 22, 0.64);
+  backdrop-filter: blur(7px);
+}
+
+.agentCaption strong,
+.agentCaption span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agentCaption strong {
+  font-size: 0.78rem;
+}
+
+.agentCaption span {
+  color: rgba(245, 255, 245, 0.74);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.thoughtBubble {
+  position: absolute;
+  z-index: 2;
+  display: grid;
+  gap: 4px;
+  width: clamp(166px, 18vw, 246px);
+  max-height: 96px;
+  border: 1px solid color-mix(in srgb, var(--agent-color) 48%, rgba(255, 255, 255, 0.74));
+  border-radius: 8px 8px 8px 2px;
+  padding: 9px 11px;
+  color: #172018;
+  background: rgba(249, 252, 246, 0.88);
+  box-shadow: 0 14px 30px rgba(6, 11, 9, 0.26);
+  opacity: 0;
+  pointer-events: none;
+  transform:
+    translate(-10%, -142%)
+    rotate(var(--agent-bubble-tilt, 0deg))
+    scale(calc(var(--agent-scale, 1) * 0.96));
+  animation: thoughtDrift 7600ms ease-in-out infinite;
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+}
+
+.thoughtBubble.selected,
+.thoughtBubble[data-agent-hot] {
+  z-index: 4;
+  opacity: var(--agent-bubble-opacity, 0.62);
+  transform:
+    translate(-10%, -142%)
+    rotate(var(--agent-bubble-tilt, 0deg))
+    scale(var(--agent-scale, 1));
+}
+
+.thoughtBubble.selected {
+  opacity: 1;
+}
+
+.thoughtBubble::after {
+  content: "";
+  position: absolute;
+  left: 16px;
+  bottom: -16px;
+  width: 56px;
+  height: 24px;
+  background:
+    radial-gradient(circle at 20% 58%, color-mix(in srgb, var(--agent-color) 44%, transparent), transparent 42%),
+    radial-gradient(circle at 54% 50%, rgba(255, 255, 255, 0.46), transparent 38%),
+    radial-gradient(circle at 82% 44%, color-mix(in srgb, var(--agent-glow) 38%, transparent), transparent 40%);
+  filter: blur(5px);
+  opacity: 0.6;
+  animation: thoughtSmoke 4800ms ease-in-out infinite;
+}
+
+.thoughtBubble strong {
+  color: color-mix(in srgb, var(--agent-color) 72%, #172018);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.thoughtBubble span {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #243026;
+  font-size: 0.8rem;
+  line-height: 1.28;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.agentOptionHalo {
+  position: absolute;
+  z-index: 6;
+  width: 220px;
+  height: 220px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  opacity: 0;
+  pointer-events: none;
+  contain: layout style;
+  transform:
+    translate(-50%, -50%)
+    rotate(calc(var(--agent-tilt, 0deg) * 0.18))
+    scale(calc(0.92 + var(--agent-hover, 0) * 0.04));
+  transition:
+    opacity 150ms ease,
+    filter 150ms ease,
+    transform 150ms ease;
+  filter: drop-shadow(0 0 12px color-mix(in srgb, var(--agent-glow) 34%, transparent));
+}
+
+.agentStage .agentOptionHalo.open,
+.agentStage .agentOptionHalo[data-agent-hot] {
+  opacity: 1 !important;
+}
+
+.agentOptionButton {
+  appearance: none;
+  position: absolute;
+  display: block;
+  pointer-events: auto;
+  min-width: 74px;
+  height: 29px;
+  border: 1px solid color-mix(in srgb, var(--agent-glow) 58%, rgba(255, 255, 255, 0.36));
+  border-radius: 999px;
+  padding: 0 12px;
+  color: #fbfff8;
+  background:
+    radial-gradient(circle at 32% 20%, rgba(255, 255, 255, 0.18), transparent 18px),
+    color-mix(in srgb, var(--agent-color) 56%, rgba(5, 12, 9, 0.74));
+  box-shadow:
+    0 0 16px color-mix(in srgb, var(--agent-color) 28%, transparent),
+    inset 0 -7px 12px rgba(3, 8, 6, 0.26);
+  cursor: pointer;
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1;
+  text-transform: uppercase;
+  text-shadow: 0 1px 7px rgba(3, 8, 6, 0.76);
+  white-space: nowrap;
+  transform: translate(-50%, -50%);
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    opacity 140ms ease,
+    transform 140ms ease;
+}
+
+.agentOptionButton:hover,
+.agentOptionButton:focus-visible {
+  border-color: rgba(255, 255, 255, 0.82);
+  box-shadow:
+    0 0 24px color-mix(in srgb, var(--agent-glow) 52%, transparent),
+    inset 0 -7px 12px rgba(3, 8, 6, 0.2);
+  outline: none;
+  transform: translate(-50%, -50%) scale(1.04);
+}
+
+.agentOptionButton:disabled {
+  cursor: default;
+  opacity: 0.38;
+}
+
+.constellationInspector {
+  position: absolute;
+  z-index: 5;
+  right: 16px;
+  bottom: 16px;
+  left: 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.82fr);
+  gap: 14px;
+  align-items: start;
+  border: 1px solid rgba(214, 223, 211, 0.76);
+  border-radius: 8px;
+  padding: 13px 14px;
+  background: rgba(248, 250, 244, 0.9);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 14px 32px rgba(4, 8, 6, 0.24);
+}
+
+.constellationInspector > div {
+  min-width: 0;
+}
+
+.constellationInspector span {
+  color: #667168;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.constellationInspector strong {
+  display: block;
+  margin-top: 2px;
+  color: #172018;
+  font-size: 1rem;
+}
+
+.constellationInspector p {
+  margin-top: 6px;
+  color: #3e493f;
+  font-size: 0.88rem;
+  line-height: 1.38;
+}
+
+.constellationInspector .facts {
+  margin: 0;
+}
+
+@keyframes thoughtDrift {
+  0%,
+  100% {
+    margin-top: 0;
+  }
+  50% {
+    margin-top: -10px;
+  }
+}
+
+@keyframes thoughtSmoke {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: translate(0, 0) scale(0.88);
+  }
+  50% {
+    opacity: 0.2;
+    transform: translate(12px, -8px) scale(1.22);
+  }
+}
+
+.draftPicker {
+  margin-top: 12px;
+}
+
+.planningItem {
+  min-width: 0;
+  border: 1px solid #d9ded5;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.planningItem.selected {
+  border-color: #78a986;
+  box-shadow: inset 3px 0 0 #2f7a49;
+}
+
+.planningItem p {
+  margin-top: 9px;
+  color: #435045;
+  font-size: 0.86rem;
+  line-height: 1.38;
+}
+
+.planningMeta {
+  display: block;
+  margin-top: 10px;
+  overflow-wrap: anywhere;
+  color: #667168;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.environmentFacts {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.environmentNote {
+  margin-top: 10px;
+  color: #3e493f;
+  font-size: 0.88rem;
+  line-height: 1.42;
+}
+
+.pathList {
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
+}
+
+.pathList strong {
+  color: #667168;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.pathList span {
+  color: #667168;
+  font-size: 0.78rem;
+}
+
+.laneCard,
+.findingCard,
+.jobRow {
+  padding: 12px;
+}
+
+.laneCard p,
+.findingCard p {
+  min-height: 42px;
+  margin-top: 10px;
+  color: #435045;
+  font-size: 0.9rem;
+  line-height: 1.42;
+}
+
+.owner {
+  display: block;
+  margin-top: 12px;
+  color: #68726a;
+  font-size: 0.78rem;
+}
+
+.cardTopline,
+.jobRow,
+.artifactHeader,
+.artifactRow {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+}
+
+.cardTopline {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.twoColumn {
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 0.86fr);
+}
+
+.stack {
+  display: grid;
+  gap: 10px;
+}
+
+.jobRow {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.jobRow div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.jobRow span {
+  color: #657069;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.artifactTable {
+  overflow: hidden;
+}
+
+.artifactHeader,
+.artifactRow {
+  grid-template-columns: minmax(180px, 0.6fr) 96px 72px minmax(220px, 1fr);
+  min-height: 42px;
+  padding: 0 12px;
+}
+
+.artifactHeader {
+  color: #606a62;
+  background: #f0f3ef;
+  font-size: 0.74rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.artifactRow + .artifactRow {
+  border-top: 1px solid #edf0eb;
+}
+
+code {
+  display: block;
+  overflow: hidden;
+  color: #36503f;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifactOutcome.muted {
+  color: #77817a;
+  font-size: 0.82rem;
+}
+
+.emptyState {
+  border: 1px dashed #cbd3c8;
+  border-radius: 8px;
+  padding: 14px;
+  color: #69736b;
+  background: #fbfcfa;
+}
+
+@media (max-width: 980px) {
+  .statusGrid,
+  .twoColumn,
+  .controls {
+    grid-template-columns: 1fr;
+  }
+
+  .cardGrid {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+
+  .environmentGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .planningGrid {
+    grid-template-columns: repeat(2, minmax(220px, 1fr));
+  }
+
+  .graphSummary {
+    grid-template-columns: 1fr;
+  }
+
+  .constellationHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .constellationSignals {
+    justify-content: flex-start;
+  }
+
+  .agentStage {
+    min-height: 640px;
+  }
+
+  .constellationInspector {
+    grid-template-columns: 1fr;
+  }
+
+  .thoughtBubble {
+    width: min(224px, 34vw);
+  }
+
+  .diegeticPanel {
+    width: min(640px, calc(100vw - 172px));
+    min-width: 0;
+  }
+
+  .diegeticPanel.widePanel {
+    right: 14px;
+  }
+
+  .hudToastStack {
+    width: min(460px, 42vw);
+  }
+}
+
+@media (max-width: 640px) {
+  .shell {
+    width: min(100vw - 20px, 1440px);
+    padding-top: 14px;
+  }
+
+  .topbar {
+    grid-template-columns: 1fr;
+  }
+
+  .actionStrip,
+  .secondaryButton {
+    width: 100%;
+  }
+
+  .cardGrid,
+  .planningGrid,
+  .facts,
+  .facts.compact,
+  .artifactHeader,
+  .artifactRow {
+    grid-template-columns: 1fr;
+  }
+
+  .artifactHeader {
+    display: none;
+  }
+
+  .artifactRow {
+    gap: 4px;
+    padding: 10px 12px;
+  }
+
+  .immersiveShell {
+    min-height: 100dvh;
+  }
+
+  .immersiveTopbar {
+    top: 8px;
+    right: 8px;
+    left: 8px;
+    display: grid;
+    gap: 8px;
+  }
+
+  .operatorIdentity {
+    max-width: none;
+    padding-left: 10px;
+  }
+
+  .operatorIdentity h1 {
+    font-size: 1.5rem;
+  }
+
+  .operatorIdentity span {
+    display: none;
+  }
+
+  .operatorTopControls {
+    justify-content: flex-start;
+    max-width: none;
+  }
+
+  .operatorTopControls .pill {
+    font-size: 0.7rem;
+  }
+
+  .deckRail {
+    top: auto;
+    right: 8px;
+    bottom: 8px;
+    left: 8px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    width: auto;
+  }
+
+  .deckRail button {
+    min-height: 52px;
+    padding: 6px 4px;
+    font-size: 0.62rem;
+  }
+
+  .diegeticPanel,
+  .diegeticPanel.widePanel {
+    top: 174px;
+    right: 8px;
+    bottom: 70px;
+    left: 8px;
+    width: auto;
+    min-width: 0;
+  }
+
+  .deckHeader {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 11px;
+  }
+
+  .subdeckTabs {
+    justify-content: flex-start;
+  }
+
+  .subdeckTabs button {
+    min-height: 29px;
+    padding: 0 9px;
+    font-size: 0.65rem;
+  }
+
+  .deckBody {
+    padding: 10px;
+  }
+
+  .hudActionGrid,
+  .hudEnvironmentGrid,
+  .hudPlanningGrid,
+  .hudCardGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .hudToastStack,
+  .immersiveConstellation .constellationInspector {
+    display: none;
+  }
+
+  .immersiveConstellation .agentStage {
+    height: 100%;
+    min-height: 100%;
+  }
+
+  .agentStage {
+    min-height: 700px;
+  }
+
+  .agentCharacter {
+    width: 76px;
+    min-height: 66px;
+  }
+
+  .agentGlyph {
+    width: 38px;
+    height: 38px;
+  }
+
+  .agentCharacter.capsule .agentGlyph {
+    width: 46px;
+  }
+
+  .agentCaption {
+    max-width: 76px;
+    padding: 4px 6px;
+  }
+
+  .agentCaption strong {
+    font-size: 0.7rem;
+  }
+
+  .agentCaption span {
+    font-size: 0.62rem;
+  }
+
+  .thoughtBubble {
+    display: none;
+  }
+
+  .thoughtBubble.selected {
+    display: grid;
+    left: 50% !important;
+    top: 14px !important;
+    width: min(280px, calc(100vw - 52px));
+    max-height: none;
+    transform: translate(-50%, 0);
+  }
+
+  .immersiveConstellation .thoughtBubble.selected {
+    display: none;
+  }
+
+  .constellationInspector {
+    right: 10px;
+    bottom: 10px;
+    left: 10px;
+    padding: 11px;
+  }
+}

@@ -1,0 +1,41 @@
+project:
+  name: Epiphany Aquarium
+  root: E:\Projects\EpiphanyAquarium
+  backend_root: E:\Projects\EpiphanyAgent
+  purpose: >
+    A cute, dynamic, fullscreen aquarium interface for Epiphany's operator and
+    specialist state. The aquarium owns interaction grammar, visual simulation,
+    audio feedback, motion language, and taste.
+
+current_model:
+  frontend:
+    framework: React + Vite + Tauri v2
+    primary_files:
+      - src/App.tsx
+      - src/aquariumFluid.ts
+      - src/styles.css
+      - scripts/visual-smoke.mjs
+  backend_boundary:
+    description: >
+      Tauri commands call scripts in the sibling EpiphanyAgent repo. The
+      aquarium is a client and operator surface, not a harness source of truth.
+    env:
+      - EPIPHANY_AGENT_ROOT
+  artifacts:
+    aquarium: .epiphany-aquarium
+    backend_gui: E:\Projects\EpiphanyAgent\.epiphany-gui
+
+interaction_laws:
+  - The default screen shows only the aquarium, agents, fluid, and ambient state.
+  - Data and controls appear only through interaction with aquarium objects.
+  - Agent options are DOM controls anchored to the agent.
+  - Focus surfaces are selected-agent local shells, not global panels.
+  - WebGL fluid emission must correspond to visible objects.
+  - Audio must respond once per deliberate input gesture.
+
+next_actions:
+  - Replace inherited operator-console copy with aquarium-native object language.
+  - Split Self, Eyes, Imagination, Body, Hands, Soul, and Life into distinct menu organisms.
+  - Add visual tests for empty-water dismissal and offscreen-safe focus anchoring.
+  - Consider a debug-only keyboard chord for utilitarian always-on panels.
+
