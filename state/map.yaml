@@ -36,9 +36,9 @@ interaction_laws:
   - Audio must respond once per deliberate input gesture.
 
 next_actions:
-  - Expand all seven agent interaction trees from the backend API tree map, with branch icons before leaf surfaces.
-  - Add visual tests for all seven agent habitats, not only Eyes.
-  - Give Self, Eyes, Imagination, Body, Hands, Soul, and Life distinct motion/reveal signatures.
+  - Expand visual smoke across all eight creature interaction trees, including the shared heartbeat branch.
+  - Add visual tests for all eight creature habitats, not only Eyes.
+  - Give Self, Face, Eyes, Imagination, Body, Hands, Soul, and Life distinct motion/reveal signatures.
   - Make agent petals more object-native while keeping them real DOM buttons.
   - Add visual tests for empty-water dismissal, offscreen-safe focus anchoring, agent-specific petals, and one-hit control audio.
   - Consider a debug-only keyboard chord for utilitarian always-on panels.
@@ -47,3 +47,4 @@ next_actions:
 landed:
   - Face is now an interactible aquarium organism. Its habitat exposes heartbeat status, heartbeat pulse, and bubble leaves over EpiphanyAgent's backend GUI action bridge.
   - The Tauri action bridge passes heartbeatStatus, runHeartbeat, and faceBubble through to EpiphanyAgent, so Face can surface local Aquarium chat bubbles without Discord.
+  - Heartbeat is now shared creature anatomy. Every agent habitat has a Heartbeat branch with Status and Pulse leaves; Face keeps the Bubble leaf as the public mouth.

@@ -200,6 +200,26 @@ async function smokeViewport(browser, viewport, screenshotPath, exerciseFluidPan
       throw new Error(`research habitat did not replace the operator console: ${organProbe.reason}`);
     }
     await page.locator('[data-agent-focus="research"] .creatureRootIcon').dispatchEvent("click", { bubbles: true });
+    await page.locator('[data-agent-focus="research"] .creatureTreeNode').filter({ hasText: "Heartbeat" }).dispatchEvent("click", { bubbles: true });
+    await page.locator('[data-agent-focus="research"] .creatureTreeNode').filter({ hasText: "Status" }).dispatchEvent("click", { bubbles: true });
+    const heartbeatLeafProbe = await page.evaluate(() => {
+      const focus = document.querySelector('.agentStage [data-agent-focus="research"]');
+      if (!(focus instanceof HTMLElement)) return { ok: false, reason: "research focus surface missing" };
+      const heading = focus.querySelector(".creatureLeafHeader h2")?.textContent?.trim();
+      const path = focus.querySelector(".creatureLeafHeader span")?.textContent?.trim();
+      const creature = [...focus.querySelectorAll(".facts dt")]
+        .find((node) => node.textContent?.trim() === "Creature")
+        ?.nextElementSibling?.textContent?.trim();
+      return {
+        ok: heading === "Status" && path === "Heartbeat / Status" && creature === "Eyes",
+        reason: `heading=${heading} path=${path} creature=${creature}`,
+      };
+    });
+    if (!heartbeatLeafProbe.ok) {
+      throw new Error(`research heartbeat branch did not unfold as shared creature anatomy: ${heartbeatLeafProbe.reason}`);
+    }
+    await page.locator('[data-agent-focus="research"] .creatureLeafHeader button').dispatchEvent("click", { bubbles: true });
+    await page.locator('[data-agent-focus="research"] .creatureBreadcrumb button').first().dispatchEvent("click", { bubbles: true });
     await page.locator('[data-agent-focus="research"] .creatureTreeNode').filter({ hasText: "Evidence" }).dispatchEvent("click", { bubbles: true });
     await page.locator('[data-agent-focus="research"] .creatureTreeNode').filter({ hasText: "Graph Query" }).dispatchEvent("click", { bubbles: true });
     const leafProbe = await page.evaluate(() => {

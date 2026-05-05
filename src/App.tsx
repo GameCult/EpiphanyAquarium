@@ -1,6 +1,7 @@
 import {
   Boxes,
   AlertTriangle,
+  Activity,
   BriefcaseBusiness,
   CheckCircle2,
   ClipboardCheck,
@@ -1017,10 +1018,25 @@ export function App() {
     if (agentId === "coordinator" && leafId === "harmony") {
       return <PlaylistControl error={harmony.error} frame={harmony.frame} loading={harmony.loading} onChangeFolder={harmony.changeFolder} onNext={harmony.nextSong} />;
     }
-    if (agentId === "face" && leafId === "heartbeatStatus") {
-      return <section className="leafGrid two"><dl className="facts environmentFacts"><div><dt>Status</dt><dd>{text(heartbeat.status)}</dd></div><div><dt>Clock</dt><dd>{text(heartbeat.sceneClock)}</dd></div><div><dt>Latest role</dt><dd>{text(latestHeartbeatEvent.selectedRole)}</dd></div><div><dt>Action</dt><dd>{text(latestHeartbeatEvent.coordinatorAction ?? latestHeartbeatEvent.actionType)}</dd></div></dl>{actionControlByAction("heartbeatStatus", "secondaryButton leafActionButton")}</section>;
+    if (leafId === "heartbeatStatus") {
+      const agent = constellationSpecs.find((spec) => spec.id === agentId);
+      const latestRole = text(latestHeartbeatEvent.selectedRole, "none");
+      const ownsLatestPulse = latestRole.toLowerCase() === text(agent?.laneId ?? agentId).toLowerCase();
+      return (
+        <section className="leafGrid two">
+          <dl className="facts environmentFacts">
+            <div><dt>Creature</dt><dd>{text(agent?.name, agentId)}</dd></div>
+            <div><dt>Status</dt><dd>{text(heartbeat.status)}</dd></div>
+            <div><dt>Clock</dt><dd>{text(heartbeat.sceneClock)}</dd></div>
+            <div><dt>Latest role</dt><dd>{latestRole}{ownsLatestPulse ? " here" : ""}</dd></div>
+            <div><dt>Action</dt><dd>{text(latestHeartbeatEvent.coordinatorAction ?? latestHeartbeatEvent.actionType)}</dd></div>
+          </dl>
+          <p className="reason">{text(latestHeartbeatEvent.reason ?? latestHeartbeatEvent.note, "Heartbeat is shared aquarium life; this leaf shows how the global pulse is touching this creature.")}</p>
+          {actionControlByAction("heartbeatStatus", "secondaryButton leafActionButton")}
+        </section>
+      );
     }
-    if (agentId === "face" && leafId === "heartbeatPulse") {
+    if (leafId === "heartbeatPulse") {
       return <section className="leafActionCluster">{["runHeartbeat", "heartbeatStatus"].map((action) => actionControlByAction(action as OperatorAction, "secondaryButton leafActionButton"))}{actionResult && <p className="actionResult hudResult">{actionResult.summary} <code>{actionResult.artifactPath}</code></p>}</section>;
     }
     if (agentId === "face" && leafId === "bubble") {
@@ -1281,6 +1297,18 @@ function habitatIcon(agentId: string) {
   return <RefreshCw size={18} aria-hidden="true" />;
 }
 
+function heartbeatBranch(): HabitatNode {
+  return {
+    id: "heartbeat",
+    label: "Heartbeat",
+    icon: <Activity size={16} aria-hidden="true" />,
+    children: [
+      { id: "heartbeatStatus", label: "Status", icon: <Eye size={16} aria-hidden="true" /> },
+      { id: "heartbeatPulse", label: "Pulse", icon: <Play size={16} aria-hidden="true" /> },
+    ],
+  };
+}
+
 function habitatTree(agentId: string): HabitatNode {
   if (agentId === "coordinator") {
     return {
@@ -1299,15 +1327,13 @@ function habitatTree(agentId: string): HabitatNode {
         { id: "sound", label: "Sound", icon: <Boxes size={16} aria-hidden="true" />, children: [
           { id: "harmony", label: "Harmony", icon: <Boxes size={16} aria-hidden="true" /> },
         ] },
+        heartbeatBranch(),
       ],
     };
   }
   if (agentId === "face") {
     return { id: "face-root", label: "Face", icon: habitatIcon(agentId), children: [
-      { id: "heartbeat", label: "Heartbeat", icon: <MessageCircle size={16} aria-hidden="true" />, children: [
-        { id: "heartbeatStatus", label: "Status", icon: <Eye size={16} aria-hidden="true" /> },
-        { id: "heartbeatPulse", label: "Pulse", icon: <Play size={16} aria-hidden="true" /> },
-      ] },
+      heartbeatBranch(),
       { id: "bubble", label: "Bubble", icon: <MessageCircle size={16} aria-hidden="true" /> },
     ] };
   }
@@ -1318,6 +1344,7 @@ function habitatTree(agentId: string): HabitatNode {
         { id: "backlog", label: "Backlog", icon: <BriefcaseBusiness size={16} aria-hidden="true" /> },
         { id: "captures", label: "Captures", icon: <FileText size={16} aria-hidden="true" /> },
       ] },
+      heartbeatBranch(),
     ] };
   }
   if (agentId === "research") {
@@ -1326,6 +1353,7 @@ function habitatTree(agentId: string): HabitatNode {
         { id: "graphQuery", label: "Graph Query", icon: <Map size={16} aria-hidden="true" /> },
         { id: "artifacts", label: "Artifacts", icon: <FileText size={16} aria-hidden="true" /> },
       ] },
+      heartbeatBranch(),
     ] };
   }
   if (agentId === "modeling") {
@@ -1334,6 +1362,7 @@ function habitatTree(agentId: string): HabitatNode {
         { id: "graph", label: "Graph", icon: <Map size={16} aria-hidden="true" /> },
         { id: "modelingResult", label: "Result", icon: <Boxes size={16} aria-hidden="true" /> },
       ] },
+      heartbeatBranch(),
     ] };
   }
   if (agentId === "implementation") {
@@ -1345,6 +1374,7 @@ function habitatTree(agentId: string): HabitatNode {
       { id: "continueBranch", label: "Continue", icon: <Play size={16} aria-hidden="true" />, children: [
         { id: "continue", label: "Run", icon: <Play size={16} aria-hidden="true" /> },
       ] },
+      heartbeatBranch(),
     ] };
   }
   if (agentId === "verification") {
@@ -1354,6 +1384,7 @@ function habitatTree(agentId: string): HabitatNode {
         { id: "runtime", label: "Runtime", icon: <Database size={16} aria-hidden="true" /> },
         { id: "review", label: "Review", icon: <CheckCircle2 size={16} aria-hidden="true" /> },
       ] },
+      heartbeatBranch(),
     ] };
   }
   return { id: "life-root", label: "Life", icon: habitatIcon(agentId), children: [
@@ -1362,6 +1393,7 @@ function habitatTree(agentId: string): HabitatNode {
       { id: "reorientVerdict", label: "Verdict", icon: <Map size={16} aria-hidden="true" /> },
       { id: "reorientWorker", label: "Worker", icon: <Play size={16} aria-hidden="true" /> },
     ] },
+    heartbeatBranch(),
   ] };
 }
 

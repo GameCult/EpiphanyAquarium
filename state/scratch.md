@@ -14,3 +14,6 @@ Current slice:
   unfold concrete UI surfaces.
 - Added `notes/epiphany-agent-api-tree-map.md` to keep branch/leaf taxonomy
   grounded in backend read/write/proposal/runtime surfaces.
+- Current correction: thought bubbles are already universal, and heartbeat is
+  now universal too. Every creature gets a Heartbeat branch with Status and
+  Pulse leaves; Face keeps Bubble as the local public-speaking surface.

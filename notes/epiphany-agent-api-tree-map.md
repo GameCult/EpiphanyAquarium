@@ -81,6 +81,17 @@ actions:
 
 ## Aquarium Tree Assignment
 
+### Shared Heartbeat
+
+Every creature gets a Heartbeat branch:
+
+- Status -> shared `thread/epiphany` heartbeat status read, scoped in the UI to
+  the selected creature and the latest awakened role.
+- Pulse -> shared `runHeartbeat` / `heartbeatStatus` action pair.
+
+This is shared aquarium life, not eight fake backend clocks. Face remains the
+public mouth for bubble artifacts, but heartbeat is no longer Face-private.
+
 ### Self
 
 - Read
@@ -94,6 +105,9 @@ actions:
 
 ### Imagination
 
+- Heartbeat
+  - Status -> shared heartbeat read
+  - Pulse -> shared heartbeat action pair
 - Planning
   - Drafts -> `thread/epiphany/planning` Objective Drafts and
     `adoptObjectiveDraft`
@@ -106,6 +120,9 @@ actions:
 
 ### Eyes
 
+- Heartbeat
+  - Status -> shared heartbeat read
+  - Pulse -> shared heartbeat action pair
 - Evidence
   - Graph Query -> `thread/epiphany/graphQuery`, current rendered graph summary
   - Artifacts -> GUI action artifact manifests
@@ -115,6 +132,9 @@ actions:
 
 ### Body
 
+- Heartbeat
+  - Status -> shared heartbeat read
+  - Pulse -> shared heartbeat action pair
 - Structure
   - Graph -> typed architecture/dataflow graph projection
   - Modeling Result -> `readModelingResult`
@@ -124,6 +144,9 @@ actions:
 
 ### Hands
 
+- Heartbeat
+  - Status -> shared heartbeat read
+  - Pulse -> shared heartbeat action pair
 - Workspace
   - Diff -> Rider/git workspace projection
   - Artifact -> implementation audit artifact
@@ -133,6 +156,9 @@ actions:
 
 ### Soul
 
+- Heartbeat
+  - Status -> shared heartbeat read
+  - Pulse -> shared heartbeat action pair
 - Risk
   - Findings -> verification result projection
   - Runtime -> Unity/Rider bridge projections
@@ -140,6 +166,9 @@ actions:
 
 ### Life
 
+- Heartbeat
+  - Status -> shared heartbeat read
+  - Pulse -> shared heartbeat action pair
 - Continuity
   - Pressure -> `thread/epiphany/pressure`
   - Verdict -> `thread/epiphany/reorient`

@@ -22,9 +22,10 @@ The app has five cooperating layers:
 2. **React projection.** `src/App.tsx` normalizes snapshot state into decks,
    subdecks, action eligibility, agent status, thoughts, jobs, review hints, and
    graph data.
-3. **Aquarium objects.** `AgentConstellation` turns seven roles into visible DOM
-   agents: Self, Imagination, Eyes, Body, Hands, Soul, and Life. Each agent has a
-   position, shape, tone, option halo, thought bubble, and optional focus surface.
+3. **Aquarium objects.** `AgentConstellation` turns eight roles into visible DOM
+   creatures: Self, Face, Imagination, Eyes, Body, Hands, Soul, and Life. Each
+   creature has a position, shape, tone, option halo, thought bubble, and optional
+   focus surface.
 4. **Fluid and crisp canvas.** `src/aquariumFluid.ts` owns WebGL2 fluid
    simulation, fallback 2D rendering, hit zones, projection frames, fluid
    controls, and canvas-local picking. The smoke canvas carries dye and wakes;
@@ -113,6 +114,9 @@ interactive surfaces. The tree is grounded in
 `notes/epiphany-agent-api-tree-map.md`, so the same backend data and actions are
 distributed by owner:
 
+- Every creature has a Heartbeat branch. Heartbeat is shared aquarium life
+  surfaced locally through the selected creature, while Face remains the public
+  bubble/mouth surface.
 - Self owns intent, command, thread/workspace binding, checkpoint, and run state.
 - Imagination owns drafts, backlog, and planning-lane actions.
 - Eyes owns graph evidence and artifact bundles.
@@ -127,8 +131,8 @@ distributed by owner:
 - Visual inspection after smoke confirms the selected-agent view now reads as an
   agent habitat rather than the old console slab, but the habitat bodies are
   still panel-like and need more object-specific visual grammar.
-- The seven agents share the same petal/button grammar. They differ in shape and
-  color, but not enough in behavior, motion, or reveal texture.
+- The eight creatures share the same petal/button grammar. They differ in shape
+  and color, but not enough in behavior, motion, or reveal texture.
 - The focus surface is now decomposed by owner, but each owner still needs a more
   distinct layout silhouette.
 - Fluid controls live in the renderer and are covered by smoke, but the behavior
