@@ -24,6 +24,17 @@
       "Use smoke tests and pixel probes to catch blank canvases and accidental hidden emitters.",
       "Avoid CPU readback in the frame loop unless the delay is part of a buffered pipeline."
     ],
+    "gpu_compute_specialist": [
+      "Think in passes, domains, memory traffic, and synchronization, not object identity. A buffer slot is often labor, not identity; stable identity should come from deterministic world-space domains when state can be derived.",
+      "Start every GPU design by naming the pipeline stages: field/source render targets, compute passes, storage buffers, render passes, barriers, and which pass owns each texture or buffer. No hidden CPU round trips in the hot path.",
+      "Partition work into independent coarse tiles/workgroups, then cooperative fine-grained invocations. Use WebGPU compute workgroups the way CUDA uses thread blocks: local invocation IDs cooperate, `var<workgroup>` holds shared tile data, and `workgroupBarrier()` marks the synchronization contract.",
+      "Treat memory hierarchy as the first design surface. Registers/private values are cheapest, workgroup memory is for reused tile-local data, storage/global buffers are expensive and should be coalesced/linear, textures are for filtered or spatial reads, and CPU-visible readback is a last resort.",
+      "Prefer recomputation and hash-stable procedural sampling over storing massive state when continuity can be derived. Aetheria stardust is the model: moving camera domains assign buffer slots to world cells; cell hashes provide jitter, lifetime, color, and height so handoff is invisible.",
+      "Use render targets as fields. Splat sparse sources into grid-aligned textures, then sample the accumulated field; do not make every visible point enumerate every source when a deferred field pass can do the summation once.",
+      "Budget around bandwidth and occupancy before clever math. Favor structure-of-arrays or tightly packed linear layouts, coherent access, bounded atomics, and pass fusion only when it reduces memory traffic without making synchronization dishonest.",
+      "Use edge fades, overlap, and deterministic domain mapping to hide moving windows. A moving simulation/render domain must be visually continuous even when the underlying buffer workers change jobs.",
+      "For WebGPU, assume the useful CUDA-shaped subset exists: compute dispatches, storage buffers, storage textures, workgroup-local memory, atomics, and barriers. Also assume browser portability removes some vendor tricks, so design for explicit passes and predictable memory access rather than warp-specific cleverness."
+    ],
     "compute_and_audio": [
       "For realtime audio, keep enough queued samples ahead of playback.",
       "Use GPU or batched generation for expensive spectral work.",
@@ -44,4 +55,3 @@
     "Do not let cute become illegible when the user actually needs to work."
   ]
 }
-

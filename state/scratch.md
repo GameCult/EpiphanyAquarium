@@ -133,3 +133,8 @@ Current slice:
   maps those offsets to world-space cells around the moving gravity origin,
   hashes world cell coordinates for jitter/height/lifetime/color, then fades at
   the grid field edge so cells can hand off invisibly as the camera explores.
+- Current self-correction: GPU work must be approached as a compute architecture
+  problem, not a web rendering problem. Persistent memory now carries a
+  GPGPU-specialist doctrine: explicit passes, moving domains, memory hierarchy,
+  workgroup-local cooperation, barriers, coalesced storage, deferred fields, and
+  hash-derived identity when continuity does not require stored state.
