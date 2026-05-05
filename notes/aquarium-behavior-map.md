@@ -68,7 +68,7 @@ flowchart TD
   focus surface. The initial screen is aquarium-first, not paperwork-first.
 - **Hover/touch agent:** the renderer marks that agent hot, emits CSS projection
   variables, applies weak long-range pointer attraction to most creatures, gives
-  Self a weak long-range repulsion, and switches all creatures to strong
+  Soul a small long-range pullback, and switches all creatures to strong
   short-range attraction so they can be pulled out of orbit deliberately. It also
   wakes sound on real user input and opens the agent-local option halo. Every
   creature carries the shared heartbeat; the latest awakened role gets a stronger

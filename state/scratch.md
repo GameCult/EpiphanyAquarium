@@ -22,7 +22,7 @@ Current slice:
   attraction, and make touch/heartbeat pulses behave like damped plucked strings.
   Heartbeat is shared across all creatures; the latest awakened role gets the
   stronger local pluck.
-- Pointer field correction: long-range force should be weak. Non-Self creatures
-  attract gently at range, Self repels gently at range, and all creatures attract
-  strongly only at short range so the cursor can pull a creature out of orbit on
-  purpose.
+- Pointer field correction: the aquarium should feel welcoming. Most creatures
+  attract gently at range, only Soul pulls back weakly at range, and all
+  creatures attract strongly only at short range so the cursor can pull a
+  creature out of orbit on purpose.

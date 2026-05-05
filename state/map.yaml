@@ -32,7 +32,7 @@ interaction_laws:
   - Data and controls appear only through interaction with aquarium objects.
   - Agent options are DOM controls anchored to the agent.
   - Focus surfaces are selected-agent local shells, not global panels.
-  - Agent motion stays tethered to visible orbit slots; pointer force is weak at range, repels Self at range, and attracts all creatures strongly up close.
+  - Agent motion stays tethered to visible orbit slots; pointer force is welcoming at range, only Soul pulls back weakly, and all creatures attract strongly up close.
   - Every creature carries the shared heartbeat; the latest awakened role gets the stronger plucked-string oscillation.
   - WebGL fluid emission must correspond to visible objects.
   - Audio must respond once per deliberate input gesture.
