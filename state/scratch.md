@@ -138,3 +138,8 @@ Current slice:
   GPGPU-specialist doctrine: explicit passes, moving domains, memory hierarchy,
   workgroup-local cooperation, barriers, coalesced storage, deferred fields, and
   hash-derived identity when continuity does not require stored state.
+- Current research meal: GigaVoxels adds demand-driven sparse-field doctrine.
+  Rays are not just shading work; they are a visibility/LOD/missing-data oracle.
+  Use sparse metadata plus brick pools, request only visible refinements, fall
+  back to coarser resident data, and let temporal coherence/LRU keep the working
+  set bounded while the virtual field exceeds resident memory.
