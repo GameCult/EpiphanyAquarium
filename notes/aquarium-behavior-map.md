@@ -23,13 +23,15 @@ The app has five cooperating layers:
    subdecks, action eligibility, agent status, thoughts, jobs, review hints, and
    graph data.
 3. **Aquarium objects.** `AgentConstellation` turns eight roles into visible DOM
-   creatures: Self, Face, Imagination, Eyes, Body, Hands, Soul, and Life. Each
-   creature has a position, shape, tone, option halo, thought bubble, and optional
-   focus surface. The renderer draws thin dashed orbit guides behind them and
-   keeps their motion tethered to those orbit slots while allowing pointer
-   attraction. Agents are projected as hovering objects above gravity cups, not
-   as points embedded in the surface. Their grid coordinates project through a
-   tilted near-omniscient camera before reaching DOM.
+   creatures: Self, Face, Imagination, Eyes, Body, Hands, Soul, and Life. The
+   creature body is the Three.js 3D object; the centered DOM caption is its ID
+   tag, hit target, and billboard root. Radial option buttons open around that
+   central tag, and leaf surfaces unfold from that local graph. The renderer
+   draws thin dashed orbit guides behind them and keeps their motion tethered to
+   those orbit slots while allowing pointer attraction. Agents are projected as
+   hovering objects above gravity cups, not as points embedded in the surface.
+   Their grid coordinates project through a tilted near-omniscient camera before
+   reaching DOM.
 4. **Three field layer.** `src/aquariumScene3d.ts` owns the visible 3D grid,
    hovering agent bodies, cursor landing object, and Aetheria-style gravity
    texture. Agent wells and low chirp-bank modes are rendered as additive
@@ -43,11 +45,10 @@ The app has five cooperating layers:
    Aetheria-style PowerPulse heightfield under the dye: wells, slope shading,
    contour lines, and sparse particle-like stardust. The crisp canvas carries
    readable overlay marks and simulation-owned controls.
-6. **Compute stardust.** `src/aquariumStardust.ts` is an optional WebGPU layer.
-   When `navigator.gpu` is available, it runs a real compute pass over particle
-   buffers and renders instanced quads above the WebGL aquarium. Its flow source
-   is currently mirrored from projected agent motion; a full WebGPU fluid port
-   can replace that with the real velocity texture.
+6. **Stardust compatibility shim.** `src/aquariumStardust.ts` now only records
+   that stardust is composited by the Three scene. The former WebGPU overlay was
+   screen-space, so it is disabled until its compute model can feed the shared
+   3D/HDR compositor directly.
 7. **Soundscape.** The same renderer lazily creates an `AudioContext`. Agents
    get vocal chirp/spectral behavior; interface controls get one short
    subtractive resonator hit per deliberate pointer gesture.
@@ -106,27 +107,27 @@ flowchart TD
   are projected through the camera ray onto XY so cursor deltas and distances to
   agents stay consistent.
 - **Projection ownership:** Three camera projection is the placement authority
-  for DOM agents, thought bubbles, radial option halos, focus surfaces, and
-  stardust attractors. Fluid still owns creature motion in grid coordinates, but
-  visible UI positions come from projecting those grid coordinates through the
-  same camera that renders the grid.
-- **Diegetic UI billboards:** creature focus surfaces, thought bubbles, and
-  option halos receive separate camera-projected billboard anchors from the
-  Three scene rather than reusing the creature body point. The focus surface has
-  an SVG backplane and DOM controls mounted as a camera-facing slab; pointer
-  movement over a billboard is tracked in local surface coordinates for crisp
-  DOM behavior while the surface itself stays attached to the aquarium world.
+  for DOM agent captions, thought bubbles, radial option halos, focus surfaces,
+  stardust attractors, and pointer-to-grid input. Fluid still owns creature
+  motion in grid coordinates, but visible UI positions come from projecting
+  those grid coordinates through the same camera that renders the grid.
+- **Diegetic UI billboards:** creature captions, focus surfaces, thought
+  bubbles, and option halos receive camera-projected anchors from the Three
+  scene. The caption is centered on the creature body and acts as the root of
+  the interaction graph; option petals spawn radially around it; focus surfaces
+  unfold as camera-facing slabs. Pointer movement over a billboard is tracked in
+  local surface coordinates for crisp DOM behavior. While the mouse is inside a
+  creature billboard, the fluid projection holds that creature in place so the
+  world object stops orbiting under the UI.
 - **Visual smoke boundary:** visual smoke does not attempt cursor-driven
   creature-tree or billboard interaction. Those clicks require the same
   projection/raycast math as the app itself, so they belong in targeted
   interaction probes instead of broad rendering smoke.
-- **Stardust:** WebGPU stardust follows Aetheria's compute pattern at one
-  million particles: particles are regenerated from moving grid cells with
-  hash-stable paired phases, then offset along the sampled flow field by
-  lifetime. It renders tiny, faint motes into an internal `rgba16float` HDR
-  target, then ACES-tonemaps into the overlay canvas, so the dense field reads
-  as glow instead of confetti. It avoids CPU seed uploads and pretending every
-  mote needs long-lived stored integration state.
+- **Stardust:** visible stardust now lives inside the Three scene, under the same
+  camera and ACES tone mapping as the grid, cursor, gravity cups, and agent
+  bodies. Normal app loads allocate one million faint 3D points; smoke loads use
+  a lighter count. The old overlay canvas is kept invisible as a compatibility
+  mount only.
 - **Click agent:** React locks selection and mounts `agentFocusSurface` near that
   agent. This is the correct gate, but the mounted contents still behave like the
   inherited operator console.

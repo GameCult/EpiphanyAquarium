@@ -1687,6 +1687,22 @@ function AgentConstellation({
   }, []);
 
   useEffect(() => {
+    const wakeAudio = () => {
+      rendererRef.current?.wakeSoundscape();
+    };
+    window.addEventListener("pointerdown", wakeAudio, { capture: true });
+    window.addEventListener("mousedown", wakeAudio, { capture: true });
+    window.addEventListener("touchstart", wakeAudio, { capture: true, passive: true });
+    window.addEventListener("keydown", wakeAudio, { capture: true });
+    return () => {
+      window.removeEventListener("pointerdown", wakeAudio, { capture: true });
+      window.removeEventListener("mousedown", wakeAudio, { capture: true });
+      window.removeEventListener("touchstart", wakeAudio, { capture: true });
+      window.removeEventListener("keydown", wakeAudio, { capture: true });
+    };
+  }, []);
+
+  useEffect(() => {
     const canvas = sceneCanvasRef.current;
     if (!canvas) return;
     const scene = createAquariumScene3d(canvas);
@@ -2071,8 +2087,17 @@ function AgentConstellation({
             ref={focusSurfaceRef}
             data-agent-focus={focusedAgent.id}
             data-billboard-surface="focus"
+            onPointerEnter={(event) => {
+              setHoveredAgentId(focusedAgent.id);
+              updatePointerProjection(event.clientX, event.clientY, event.currentTarget.closest(".agentStage"));
+              rendererRef.current?.setHoveredAgent(focusedAgent.id);
+            }}
             onPointerDownCapture={handleInterfacePointerDown}
-            onPointerMove={handleBillboardPointerMove}
+            onPointerMove={(event) => {
+              handleBillboardPointerMove(event);
+              updatePointerProjection(event.clientX, event.clientY, event.currentTarget.closest(".agentStage"));
+            }}
+            onPointerLeave={handleAgentPointerLeave}
             style={
               {
                 "--focus-x-world": `${focusedAgent.baseX}%`,
@@ -2142,6 +2167,16 @@ function AgentConstellation({
             ref={(node) => bindThoughtNode(agent.id, node)}
             data-agent-thought={agent.id}
             data-billboard-surface="thought"
+            onPointerEnter={(event) => {
+              setHoveredAgentId(agent.id);
+              updatePointerProjection(event.clientX, event.clientY, event.currentTarget.closest(".agentStage"));
+              rendererRef.current?.setHoveredAgent(agent.id);
+            }}
+            onPointerMove={(event) => {
+              handleBillboardPointerMove(event);
+              updatePointerProjection(event.clientX, event.clientY, event.currentTarget.closest(".agentStage"));
+            }}
+            onPointerLeave={handleAgentPointerLeave}
             style={
               {
                 "--thought-x": `${agent.baseX}%`,

@@ -214,14 +214,9 @@ export interface AquariumStardustOverlay {
 }
 
 export async function createAquariumStardustOverlay(canvas: HTMLCanvasElement): Promise<AquariumStardustOverlay | null> {
-  const gpu = (navigator as Navigator & { gpu?: GpuApi }).gpu;
-  if (!gpu) return null;
-  const adapter = await gpu.requestAdapter();
-  if (!adapter) return null;
-  const device = await adapter.requestDevice();
-  const context = canvas.getContext("webgpu") as any;
-  if (!context) return null;
-  return new WebGpuStardustOverlay(canvas, device, context);
+  canvas.dataset.stardustParticles = "three-scene";
+  canvas.dataset.stardustMode = "composited";
+  return null;
 }
 
 class WebGpuStardustOverlay implements AquariumStardustOverlay {

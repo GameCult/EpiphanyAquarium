@@ -1297,26 +1297,29 @@ body:has(.immersiveShell) {
 .agentThreeCanvas {
   z-index: 2;
   display: block;
-  opacity: 0.92;
-  mix-blend-mode: screen;
+  opacity: 1;
+  mix-blend-mode: normal;
   pointer-events: none;
 }
 
 .agentSmokeCanvas {
   z-index: 0;
   display: block;
+  opacity: 0;
   cursor: crosshair;
 }
 
 .agentStardustCanvas {
   z-index: 1;
   display: block;
+  opacity: 0;
   pointer-events: none;
 }
 
 .agentCrispCanvas {
   z-index: 3;
   display: block;
+  opacity: 0;
   pointer-events: none;
 }
 
@@ -1359,9 +1362,10 @@ body:has(.immersiveShell) {
   position: absolute;
   z-index: 4;
   display: grid;
+  place-items: center;
   justify-items: center;
-  width: 118px;
-  min-height: 92px;
+  width: 142px;
+  min-height: 68px;
   border: 0;
   padding: 0;
   color: #fbfff8;
@@ -1408,6 +1412,12 @@ body:has(.immersiveShell) {
   line-height: 1;
 }
 
+.agentCharacter .agentGlyph {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .agentCharacter.core .agentGlyph {
   border-radius: 50%;
 }
@@ -1446,8 +1456,8 @@ body:has(.immersiveShell) {
 .agentCaption {
   display: grid;
   gap: 2px;
-  max-width: 118px;
-  margin-top: 6px;
+  max-width: 132px;
+  margin-top: 0;
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 7px;
   padding: 5px 7px;
@@ -1506,6 +1516,7 @@ body:has(.immersiveShell) {
 .thoughtBubble[data-agent-hot] {
   z-index: 4;
   opacity: var(--agent-bubble-opacity, 0.62);
+  pointer-events: auto;
   transform:
     translate(-50%, -50%)
     translate(34px, -42px)
@@ -1580,6 +1591,7 @@ body:has(.immersiveShell) {
 .agentStage .agentOptionHalo.open,
 .agentStage .agentOptionHalo[data-agent-hot] {
   opacity: 1 !important;
+  pointer-events: auto;
 }
 
 .agentOptionButton {

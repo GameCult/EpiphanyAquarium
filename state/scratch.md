@@ -95,3 +95,11 @@ Current slice:
   surfaces render with an SVG backplane and DOM controls as a camera-facing slab;
   pointer movement over a billboard writes local surface coordinates for
   interaction affordances.
+- Current compositor correction: visible non-DOM rendering should live in one
+  Three/HDR path. The old stardust overlay is now a compatibility stub, smoke
+  and crisp canvases are hidden, and Three owns grid, cursor, agent bodies, cups,
+  and faint 3D stardust under ACES tone mapping.
+- Current billboard correction: 3D bodies do not need DOM glyph bodies. The
+  centered DOM caption stays visible as the ID tag, click target, and radial
+  interaction graph root. When the mouse is inside a creature billboard, the
+  fluid orbit integrator damps that creature to a hold so the UI stabilizes.

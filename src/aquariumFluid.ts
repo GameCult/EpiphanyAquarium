@@ -1020,6 +1020,7 @@ class WebglAquariumRenderer implements AquariumRenderer {
       const stateVector = projectAgentState(agent);
       const activity = Math.max(0.025, stateVector.activity);
       const explicitHover = this.hoveredAgentId === agent.id ? 1 : 0;
+      const billboardHold = explicitHover > 0;
       const proximityHover = this.pointer.active ? hoverInfluence(state.x, state.y, this.pointer.x, this.pointer.y, 104) : 0;
       const hover = Math.max(explicitHover, proximityHover);
       const acknowledgement = this.acknowledgementPulse(agent.id, time);
@@ -1059,14 +1060,14 @@ class WebglAquariumRenderer implements AquariumRenderer {
           y: target.y + chirps.tangential * acknowledgementMotion,
         };
       }
-      const follow = (
+      const follow = billboardHold ? 0 : (
         0.0024 +
         activity * 0.004 +
         personality.expressiveness * 0.0011 +
         stateVector.urgency * 0.002 +
         stateVector.panic * 0.005
       ) * lerp(chirps.hoverDamping, 0.68, explicitHover);
-      const damping = lerp(0.92, 0.87, hover) - stateVector.panic * 0.06;
+      const damping = billboardHold ? 0.58 : lerp(0.92, 0.87, hover) - stateVector.panic * 0.06;
       state.vx = state.vx * damping + (target.x - state.x) * follow;
       state.vy = state.vy * damping + (target.y - state.y) * follow;
       state.x = clamp(state.x + state.vx, 42, this.simWidth - 42);

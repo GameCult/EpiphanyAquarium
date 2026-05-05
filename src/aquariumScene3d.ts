@@ -28,6 +28,8 @@ export interface AquariumScene3d {
 
 const worldWidth = 10;
 const worldDepth = 7.2;
+const stardustParticleCount = new URLSearchParams(globalThis.location?.search ?? "").has("smoke") ? 48_000 : 1_000_000;
+const maxStardustSources = 8;
 
 export function createAquariumScene3d(canvas: HTMLCanvasElement): AquariumScene3d {
   return new ThreeAquariumScene(canvas);
@@ -67,6 +69,7 @@ class ThreeAquariumScene implements AquariumScene3d {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
   private splatMeshes: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>[] = [];
+  private stardustMaterial!: THREE.ShaderMaterial;
   private worldPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
   private readonly handleKeyDown = (event: KeyboardEvent) => this.keyPan(event);
 
@@ -80,6 +83,8 @@ class ThreeAquariumScene implements AquariumScene3d {
     });
     this.renderer.setClearColor(0x000000, 0);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.18;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6));
     this.gravityUniforms.uGravityTex.value = this.gravityRenderTarget.texture;
     this.camera.up.set(0, 0, 1);
@@ -92,6 +97,8 @@ class ThreeAquariumScene implements AquariumScene3d {
     key.position.set(-4.5, 8, 5.2);
     this.scene.add(key);
     this.scene.add(this.createGrid());
+    this.stardustMaterial = this.createStardustMaterial();
+    this.scene.add(this.createStardust());
     this.scene.add(this.createCursor());
     window.addEventListener("keydown", this.handleKeyDown);
     this.raf = requestAnimationFrame(this.render);
@@ -175,8 +182,7 @@ class ThreeAquariumScene implements AquariumScene3d {
           .addScaledVector(up, 1.02),
       );
       const halo = this.projectWorldToScreen(
-        body.clone()
-          .addScaledVector(up, 0.18),
+        body.clone(),
       );
       return {
         ...projection,
@@ -204,6 +210,7 @@ class ThreeAquariumScene implements AquariumScene3d {
   setProjections(projections: SceneProjection[]) {
     const live = new Set<string>();
     let splatIndex = 0;
+    let sourceIndex = 0;
     for (const projection of projections) {
       live.add(projection.id);
       const group = this.agentGroups.get(projection.id) ?? this.createAgent(projection);
@@ -211,10 +218,14 @@ class ThreeAquariumScene implements AquariumScene3d {
       const height = this.agentHeight(projection);
       group.position.lerp(new THREE.Vector3(target.x, target.y, height), 0.22);
       group.scale.setScalar(0.9 + projection.z * 0.22 + projection.hover * 0.08);
-      group.rotation.y += 0.006 + projection.expression * 0.004;
+      group.rotation.set(0.18 + projection.expression * 0.04, 0, projection.tilt * 0.01);
       const cup = group.userData.cup as THREE.Mesh | undefined;
       if (cup?.material instanceof THREE.MeshBasicMaterial) {
         cup.material.opacity = 0.46 + projection.hover * 0.22 + projection.acknowledgement * 0.18;
+      }
+      if (sourceIndex < maxStardustSources) {
+        this.updateStardustSource(sourceIndex, target.x, target.y, projection);
+        sourceIndex += 1;
       }
       if (splatIndex < this.splatMeshes.length) {
         const strength = 0.46 + projection.z * 0.74 + projection.expression * 0.16;
@@ -240,6 +251,9 @@ class ThreeAquariumScene implements AquariumScene3d {
     }
     for (let index = splatIndex; index < this.splatMeshes.length; index += 1) {
       this.splatMeshes[index].visible = false;
+    }
+    for (let index = sourceIndex; index < maxStardustSources; index += 1) {
+      this.updateStardustSource(index, 999, 999, { expression: 0, acknowledgement: 0, hover: 0 } as SceneProjection);
     }
     for (const [id, group] of this.agentGroups) {
       if (!live.has(id)) {
@@ -399,18 +413,109 @@ class ThreeAquariumScene implements AquariumScene3d {
     return this.cursor;
   }
 
+  private createStardust() {
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(stardustParticleCount * 3);
+    const seeds = new Float32Array(stardustParticleCount);
+    for (let index = 0; index < stardustParticleCount; index += 1) {
+      const offset = index * 3;
+      positions[offset] = (hashNumber(index * 17 + 3) - 0.5) * worldWidth * 1.8;
+      positions[offset + 1] = (hashNumber(index * 31 + 5) - 0.5) * worldDepth * 1.8;
+      positions[offset + 2] = hashNumber(index * 43 + 7) * 2.8 + 0.12;
+      seeds[index] = hashNumber(index * 97 + 11);
+    }
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute("aSeed", new THREE.BufferAttribute(seeds, 1));
+    const points = new THREE.Points(geometry, this.stardustMaterial);
+    points.frustumCulled = false;
+    points.renderOrder = 4;
+    return points;
+  }
+
+  private createStardustMaterial() {
+    const sourceData = Array.from({ length: maxStardustSources }, () => new THREE.Vector4(999, 999, 0, 0));
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        uSources: { value: sourceData },
+        uTime: this.gravityUniforms.uTime,
+        uWorld: { value: new THREE.Vector2(worldWidth, worldDepth) },
+      },
+      vertexShader: `
+        attribute float aSeed;
+        uniform float uTime;
+        uniform vec2 uWorld;
+        uniform vec4 uSources[${maxStardustSources}];
+        varying float vAlpha;
+        varying vec3 vColor;
+
+        float hash(float value) {
+          return fract(sin(value * 12.9898) * 43758.5453);
+        }
+
+        vec2 wrapWorld(vec2 value) {
+          vec2 size = uWorld * 1.8;
+          return mod(value + size * 0.5, size) - size * 0.5;
+        }
+
+        void main() {
+          vec3 p = position;
+          float pair = floor(aSeed * 2048.0);
+          float lifetime = fract(uTime * 0.11 + hash(pair));
+          vec2 flow = vec2(
+            sin(p.y * 1.7 + uTime * 0.23 + aSeed * 6.28318),
+            cos(p.x * 1.4 - uTime * 0.19 + aSeed * 5.31)
+          ) * 0.022;
+          for (int i = 0; i < ${maxStardustSources}; i += 1) {
+            vec4 source = uSources[i];
+            vec2 delta = source.xy - p.xy;
+            float influence = exp(-dot(delta, delta) * 0.42) * source.z;
+            vec2 tangent = normalize(vec2(-delta.y, delta.x) + vec2(0.001, 0.0));
+            flow += tangent * influence * 0.038 + source.w * normalize(delta + vec2(0.001, 0.0)) * influence * 0.015;
+          }
+          p.xy = wrapWorld(p.xy - flow * lifetime * 24.0 + vec2(uTime * 0.018, -uTime * 0.011));
+          p.z += sin(uTime * 0.31 + aSeed * 19.0) * 0.08;
+          vec4 mv = modelViewMatrix * vec4(p, 1.0);
+          gl_Position = projectionMatrix * mv;
+          gl_PointSize = clamp((0.72 + hash(aSeed * 41.0) * 0.9) * (260.0 / max(-mv.z, 0.1)), 0.45, 2.4);
+          float life = 1.0 - abs(lifetime - 0.5) * 1.6;
+          vAlpha = clamp(life, 0.08, 0.42) * 0.11;
+          vColor = mix(vec3(0.50, 0.98, 0.78), vec3(1.15, 1.08, 0.72), hash(aSeed * 13.0));
+        }
+      `,
+      fragmentShader: `
+        varying float vAlpha;
+        varying vec3 vColor;
+        void main() {
+          vec2 local = gl_PointCoord - vec2(0.5);
+          float falloff = exp(-dot(local, local) * 9.0);
+          gl_FragColor = vec4(vColor * falloff * 1.6, vAlpha * falloff);
+        }
+      `,
+      blending: THREE.AdditiveBlending,
+      depthTest: true,
+      depthWrite: false,
+      transparent: true,
+    });
+  }
+
+  private updateStardustSource(index: number, x: number, y: number, projection: SceneProjection) {
+    const sources = this.stardustMaterial.uniforms.uSources.value as THREE.Vector4[];
+    if (!sources[index]) return;
+    sources[index].set(x, y, 0.3 + projection.expression * 0.26 + projection.acknowledgement * 0.7, projection.hover);
+  }
+
   private createAgent(projection: SceneProjection) {
     const color = new THREE.Color(projection.color ?? "#8fffd3");
     const glow = new THREE.Color(projection.glow ?? projection.color ?? "#8fffd3");
     const group = new THREE.Group();
     const cup = new THREE.Mesh(
       new THREE.TorusGeometry(0.42, 0.035, 12, 64),
-      new THREE.MeshBasicMaterial({ color: glow, opacity: 0.46, transparent: true, depthWrite: false }),
+      new THREE.MeshBasicMaterial({ color: glow, opacity: 0.38, transparent: true, depthWrite: false }),
     );
     cup.position.z = -0.43;
     const anchor = new THREE.Mesh(
       new THREE.CylinderGeometry(0.015, 0.015, 0.78, 8),
-      new THREE.MeshBasicMaterial({ color: glow, opacity: 0.36, transparent: true, depthWrite: false }),
+      new THREE.MeshBasicMaterial({ color: glow, opacity: 0.28, transparent: true, depthWrite: false }),
     );
     anchor.rotation.x = Math.PI / 2;
     anchor.position.z = -0.04;
@@ -419,11 +524,11 @@ class ThreeAquariumScene implements AquariumScene3d {
       new THREE.MeshStandardMaterial({
         color,
         emissive: glow,
-        emissiveIntensity: 0.42,
-        metalness: 0.08,
-        roughness: 0.38,
-        transparent: true,
-        opacity: 0.86,
+        emissiveIntensity: 0.64,
+        metalness: 0.18,
+        roughness: 0.32,
+        transparent: false,
+        opacity: 1,
       }),
     );
     group.add(cup, anchor, body);
@@ -554,6 +659,7 @@ class ThreeAquariumScene implements AquariumScene3d {
       this.cameraTarget.y.toFixed(3),
     ].join(",");
     this.canvas.dataset.threeCursor = [this.pointerWorld.x.toFixed(3), this.pointerWorld.y.toFixed(3)].join(",");
+    this.canvas.dataset.threeStardust = String(stardustParticleCount);
     this.raf = requestAnimationFrame(this.render);
   };
 }
@@ -582,4 +688,8 @@ function stablePhase(id: string) {
     hash = (hash * 31 + id.charCodeAt(index)) >>> 0;
   }
   return (hash / 0xffffffff) * Math.PI * 2;
+}
+
+function hashNumber(value: number) {
+  return ((Math.sin(value * 12.9898) * 43758.5453) % 1 + 1) % 1;
 }
