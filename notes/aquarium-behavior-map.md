@@ -38,9 +38,10 @@ The app has five cooperating layers:
    texture. Agent wells and low chirp-bank modes are rendered as additive
    top-down splat quads into a grid-aligned render target; the visible mesh
    samples that accumulated texture for displacement. Camera distance drives
-   procedural grid cell size, so zooming reveals different structural scales.
-   The scene is Z-up over a shared XY interaction plane, with middle-drag orbit,
-   wheel zoom, and right-drag/WASD panning around that plane.
+   both procedural grid cell size and actual field extent, while gravity wells
+   remain in stable world coordinates. The scene is Z-up over a shared XY
+   interaction plane, with middle-drag orbit, wheel zoom, and right-drag/WASD
+   panning around that plane.
 5. **Fluid and crisp canvas.** `src/aquariumFluid.ts` owns WebGL2 fluid
    simulation, fallback 2D rendering, hit zones, projection frames, fluid
    controls, and canvas-local picking. The smoke canvas now renders an

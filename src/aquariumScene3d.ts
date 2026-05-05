@@ -69,11 +69,14 @@ class ThreeAquariumScene implements AquariumScene3d {
   private gravityScene = new THREE.Scene();
   private gravityUniforms = {
     uCellSize: { value: 0.34 },
+    uFieldHalfSize: { value: new THREE.Vector2(worldWidth / 2, worldDepth / 2) },
     uGridColor: { value: new THREE.Color(0x69ffd8) },
+    uGravitySize: { value: new THREE.Vector2(worldWidth, worldDepth) },
     uGravityTex: { value: null as THREE.Texture | null },
     uOpacity: { value: 0.42 },
     uTime: { value: 0 },
   };
+  private gridGroup!: THREE.Group;
   private pointer: PointerState = { active: false, xPercent: 50, yPercent: 50 };
   private pointerWorld = new THREE.Vector3(0, 0, 0);
   private raf = 0;
@@ -112,7 +115,8 @@ class ThreeAquariumScene implements AquariumScene3d {
     const key = new THREE.DirectionalLight(0xd8fff0, 1.2);
     key.position.set(-4.5, 8, 5.2);
     this.scene.add(key);
-    this.scene.add(this.createGrid());
+    this.gridGroup = this.createGrid();
+    this.scene.add(this.gridGroup);
     this.stardustMaterial = this.createStardustMaterial();
     this.scene.add(this.createStardust());
     this.scene.add(this.createCursor());
@@ -319,21 +323,24 @@ class ThreeAquariumScene implements AquariumScene3d {
       },
       vertexShader: `
         uniform sampler2D uGravityTex;
+        uniform vec2 uFieldHalfSize;
+        uniform vec2 uGravitySize;
         varying vec2 vGridPosition;
         varying float vDepth;
         varying float vFade;
 
         void main() {
           vec3 displaced = position;
-          vGridPosition = displaced.xy;
-          vec2 uv = displaced.xy / vec2(${worldWidth.toFixed(3)}, ${worldDepth.toFixed(3)}) + 0.5;
-          vec4 field = texture2D(uGravityTex, uv);
+          vec2 worldPosition = (modelMatrix * vec4(position, 1.0)).xy;
+          vGridPosition = worldPosition;
+          vec2 uv = worldPosition / uGravitySize + 0.5;
+          float gravityMask = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
+          vec4 field = texture2D(uGravityTex, clamp(uv, vec2(0.0), vec2(1.0))) * gravityMask;
           float depth = field.r - field.g;
           displaced.z = -depth;
-          vec2 edgeBasis = vec2(${(worldWidth / 2).toFixed(3)}, ${(worldDepth / 2).toFixed(3)});
-          float edge = max(abs(displaced.x) / edgeBasis.x, abs(displaced.y) / edgeBasis.y);
+          float edge = max(abs(worldPosition.x) / max(uFieldHalfSize.x, 0.001), abs(worldPosition.y) / max(uFieldHalfSize.y, 0.001));
           vDepth = depth;
-          vFade = (1.0 - smoothstep(0.24, 1.0, edge)) * (1.0 - smoothstep(0.65, 1.8, depth));
+          vFade = (1.0 - smoothstep(0.72, 1.0, edge)) * (1.0 - smoothstep(0.65, 1.8, depth));
           gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
         }
       `,
@@ -676,6 +683,7 @@ class ThreeAquariumScene implements AquariumScene3d {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.gravityUniforms.uCellSize.value = this.gridCellSize();
+    this.updateGridExtent();
     if (this.pointer.active) {
       const world = gridToWorld(this.pointer.xPercent, this.pointer.yPercent);
       this.cursor.visible = true;
@@ -708,9 +716,21 @@ class ThreeAquariumScene implements AquariumScene3d {
     ].join(",");
     this.canvas.dataset.threeCursor = [this.pointerWorld.x.toFixed(3), this.pointerWorld.y.toFixed(3)].join(",");
     this.canvas.dataset.threeGridCell = this.gravityUniforms.uCellSize.value.toFixed(3);
+    this.canvas.dataset.threeGridSize = [
+      (this.gravityUniforms.uFieldHalfSize.value.x * 2).toFixed(3),
+      (this.gravityUniforms.uFieldHalfSize.value.y * 2).toFixed(3),
+    ].join(",");
     this.canvas.dataset.threeStardust = String(stardustParticleCount);
     this.raf = requestAnimationFrame(this.render);
   };
+
+  private updateGridExtent() {
+    const scale = clamp(this.cameraDistance / 9.2, 1, 3.1);
+    const width = worldWidth * scale;
+    const depth = worldDepth * scale;
+    this.gridGroup.scale.set(width / worldWidth, depth / worldDepth, 1);
+    this.gravityUniforms.uFieldHalfSize.value.set(width / 2, depth / 2);
+  }
 
   private gridCellSize() {
     const exponent = Math.floor(Math.log2(Math.max(this.cameraDistance, 1) / 5.5));

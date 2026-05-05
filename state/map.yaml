@@ -44,7 +44,7 @@ interaction_laws:
   - Aetheria's current PowerPulse envelope is the cup/mask curve; low chirp-bank partials become multiple radial wave emitters so excited agents vibrate the grid like small speakers.
   - The aquarium camera is near-omniscient: grid coordinates project through a tilted overhead camera, and cursor input unprojects back to the grid before applying force.
   - Three.js camera controls use an orbital rig: the target is a point on the XY grid, yaw/pitch/distance convert to a Cartesian camera offset, +Z is up, middle drag mutates yaw/pitch, wheel zooms exponentially, right drag pans by projected XY mouse-hit deltas, and WASD pans along the projected view basis.
-  - Grid scale follows zoom: camera distance drives the procedural cell size so zooming reveals structures at different scales instead of only magnifying a fixed mesh.
+  - Grid scale follows zoom: camera distance drives both the procedural cell size and the actual rendered grid extent, while gravity wells remain in stable world coordinates.
   - Epiphany project labels are world-space DOM billboards projected by the Three camera and fade in as the user zooms out.
   - Three camera projection is the placement authority for DOM agents, thought bubbles, option halos, focus surfaces, stardust attractors, and pointer-to-grid input; percent-space projection is fallback only.
   - UI branches now use SVG/DOM camera-facing billboards attached to world-space creature anchors: Three emits separate focus/thought/option screen anchors and scales, and DOM pointer movement maps into billboard-local coordinates for crisp interaction.
