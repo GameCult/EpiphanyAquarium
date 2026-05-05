@@ -70,11 +70,19 @@ async function smokeViewport(browser, viewport, screenshotPath, exerciseFluidPan
   await page.locator(".immersiveShell").waitFor();
   await page.locator('[data-agent-node="coordinator"]').waitFor({ state: "attached" });
   await page.locator(".agentSmokeCanvas").waitFor();
+  await page.locator(".agentStardustCanvas").waitFor();
   await page.locator(".agentCrispCanvas").waitFor();
   await page.waitForTimeout(1000);
 
   const smokeProbe = await probeCanvas(page, ".agentSmokeCanvas");
   const crispProbe = await probeCanvas(page, ".agentCrispCanvas");
+  const stardustProbe = await page.evaluate(() => {
+    const canvas = document.querySelector(".agentStardustCanvas");
+    return {
+      hasCanvas: canvas instanceof HTMLCanvasElement,
+      hasWebGpu: Boolean(navigator.gpu),
+    };
+  });
   if (!smokeProbe.nonBlank) {
     throw new Error(`agent smoke canvas did not render: ${smokeProbe.reason}`);
   }
@@ -296,7 +304,7 @@ async function smokeViewport(browser, viewport, screenshotPath, exerciseFluidPan
   if (result.horizontalOverflow) {
     throw new Error(`visual smoke found horizontal overflow at ${viewport.width}x${viewport.height}`);
   }
-  return { smokeProbe, crispProbe, audioProbe, persistedParams };
+  return { smokeProbe, crispProbe, stardustProbe, audioProbe, persistedParams };
 }
 
 async function clickCreatureTreeNode(page, agentId, title) {

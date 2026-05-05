@@ -18,11 +18,13 @@ import {
 import { EpiphanyGraphViewer, validateEpiphanyGraphsState } from "@epiphanygraph/epiphany-graph-viewer";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createAquariumRenderer } from "./aquariumFluid";
+import { createAquariumStardustOverlay } from "./aquariumStardust";
 import { createHarmonyRuntime, loadNextHarmony, loadShuffledDefaultHarmony, pickHarmonyFolder } from "./midiHarmony";
 import { loadOperatorSnapshot, runOperatorAction } from "./operatorApi";
 import type { ArtifactBundle, OperatorAction, OperatorActionResult, OperatorSnapshot, StatusRequest } from "./types";
 import type { EpiphanyCodeRef, EpiphanyGraphsState } from "@epiphanygraph/epiphany-graph-viewer";
 import type { AquariumAgentProjection, AquariumOptionFrame, AquariumRenderer, AquariumUiFrame } from "./aquariumFluid";
+import type { AquariumStardustOverlay } from "./aquariumStardust";
 import type { AquariumHarmonyFrame, HarmonyRuntime, HarmonySource, MidiCorpusFile } from "./midiHarmony";
 
 const roleOrder = ["implementation", "face", "imagination", "research", "eyes", "modeling", "verification", "reorientation"];
@@ -1469,9 +1471,11 @@ function AgentConstellation({
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const crispCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const stardustCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const optionByKeyRef = useRef(new globalThis.Map<string, AquariumOption>());
   const uiOptionByKeyRef = useRef(new globalThis.Map<string, AquariumOption>());
   const rendererRef = useRef<AquariumRenderer | null>(null);
+  const stardustRef = useRef<AquariumStardustOverlay | null>(null);
   const agentNodeRefs = useRef(new globalThis.Map<string, HTMLButtonElement>());
   const thoughtNodeRefs = useRef(new globalThis.Map<string, HTMLDivElement>());
   const optionHaloNodeRefs = useRef(new globalThis.Map<string, HTMLDivElement>());
@@ -1604,6 +1608,24 @@ function AgentConstellation({
     };
   }, []);
 
+  useEffect(() => {
+    const canvas = stardustCanvasRef.current;
+    if (!canvas) return;
+    let cancelled = false;
+    void createAquariumStardustOverlay(canvas).then((overlay) => {
+      if (cancelled) {
+        overlay?.dispose();
+        return;
+      }
+      stardustRef.current = overlay;
+    });
+    return () => {
+      cancelled = true;
+      stardustRef.current?.dispose();
+      stardustRef.current = null;
+    };
+  }, []);
+
   const bindAgentNode = useCallback((id: string, node: HTMLButtonElement | null) => {
     if (node) {
       agentNodeRefs.current.set(id, node);
@@ -1658,6 +1680,7 @@ function AgentConstellation({
       thoughtNode?.toggleAttribute("data-agent-hot", projection.hover > 0.35);
       optionHaloNode?.toggleAttribute("data-agent-hot", projection.hover > 0.2);
     }
+    stardustRef.current?.setProjections(projections);
   }, [hoveredAgentId, selectedAgentId]);
 
   useEffect(() => {
@@ -1797,6 +1820,11 @@ function AgentConstellation({
           onPointerLeave={handlePointerLeave}
           onPointerUp={handlePointerUp}
           onClick={handleCanvasClick}
+        />
+        <canvas
+          ref={stardustCanvasRef}
+          className="agentStardustCanvas"
+          aria-hidden="true"
         />
         <canvas
           ref={crispCanvasRef}

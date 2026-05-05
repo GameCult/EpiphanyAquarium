@@ -30,3 +30,8 @@ Current slice:
   heightfield normal and scales by slope squared, so force fades both outside
   the well and at the center. Agents hover above their cups with a DOM elevation
   offset while WebGL renders the fog/grid-like gravity surface below them.
+- Current compute pass: added optional WebGPU stardust. It uses a real compute
+  shader and instanced render pass for flow-driven particles, with WebGL2 kept
+  as fallback. Current bridge mirrors agent projection velocity into a flow
+  source buffer; a future full WebGPU fluid port can share the true velocity
+  texture directly.

@@ -545,6 +545,7 @@ precision highp float;
 in vec2 vUv;
 out vec4 outColor;
 uniform sampler2D uDye;
+uniform sampler2D uVelocity;
 uniform vec2 uTexelSize;
 uniform vec4 uAgents[${maxFluidAgents}];
 uniform float uActivity[${maxFluidAgents}];
@@ -586,16 +587,28 @@ float contourLine(float height, float slope) {
   float band = abs(fract((-height + uTime * 0.0025) / spacing) - 0.5);
   return (1.0 - smoothstep(0.02, 0.11 + slope * 0.34, band)) * smoothstep(0.002, 0.09, -height);
 }
-float stardust(vec2 uv, float height, float slope, float density) {
-  vec2 cell = floor((uv + vec2(uTime * 0.004, -uTime * 0.002)) * vec2(136.0, 84.0));
+float angleLine(vec2 plan, float slope, float danger) {
+  float angle = atan(plan.y, plan.x) / 3.1415926536 + 1.0;
+  float result = 0.0;
+  for (float ia = 0.5; ia < 13.0; ia += 1.0) {
+    float isoline = abs(angle - ia / 6.0);
+    result += 1.0 - smoothstep(0.018, 0.18, isoline / max(slope, 0.0004));
+  }
+  return result * slope * (0.06 + danger * 0.12);
+}
+float stardust(vec2 uv, float height, float slope, float density, vec2 flow) {
+  vec2 drift = normalize(flow + vec2(0.0001)) * min(length(flow), 1.7) * 0.016;
+  vec2 domain = uv - drift * (0.6 + fract(uTime * 0.28));
+  vec2 cell = floor((domain + vec2(uTime * 0.004, -uTime * 0.002)) * vec2(136.0, 84.0));
   float hash = fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453123);
   float inkSpawn = smoothstep(0.02, 1.4, density);
   float speck = step(0.986 - slope * 0.04 - inkSpawn * 0.048, hash);
-  vec2 local = fract((uv + vec2(uTime * 0.004, -uTime * 0.002)) * vec2(136.0, 84.0)) - 0.5;
+  vec2 local = fract((domain + vec2(uTime * 0.004, -uTime * 0.002)) * vec2(136.0, 84.0)) - 0.5;
   return speck * exp(-dot(local, local) * 34.0) * smoothstep(0.004, 0.08, -height) * (0.22 + inkSpawn * 1.4);
 }
 void main() {
   vec4 dye = texture(uDye, vUv);
+  vec2 flow = texture(uVelocity, vUv).xy;
   vec3 color = max(dye.rgb, vec3(0.0));
   float density = max(dye.a, 0.0);
   vec3 glowColor = color;
@@ -617,15 +630,19 @@ void main() {
   float hR = agentHeight(vUv + vec2(uTexelSize.x * 3.0, 0.0));
   float hD = agentHeight(vUv - vec2(0.0, uTexelSize.y * 3.0));
   float hU = agentHeight(vUv + vec2(0.0, uTexelSize.y * 3.0));
-  vec3 normal = normalize(vec3((hL - hR) * 24.0, (hD - hU) * 24.0, 0.26));
+  vec2 plan = vec2(hR - hL, hU - hD);
+  vec3 normal = normalize(vec3(-plan * 24.0, 0.26));
   float slope = length(normal.xy);
+  float danger = smoothstep(0.09, 0.62, slope * slope);
   float shade = clamp(dot(normal, normalize(vec3(-0.42, -0.58, 0.7))) * 0.5 + 0.5, 0.0, 1.0);
   float depth = smoothstep(0.002, 0.12, -h);
   float contour = contourLine(h, slope);
-  float dust = stardust(vUv, h, slope, density);
+  float angles = angleLine(plan, slope, danger) * smoothstep(0.004, 0.09, -h);
+  float dust = stardust(vUv, h, slope, density, flow);
   vec3 terrain = mix(vec3(0.008, 0.026, 0.022), vec3(0.05, 0.19, 0.16), shade) * depth;
-  terrain += vec3(0.52, 0.92, 0.78) * contour * (0.08 + slope * 0.28);
-  terrain += vec3(0.8, 0.98, 0.9) * dust * 0.18;
+  terrain += mix(vec3(0.52, 0.92, 0.78), vec3(1.0, 0.48, 0.3), danger) * contour * (0.08 + slope * 0.28);
+  terrain += vec3(0.42, 0.72, 1.0) * angles;
+  terrain += vec3(0.8, 0.98, 0.9) * dust * (0.12 + length(flow) * 0.018);
   color += terrain * (0.72 - clamp(density * 0.08, 0.0, 0.42));
   color = acesFilm(color);
   color = gradeSaturation(color, uSaturation);

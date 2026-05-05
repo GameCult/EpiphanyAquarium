@@ -1270,6 +1270,7 @@ body:has(.immersiveShell) {
 }
 
 .agentSmokeCanvas,
+.agentStardustCanvas,
 .agentCrispCanvas,
 .agentStageVignette {
   position: absolute;
@@ -1282,6 +1283,12 @@ body:has(.immersiveShell) {
   z-index: 0;
   display: block;
   cursor: crosshair;
+}
+
+.agentStardustCanvas {
+  z-index: 1;
+  display: block;
+  pointer-events: none;
 }
 
 .agentCrispCanvas {

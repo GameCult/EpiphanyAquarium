@@ -35,7 +35,12 @@ The app has five cooperating layers:
    Aetheria-style PowerPulse heightfield under the dye: wells, slope shading,
    contour lines, and sparse particle-like stardust. The crisp canvas carries
    readable overlay marks and simulation-owned controls.
-5. **Soundscape.** The same renderer lazily creates an `AudioContext`. Agents
+5. **Compute stardust.** `src/aquariumStardust.ts` is an optional WebGPU layer.
+   When `navigator.gpu` is available, it runs a real compute pass over particle
+   buffers and renders instanced quads above the WebGL aquarium. Its flow source
+   is currently mirrored from projected agent motion; a full WebGPU fluid port
+   can replace that with the real velocity texture.
+6. **Soundscape.** The same renderer lazily creates an `AudioContext`. Agents
    get vocal chirp/spectral behavior; interface controls get one short
    subtractive resonator hit per deliberate pointer gesture.
 
