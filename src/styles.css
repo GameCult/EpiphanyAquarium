@@ -1331,6 +1331,7 @@ body:has(.immersiveShell) {
   filter: drop-shadow(0 0 var(--agent-hover-glow, 0px) color-mix(in srgb, var(--agent-glow) 72%, transparent));
   transform:
     translate(-50%, -50%)
+    translateY(var(--agent-elevation, -10px))
     rotate(var(--agent-tilt, 0deg))
     scale(var(--agent-scale, 1));
   transition:

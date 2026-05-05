@@ -93,10 +93,12 @@ async function smokeViewport(browser, viewport, screenshotPath, exerciseFluidPan
     const style = node.style;
     const x = style.getPropertyValue("--agent-x");
     const y = style.getPropertyValue("--agent-y");
+    const z = Number.parseFloat(style.getPropertyValue("--agent-z"));
+    const elevation = style.getPropertyValue("--agent-elevation");
     const glow = Number.parseFloat(style.getPropertyValue("--agent-glow-pulse"));
     return {
-      ok: x.endsWith("%") && y.endsWith("%") && Number.isFinite(glow),
-      reason: `x=${x} y=${y} glow=${glow}`,
+      ok: x.endsWith("%") && y.endsWith("%") && Number.isFinite(z) && elevation.endsWith("px") && Number.isFinite(glow),
+      reason: `x=${x} y=${y} z=${z} elevation=${elevation} glow=${glow}`,
     };
   });
   if (!projectionProbe.ok) {

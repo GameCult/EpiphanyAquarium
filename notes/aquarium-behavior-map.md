@@ -27,11 +27,14 @@ The app has five cooperating layers:
    creature has a position, shape, tone, option halo, thought bubble, and optional
    focus surface. The renderer draws thin dashed orbit guides behind them and
    keeps their motion tethered to those orbit slots while allowing pointer
-   attraction.
+   attraction. Agents are projected as hovering objects above gravity cups, not
+   as points embedded in the surface.
 4. **Fluid and crisp canvas.** `src/aquariumFluid.ts` owns WebGL2 fluid
    simulation, fallback 2D rendering, hit zones, projection frames, fluid
-   controls, and canvas-local picking. The smoke canvas carries dye and wakes;
-   the crisp canvas carries readable overlay marks and simulation-owned controls.
+   controls, and canvas-local picking. The smoke canvas now renders an
+   Aetheria-style PowerPulse heightfield under the dye: wells, slope shading,
+   contour lines, and sparse particle-like stardust. The crisp canvas carries
+   readable overlay marks and simulation-owned controls.
 5. **Soundscape.** The same renderer lazily creates an `AudioContext`. Agents
    get vocal chirp/spectral behavior; interface controls get one short
    subtractive resonator hit per deliberate pointer gesture.
@@ -69,7 +72,10 @@ flowchart TD
 - **Hover/touch agent:** the renderer marks that agent hot, emits CSS projection
   variables, applies weak long-range pointer attraction to most creatures, gives
   Soul a small long-range pullback, and switches all creatures to strong
-  short-range attraction so they can be pulled out of orbit deliberately. It also
+  short-range attraction so they can be pulled out of orbit deliberately. The
+  force is derived from an Aetheria-style heightfield normal and scaled by
+  horizontal slope squared, so it tapers toward the center instead of jerking
+  arriving objects around. It also
   wakes sound on real user input and opens the agent-local option halo. Every
   creature carries the shared heartbeat; the latest awakened role gets a stronger
   pluck. Touch and heartbeat events resolve as damped string-like oscillations

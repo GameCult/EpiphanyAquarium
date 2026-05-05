@@ -33,6 +33,8 @@ interaction_laws:
   - Agent options are DOM controls anchored to the agent.
   - Focus surfaces are selected-agent local shells, not global panels.
   - Agent motion stays tethered to visible orbit slots; pointer force is welcoming at range, only Soul pulls back weakly, and all creatures attract strongly up close.
+  - Pointer force follows Aetheria's gravity model: derive force from a PowerPulse heightfield normal and scale by horizontal slope squared so wells taper near their centers.
+  - Agents hover above their gravity cups; WebGL renders the well surface underneath, while DOM glyphs receive elevation and scale from projected height.
   - Every creature carries the shared heartbeat; the latest awakened role gets the stronger plucked-string oscillation.
   - WebGL fluid emission must correspond to visible objects.
   - Audio must respond once per deliberate input gesture.
@@ -51,3 +53,4 @@ landed:
   - The Tauri action bridge passes heartbeatStatus, runHeartbeat, and faceBubble through to EpiphanyAgent, so Face can surface local Aquarium chat bubbles without Discord.
   - Heartbeat is now shared creature anatomy. Every agent habitat has a Heartbeat branch with Status and Pulse leaves; Face keeps the Bubble leaf as the public mouth.
   - Orbits are now visible as thin dashed gradient guides; mouse attraction pulls agents without severing orbit tethering, and touch/heartbeat chirps use plucked-string damping.
+  - Aetheria-style gravity cups now shape pointer attraction and the WebGL aquarium surface; agents project a hover offset above their wells.

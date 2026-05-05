@@ -1637,6 +1637,8 @@ function AgentConstellation({
       const properties: Array<[string, string]> = [
         ["--agent-x", `${projection.xPercent}%`],
         ["--agent-y", `${projection.yPercent}%`],
+        ["--agent-z", `${projection.z}`],
+        ["--agent-elevation", `${-10 - projection.z * 36}px`],
         ["--agent-tilt", `${projection.tilt}deg`],
         ["--agent-bubble-tilt", `${projection.tilt * 0.32}deg`],
         ["--agent-glow-pulse", String(projection.glowPulse)],
@@ -1645,7 +1647,7 @@ function AgentConstellation({
         ["--agent-expression", String(projection.expression)],
         ["--agent-hover", String(projection.hover)],
         ["--agent-ack", String(projection.acknowledgement)],
-        ["--agent-scale", String(1 + projection.acknowledgement * 0.035 + projection.hover * 0.018)],
+        ["--agent-scale", String(1 + projection.acknowledgement * 0.035 + projection.hover * 0.018 + projection.z * 0.055)],
       ];
       for (const [name, value] of properties) {
         agentNode?.style.setProperty(name, value);

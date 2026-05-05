@@ -26,3 +26,7 @@ Current slice:
   attract gently at range, only Soul pulls back weakly at range, and all
   creatures attract strongly only at short range so the cursor can pull a
   creature out of orbit on purpose.
+- Current gravity pass: pointer force now samples an Aetheria-style PowerPulse
+  heightfield normal and scales by slope squared, so force fades both outside
+  the well and at the center. Agents hover above their cups with a DOM elevation
+  offset while WebGL renders the fog/grid-like gravity surface below them.

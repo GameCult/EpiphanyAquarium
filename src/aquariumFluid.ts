@@ -55,6 +55,7 @@ export interface AquariumAgentProjection {
   id: string;
   xPercent: number;
   yPercent: number;
+  z: number;
   tilt: number;
   glowPulse: number;
   expression: number;
@@ -116,6 +117,7 @@ interface DoubleTarget {
 interface MotionState {
   x: number;
   y: number;
+  z?: number;
   vx: number;
   vy: number;
 }
@@ -544,9 +546,14 @@ in vec2 vUv;
 out vec4 outColor;
 uniform sampler2D uDye;
 uniform vec2 uTexelSize;
+uniform vec4 uAgents[${maxFluidAgents}];
+uniform float uActivity[${maxFluidAgents}];
+uniform int uCount;
+uniform float uAspect;
 uniform float uExposure;
 uniform float uGlow;
 uniform float uSaturation;
+uniform float uTime;
 vec3 acesFilm(vec3 x) {
   const float a = 2.51;
   const float b = 0.03;
@@ -558,6 +565,34 @@ vec3 acesFilm(vec3 x) {
 vec3 gradeSaturation(vec3 color, float saturation) {
   float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
   return mix(vec3(luma), color, saturation);
+}
+float powerPulse(float x, float exponent) {
+  x = clamp(abs(x), 0.0, 1.0) - 0.001;
+  return pow(max((x + 1.0) * (1.0 - x), 0.0), exponent);
+}
+float agentHeight(vec2 uv) {
+  float height = -0.018 * powerPulse(length((uv - vec2(0.5)) * vec2(uAspect, 1.0)) * 1.18, 2.8);
+  for (int i = 0; i < ${maxFluidAgents}; i += 1) {
+    if (i >= uCount) break;
+    vec2 delta = (uv - uAgents[i].xy) * vec2(uAspect, 1.0);
+    float radius = mix(0.18, 0.255, clamp(uActivity[i], 0.0, 1.0));
+    float well = powerPulse(length(delta) / max(radius, 0.001), mix(2.25, 5.2, clamp(uActivity[i], 0.0, 1.0)));
+    height -= well * (0.026 + uActivity[i] * 0.052);
+  }
+  return height;
+}
+float contourLine(float height, float slope) {
+  float spacing = 0.018;
+  float band = abs(fract((-height + uTime * 0.0025) / spacing) - 0.5);
+  return (1.0 - smoothstep(0.02, 0.11 + slope * 0.34, band)) * smoothstep(0.002, 0.09, -height);
+}
+float stardust(vec2 uv, float height, float slope, float density) {
+  vec2 cell = floor((uv + vec2(uTime * 0.004, -uTime * 0.002)) * vec2(136.0, 84.0));
+  float hash = fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453123);
+  float inkSpawn = smoothstep(0.02, 1.4, density);
+  float speck = step(0.986 - slope * 0.04 - inkSpawn * 0.048, hash);
+  vec2 local = fract((uv + vec2(uTime * 0.004, -uTime * 0.002)) * vec2(136.0, 84.0)) - 0.5;
+  return speck * exp(-dot(local, local) * 34.0) * smoothstep(0.004, 0.08, -height) * (0.22 + inkSpawn * 1.4);
 }
 void main() {
   vec4 dye = texture(uDye, vUv);
@@ -577,6 +612,21 @@ void main() {
   glowDensity /= 5.0;
   float glow = smoothstep(0.04, 3.8, glowDensity) * uGlow;
   color = color * uExposure + glowColor * glow * 0.55;
+  float h = agentHeight(vUv);
+  float hL = agentHeight(vUv - vec2(uTexelSize.x * 3.0, 0.0));
+  float hR = agentHeight(vUv + vec2(uTexelSize.x * 3.0, 0.0));
+  float hD = agentHeight(vUv - vec2(0.0, uTexelSize.y * 3.0));
+  float hU = agentHeight(vUv + vec2(0.0, uTexelSize.y * 3.0));
+  vec3 normal = normalize(vec3((hL - hR) * 24.0, (hD - hU) * 24.0, 0.26));
+  float slope = length(normal.xy);
+  float shade = clamp(dot(normal, normalize(vec3(-0.42, -0.58, 0.7))) * 0.5 + 0.5, 0.0, 1.0);
+  float depth = smoothstep(0.002, 0.12, -h);
+  float contour = contourLine(h, slope);
+  float dust = stardust(vUv, h, slope, density);
+  vec3 terrain = mix(vec3(0.008, 0.026, 0.022), vec3(0.05, 0.19, 0.16), shade) * depth;
+  terrain += vec3(0.52, 0.92, 0.78) * contour * (0.08 + slope * 0.28);
+  terrain += vec3(0.8, 0.98, 0.9) * dust * 0.18;
+  color += terrain * (0.72 - clamp(density * 0.08, 0.0, 0.42));
   color = acesFilm(color);
   color = gradeSaturation(color, uSaturation);
   color = pow(max(color, vec3(0.0)), vec3(0.92));
@@ -950,6 +1000,7 @@ class WebglAquariumRenderer implements AquariumRenderer {
       state.vy = state.vy * damping + (target.y - state.y) * follow;
       state.x = clamp(state.x + state.vx, 42, this.simWidth - 42);
       state.y = clamp(state.y + state.vy, 50, this.simHeight - 50);
+      state.z = this.agentGravityHeight(agent, state.x, state.y);
       this.motion.set(agent.id, state);
       if (agent.id === "coordinator") {
         selfAnchor = state;
@@ -977,6 +1028,7 @@ class WebglAquariumRenderer implements AquariumRenderer {
         id: agent.id,
         xPercent: (agent.x / Math.max(this.simWidth, 1)) * 100,
         yPercent: (agent.y / Math.max(this.simHeight, 1)) * 100,
+        z: agent.z ?? 0,
         tilt: clamp(Math.atan2(agent.vy, agent.vx || 0.001) * 8, -10, 10),
         glowPulse: agent.chirps.glowPulse,
         expression: agent.chirps.expression,
@@ -1016,18 +1068,46 @@ class WebglAquariumRenderer implements AquariumRenderer {
   }
 
   private pointerPull(agent: AquariumAgentFrame, x: number, y: number) {
-    const dx = this.pointer.x - x;
-    const dy = this.pointer.y - y;
-    const dist = Math.hypot(dx, dy);
-    const closeRadius = 148;
-    const farRadius = 620;
-    if (dist < 1 || dist > farRadius) return { x: 0, y: 0 };
-    const close = 1 - clamp(dist / closeRadius, 0, 1);
-    const far = dist > closeRadius ? 1 - clamp((dist - closeRadius) / (farRadius - closeRadius), 0, 1) : 0;
-    const closeForce = close * close * (84 + agent.activity * 126);
-    const farForce = far * far * (agent.id === "verification" ? -2.8 : 3.2 + agent.activity * 4.8);
-    const force = closeForce + farForce;
-    return { x: (dx / dist) * force, y: (dy / dist) * force };
+    const far = aetheriaGravityForce(
+      { x, y },
+      { x: this.pointer.x, y: this.pointer.y },
+      Math.min(620, Math.max(this.simWidth, this.simHeight) * 0.52),
+      agent.id === "verification" ? 0.034 : -0.04 - agent.activity * 0.028,
+      2.7,
+      8,
+      this.simWidth,
+      this.simHeight,
+    );
+    const close = aetheriaGravityForce(
+      { x, y },
+      { x: this.pointer.x, y: this.pointer.y },
+      158,
+      -1.72 - agent.activity * 0.9,
+      3.35,
+      5,
+      this.simWidth,
+      this.simHeight,
+    );
+    return {
+      x: far.x * 78 + close.x * (112 + agent.activity * 96),
+      y: far.y * 78 + close.y * (112 + agent.activity * 96),
+    };
+  }
+
+  private agentGravityHeight(agent: AquariumAgentFrame, x: number, y: number) {
+    const orbitScale = Math.min(this.simWidth, this.simHeight) * (this.simWidth < 540 ? 0.3 : 0.32);
+    const personality = personalityFor(agent.id);
+    const radius = Math.max(64, orbitScale * (0.34 + personality.radius * 0.18));
+    const height = aetheriaGravityHeight(
+      { x, y },
+      this.basePoint(agent),
+      radius,
+      -0.18 - agent.activity * 0.26,
+      2.4 + personality.expressiveness * 1.7,
+      this.simWidth,
+      this.simHeight,
+    );
+    return clamp(-height, 0, 0.62);
   }
 
   private nearestAgent(projected: ProjectedAgent[]) {
@@ -1355,9 +1435,14 @@ class WebglAquariumRenderer implements AquariumRenderer {
     this.bindTexture(0, this.dye.read.texture);
     gl.uniform1i(gl.getUniformLocation(this.programs.display, "uDye"), 0);
     gl.uniform2f(gl.getUniformLocation(this.programs.display, "uTexelSize"), 1 / this.simWidth, 1 / this.simHeight);
+    gl.uniform4fv(gl.getUniformLocation(this.programs.display, "uAgents"), this.agentsUniform);
+    gl.uniform1fv(gl.getUniformLocation(this.programs.display, "uActivity"), this.activity);
+    gl.uniform1i(gl.getUniformLocation(this.programs.display, "uCount"), Math.min(maxFluidAgents, this.frame.agents.length));
+    gl.uniform1f(gl.getUniformLocation(this.programs.display, "uAspect"), this.simWidth / Math.max(this.simHeight, 1));
     gl.uniform1f(gl.getUniformLocation(this.programs.display, "uExposure"), this.fluidParams.acesExposure);
     gl.uniform1f(gl.getUniformLocation(this.programs.display, "uGlow"), this.fluidParams.acesGlow);
     gl.uniform1f(gl.getUniformLocation(this.programs.display, "uSaturation"), this.fluidParams.acesSaturation);
+    gl.uniform1f(gl.getUniformLocation(this.programs.display, "uTime"), this.time);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
@@ -2721,6 +2806,7 @@ class CanvasAquariumRenderer implements AquariumRenderer {
         id: agent.id,
         xPercent: (x / Math.max(this.canvas.width, 1)) * 100,
         yPercent: (y / Math.max(this.canvas.height, 1)) * 100,
+        z: 0.18 + agent.activity * 0.18,
         tilt: 0,
         glowPulse: 0.5 + agent.activity * 0.4,
         expression: agent.activity,
@@ -3015,6 +3101,50 @@ function smoothstep(edge0: number, edge1: number, value: number) {
 
 function hoverInfluence(x: number, y: number, pointerX: number, pointerY: number, radius: number) {
   return 1 - clamp(distance(x, y, pointerX, pointerY) / Math.max(radius, 1), 0, 1);
+}
+
+function aetheriaPowerPulse(x: number, exponent: number) {
+  const clamped = clamp(Math.abs(x), 0, 1);
+  return Math.pow(Math.max((clamped + 1) * (1 - clamped), 0), exponent);
+}
+
+function aetheriaGravityHeight(
+  position: { x: number; y: number },
+  source: { x: number; y: number },
+  radius: number,
+  depth: number,
+  exponent: number,
+  width: number,
+  height: number,
+) {
+  const aspect = width / Math.max(height, 1);
+  const dx = ((position.x - source.x) / Math.max(radius, 1)) * aspect;
+  const dy = (position.y - source.y) / Math.max(radius, 1);
+  return aetheriaPowerPulse(Math.hypot(dx, dy), exponent) * depth;
+}
+
+function aetheriaGravityForce(
+  position: { x: number; y: number },
+  source: { x: number; y: number },
+  radius: number,
+  depth: number,
+  exponent: number,
+  gradientStep: number,
+  width: number,
+  height: number,
+) {
+  const hL = aetheriaGravityHeight({ x: position.x - gradientStep, y: position.y }, source, radius, depth, exponent, width, height);
+  const hR = aetheriaGravityHeight({ x: position.x + gradientStep, y: position.y }, source, radius, depth, exponent, width, height);
+  const hD = aetheriaGravityHeight({ x: position.x, y: position.y - gradientStep }, source, radius, depth, exponent, width, height);
+  const hU = aetheriaGravityHeight({ x: position.x, y: position.y + gradientStep }, source, radius, depth, exponent, width, height);
+  const nx = hL - hR;
+  const ny = hD - hU;
+  const nz = gradientStep * 2;
+  const normalLength = Math.max(Math.hypot(nx, ny, nz), 0.000001);
+  const fx = nx / normalLength;
+  const fy = ny / normalLength;
+  const magnitude = fx * fx + fy * fy;
+  return { x: fx * magnitude, y: fy * magnitude };
 }
 
 function drawDistortedAgentPath(
