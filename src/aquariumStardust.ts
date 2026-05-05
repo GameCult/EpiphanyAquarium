@@ -8,16 +8,7 @@ type GpuApi = {
   requestAdapter: () => Promise<any>;
 };
 
-type StardustParticle = {
-  color: [number, number, number, number];
-  life: number;
-  position: [number, number];
-  seed: number;
-  size: number;
-  velocity: [number, number];
-};
-
-const particleCount = 2048;
+const particleCount = new URLSearchParams(globalThis.location?.search ?? "").has("smoke") ? 16_384 : 1_000_000;
 const particleStrideFloats = 12;
 const maxStardustAgents = 8;
 
@@ -113,8 +104,8 @@ fn updateParticles(@builtin(global_invocation_id) id: vec3u) {
   particle.life = lifetime;
   particle.seed = seed;
   let speed = clamp(length(particle.velocity) / 80.0, 0.0, 1.0);
-  particle.color = vec4f(0.50 + speed * 0.34, 0.86 + speed * 0.08, 0.74 + speed * 0.22, uniforms.alpha * (0.035 + speed * 0.12));
-  particle.size = mix(0.45, 1.35, hash(seed * 19.0)) * (0.72 + speed * 0.48) * (1.0 - abs(lifetime - 0.5) * 0.9);
+  particle.color = vec4f(0.62 + speed * 0.62, 0.92 + speed * 0.32, 0.78 + speed * 0.58, uniforms.alpha * (0.006 + speed * 0.024));
+  particle.size = mix(0.18, 0.56, hash(seed * 19.0)) * (0.62 + speed * 0.28) * (1.0 - abs(lifetime - 0.5) * 0.82);
   particles[index] = particle;
 }
 `;
@@ -172,8 +163,48 @@ fn vertexMain(@builtin(vertex_index) vertexIndex: u32, @builtin(instance_index) 
 
 @fragment
 fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
-  let falloff = exp(-dot(input.local, input.local) * 1.85);
-  return vec4f(input.color.rgb * falloff, input.color.a * falloff);
+  let falloff = exp(-dot(input.local, input.local) * 3.6);
+  return vec4f(input.color.rgb * falloff * 1.8, input.color.a * falloff);
+}
+`;
+
+const stardustPostShader = /* wgsl */ `
+@group(0) @binding(0) var hdrSampler: sampler;
+@group(0) @binding(1) var hdrTexture: texture_2d<f32>;
+
+struct VertexOut {
+  @builtin(position) position: vec4f,
+  @location(0) uv: vec2f,
+};
+
+@vertex
+fn vertexMain(@builtin(vertex_index) vertexIndex: u32) -> VertexOut {
+  let positions = array<vec2f, 3>(
+    vec2f(-1.0, -1.0),
+    vec2f(3.0, -1.0),
+    vec2f(-1.0, 3.0)
+  );
+  let position = positions[vertexIndex];
+  var out: VertexOut;
+  out.position = vec4f(position, 0.0, 1.0);
+  out.uv = position * vec2f(0.5, -0.5) + vec2f(0.5);
+  return out;
+}
+
+fn aces(color: vec3f) -> vec3f {
+  let a = 2.51;
+  let b = 0.03;
+  let c = 2.43;
+  let d = 0.59;
+  let e = 0.14;
+  return clamp((color * (a * color + b)) / (color * (c * color + d) + e), vec3f(0.0), vec3f(1.0));
+}
+
+@fragment
+fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
+  let hdr = textureSample(hdrTexture, hdrSampler, input.uv);
+  let mapped = aces(hdr.rgb);
+  return vec4f(mapped, clamp(hdr.a, 0.0, 0.48));
 }
 `;
 
@@ -201,11 +232,18 @@ class WebGpuStardustOverlay implements AquariumStardustOverlay {
   private computePipeline: any;
   private disposed = false;
   private format: any;
+  private hdrSize = { height: 0, width: 0 };
+  private hdrTexture: any = null;
+  private hdrView: any = null;
   private lastMillis = performance.now();
+  private lastRenderMillis = 0;
   private particleBuffer: any;
+  private postBindGroup: any = null;
+  private postPipeline: any;
   private previousAgents = new Map<string, { x: number; y: number; time: number }>();
   private raf = 0;
   private renderPipeline: any;
+  private sampler: any;
   private uniforms = new Float32Array(8);
   private uniformBuffer: any;
 
@@ -220,10 +258,11 @@ class WebGpuStardustOverlay implements AquariumStardustOverlay {
 
     const computeModule = device.createShaderModule({ label: "Aetheria stardust compute", code: stardustComputeShader });
     const renderModule = device.createShaderModule({ label: "Aetheria stardust render", code: stardustRenderShader });
+    const postModule = device.createShaderModule({ label: "Aetheria stardust ACES post", code: stardustPostShader });
     this.particleBuffer = device.createBuffer({
       label: "stardust particles",
       size: particleCount * particleStrideFloats * 4,
-      usage: gpuBufferUsage.STORAGE | gpuBufferUsage.COPY_DST,
+      usage: gpuBufferUsage.STORAGE,
     });
     this.agentsBuffer = device.createBuffer({
       label: "stardust agents",
@@ -235,23 +274,38 @@ class WebGpuStardustOverlay implements AquariumStardustOverlay {
       size: this.uniforms.byteLength,
       usage: gpuBufferUsage.UNIFORM | gpuBufferUsage.COPY_DST,
     });
-    device.queue.writeBuffer(this.particleBuffer, 0, seedParticles());
-
     this.computePipeline = device.createComputePipeline({
       label: "stardust flow update",
       layout: "auto",
       compute: { module: computeModule, entryPoint: "updateParticles" },
     });
     this.renderPipeline = device.createRenderPipeline({
-      label: "stardust draw",
+      label: "stardust hdr draw",
       layout: "auto",
       vertex: { module: renderModule, entryPoint: "vertexMain" },
       fragment: {
         module: renderModule,
         entryPoint: "fragmentMain",
-        targets: [{ format: this.format, blend: additiveBlend() }],
+        targets: [{ format: "rgba16float", blend: additiveBlend() }],
       },
       primitive: { topology: "triangle-list" },
+    });
+    this.postPipeline = device.createRenderPipeline({
+      label: "stardust ACES tonemap",
+      layout: "auto",
+      vertex: { module: postModule, entryPoint: "vertexMain" },
+      fragment: {
+        module: postModule,
+        entryPoint: "fragmentMain",
+        targets: [{ format: this.format, blend: alphaBlend() }],
+      },
+      primitive: { topology: "triangle-list" },
+    });
+    this.sampler = device.createSampler({
+      addressModeU: "clamp-to-edge",
+      addressModeV: "clamp-to-edge",
+      magFilter: "linear",
+      minFilter: "linear",
     });
     this.bindGroup = device.createBindGroup({
       label: "stardust bindings",
@@ -279,6 +333,7 @@ class WebGpuStardustOverlay implements AquariumStardustOverlay {
     cancelAnimationFrame(this.raf);
     this.particleBuffer?.destroy?.();
     this.agentsBuffer?.destroy?.();
+    this.hdrTexture?.destroy?.();
     this.uniformBuffer?.destroy?.();
   }
 
@@ -306,6 +361,11 @@ class WebGpuStardustOverlay implements AquariumStardustOverlay {
 
   private render = (millis: number) => {
     if (this.disposed) return;
+    if (millis - this.lastRenderMillis < 33) {
+      this.raf = requestAnimationFrame(this.render);
+      return;
+    }
+    this.lastRenderMillis = millis;
     const rect = this.canvas.getBoundingClientRect();
     const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     const width = Math.max(1, Math.floor(rect.width * dpr));
@@ -314,6 +374,7 @@ class WebGpuStardustOverlay implements AquariumStardustOverlay {
       this.canvas.width = width;
       this.canvas.height = height;
     }
+    this.ensureHdrTarget(width, height);
     const dt = (millis - this.lastMillis) / 1000;
     this.lastMillis = millis;
     this.uniforms[0] = millis / 1000;
@@ -324,6 +385,7 @@ class WebGpuStardustOverlay implements AquariumStardustOverlay {
     this.uniforms[6] = 1;
     this.uniforms[7] = 0.18;
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniforms);
+    this.canvas.dataset.stardustParticles = String(particleCount);
 
     const encoder = this.device.createCommandEncoder({ label: "stardust frame" });
     const computePass = encoder.beginComputePass();
@@ -332,8 +394,23 @@ class WebGpuStardustOverlay implements AquariumStardustOverlay {
     computePass.dispatchWorkgroups(Math.ceil(particleCount / 128));
     computePass.end();
 
+    const hdrPass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          loadOp: "clear",
+          storeOp: "store",
+          view: this.hdrView,
+        },
+      ],
+    });
+    hdrPass.setPipeline(this.renderPipeline);
+    hdrPass.setBindGroup(0, this.bindGroup);
+    hdrPass.draw(6, particleCount);
+    hdrPass.end();
+
     const view = this.context.getCurrentTexture().createView();
-    const renderPass = encoder.beginRenderPass({
+    const postPass = encoder.beginRenderPass({
       colorAttachments: [
         {
           clearValue: { r: 0, g: 0, b: 0, a: 0 },
@@ -343,35 +420,35 @@ class WebGpuStardustOverlay implements AquariumStardustOverlay {
         },
       ],
     });
-    renderPass.setPipeline(this.renderPipeline);
-    renderPass.setBindGroup(0, this.bindGroup);
-    renderPass.draw(6, particleCount);
-    renderPass.end();
+    postPass.setPipeline(this.postPipeline);
+    postPass.setBindGroup(0, this.postBindGroup);
+    postPass.draw(3);
+    postPass.end();
 
     this.device.queue.submit([encoder.finish()]);
     this.raf = requestAnimationFrame(this.render);
   };
-}
 
-function seedParticles() {
-  const data = new Float32Array(particleCount * particleStrideFloats);
-  for (let index = 0; index < particleCount; index += 1) {
-    const offset = index * particleStrideFloats;
-    const seed = hashNumber(index + 1);
-    data[offset] = hashNumber(index * 17 + 3) * 1600;
-    data[offset + 1] = hashNumber(index * 31 + 5) * 1000;
-    data[offset + 2] = (hashNumber(index * 11 + 7) - 0.5) * 8;
-    data[offset + 3] = (hashNumber(index * 13 + 9) - 0.5) * 8;
-    data[offset + 4] = 0.55;
-    data[offset + 5] = 0.92;
-    data[offset + 6] = 0.78;
-    data[offset + 7] = 0.18;
-    data[offset + 8] = hashNumber(index * 23 + 11);
-    data[offset + 9] = 0.8 + hashNumber(index * 29 + 13) * 1.8;
-    data[offset + 10] = seed;
-    data[offset + 11] = 0;
+  private ensureHdrTarget(width: number, height: number) {
+    if (this.hdrTexture && this.hdrSize.width === width && this.hdrSize.height === height) return;
+    this.hdrTexture?.destroy?.();
+    this.hdrSize = { width, height };
+    this.hdrTexture = this.device.createTexture({
+      label: "stardust hdr target",
+      size: { width, height },
+      format: "rgba16float",
+      usage: (globalThis as any).GPUTextureUsage.RENDER_ATTACHMENT | (globalThis as any).GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.hdrView = this.hdrTexture.createView();
+    this.postBindGroup = this.device.createBindGroup({
+      label: "stardust post bindings",
+      layout: this.postPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: this.sampler },
+        { binding: 1, resource: this.hdrView },
+      ],
+    });
   }
-  return data;
 }
 
 function additiveBlend() {
@@ -389,8 +466,19 @@ function additiveBlend() {
   };
 }
 
-function hashNumber(value: number) {
-  return ((Math.sin(value * 12.9898) * 43758.5453) % 1 + 1) % 1;
+function alphaBlend() {
+  return {
+    alpha: {
+      dstFactor: "one-minus-src-alpha",
+      operation: "add",
+      srcFactor: "one",
+    },
+    color: {
+      dstFactor: "one-minus-src-alpha",
+      operation: "add",
+      srcFactor: "src-alpha",
+    },
+  };
 }
 
 function clamp(value: number, min: number, max: number) {

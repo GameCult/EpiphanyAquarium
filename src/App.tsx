@@ -1228,6 +1228,9 @@ export function App() {
                   className={`creatureTreeNode ${path.includes(node.id) ? "active" : ""} ${node.children?.length ? "branch" : "leaf"}`}
                   key={node.id}
                   onClick={() => choose(node)}
+                  onPointerDown={(event) => {
+                    if (event.button === 0) choose(node);
+                  }}
                   data-interface-sound={node.children?.length ? "organ-branch" : "organ-leaf"}
                   style={
                     {

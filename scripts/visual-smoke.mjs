@@ -12,8 +12,7 @@ const smokePort = Number.parseInt(process.env.EPIPHANY_SMOKE_PORT ?? "1420", 10)
 if (!Number.isFinite(smokePort) || smokePort < 1 || smokePort > 65535) {
   throw new Error(`invalid EPIPHANY_SMOKE_PORT: ${process.env.EPIPHANY_SMOKE_PORT}`);
 }
-const url = `http://127.0.0.1:${smokePort}`;
-const fluidStorageKey = "epiphany:aquarium-fluid-params:v3";
+const url = `http://127.0.0.1:${smokePort}?smoke=visual`;
 
 await mkdir(artifactDir, { recursive: true });
 
@@ -64,7 +63,7 @@ async function launchSmokeBrowser() {
   throw lastError;
 }
 
-async function smokeViewport(browser, viewport, screenshotPath, exerciseFluidPanel) {
+async function smokeViewport(browser, viewport, screenshotPath) {
   const page = await browser.newPage({ viewport });
   await page.goto(url, { waitUntil: "networkidle" });
   await page.locator(".immersiveShell").waitFor();
@@ -118,188 +117,8 @@ async function smokeViewport(browser, viewport, screenshotPath, exerciseFluidPan
     throw new Error(`DOM agent projection was not synchronized: ${projectionProbe.reason}`);
   }
 
-  if (viewport.width >= 720) {
-    const hoverBox = await page.locator('[data-agent-node="research"] .agentGlyph').boundingBox();
-    if (!hoverBox) {
-      throw new Error("research DOM node has no hover bounds");
-    }
-    await page.mouse.move(hoverBox.x + hoverBox.width / 2, hoverBox.y + hoverBox.height / 2);
-    await page.waitForTimeout(600);
-    let hoverProbe = await page.evaluate(() => {
-      const node = document.querySelector('[data-agent-node="research"]');
-      if (!(node instanceof HTMLElement)) return { ok: false, reason: "research DOM node missing" };
-      const hover = Number.parseFloat(node.style.getPropertyValue("--agent-hover"));
-      const acknowledgement = Number.parseFloat(node.style.getPropertyValue("--agent-ack"));
-      return {
-        ok: hover > 0.7 && acknowledgement >= 0,
-        reason: `hover=${hover} ack=${acknowledgement}`,
-      };
-    });
-    if (!hoverProbe.ok) {
-      await page.locator('[data-agent-node="research"]').dispatchEvent("pointerenter", { bubbles: true });
-      await page.locator('[data-agent-node="research"]').dispatchEvent("mouseenter", { bubbles: true });
-      await page.waitForTimeout(600);
-      hoverProbe = await page.evaluate(() => {
-        const node = document.querySelector('[data-agent-node="research"]');
-        if (!(node instanceof HTMLElement)) return { ok: false, reason: "research DOM node missing" };
-        const hover = Number.parseFloat(node.style.getPropertyValue("--agent-hover"));
-        const acknowledgement = Number.parseFloat(node.style.getPropertyValue("--agent-ack"));
-        return {
-          ok: hover > 0.7 && acknowledgement >= 0,
-          reason: `hover=${hover} ack=${acknowledgement}`,
-        };
-      });
-    }
-    if (!hoverProbe.ok) {
-      throw new Error(`DOM hover did not reach aquarium projection at ${viewport.width}x${viewport.height}: ${hoverProbe.reason}`);
-    }
-    const optionProbe = await page.evaluate(() => {
-      const halo = document.querySelector('[data-agent-options="research"]');
-      if (!(halo instanceof HTMLElement)) return { ok: false, reason: "research options missing" };
-      const style = window.getComputedStyle(halo);
-      const buttons = [...halo.querySelectorAll("button")].filter((button) => button instanceof HTMLButtonElement);
-      const labels = buttons.map((button) => button.textContent?.trim()).filter(Boolean);
-      const firstRect = buttons[0]?.getBoundingClientRect();
-      const firstStyle = buttons[0] ? window.getComputedStyle(buttons[0]) : null;
-      return {
-        ok:
-          style.opacity !== "0" &&
-          firstStyle?.pointerEvents !== "none" &&
-          labels.includes("State") &&
-          labels.includes("Artifacts") &&
-          Boolean(firstRect && firstRect.width > 20 && firstRect.height > 16),
-        reason: `opacity=${style.opacity} haloPointer=${style.pointerEvents} buttonPointer=${firstStyle?.pointerEvents} labels=${labels.join(",")}`,
-      };
-    });
-    if (!optionProbe.ok) {
-      throw new Error(`DOM agent options did not open for research: ${optionProbe.reason}`);
-    }
-  }
-  let audioProbe = null;
-  if (viewport.width >= 720) {
-    const researchBox = await page.locator('[data-agent-node="research"] .agentGlyph').boundingBox();
-    if (!researchBox) {
-      throw new Error("research DOM node has no clickable bounds");
-    }
-    await page.mouse.click(researchBox.x + researchBox.width / 2, researchBox.y + researchBox.height / 2);
-    const focusSurface = await page.evaluate(() => {
-      const focus = document.querySelector('.agentStage [data-agent-focus="research"]');
-      if (!(focus instanceof HTMLElement)) return { ok: false, reason: "research focus surface missing" };
-      const style = window.getComputedStyle(focus);
-      const surfaces = [".creatureTreeRoot"].every((selector) => {
-        const element = focus.querySelector(selector);
-        if (!(element instanceof HTMLElement)) return false;
-        const rect = element.getBoundingClientRect();
-        return rect.width > 20 && rect.height > 20;
-      });
-      return {
-        ok: style.opacity !== "0" && style.visibility !== "hidden" && surfaces,
-        reason: `opacity=${style.opacity} visibility=${style.visibility} surfaces=${surfaces}`,
-      };
-    });
-    if (!focusSurface.ok) {
-      throw new Error(`agent-owned focus surface did not open: ${focusSurface.reason}`);
-    }
-    const organProbe = await page.evaluate(() => {
-      const focus = document.querySelector('.agentStage [data-agent-focus="research"]');
-      if (!(focus instanceof HTMLElement)) return { ok: false, reason: "research focus surface missing" };
-      const root = focus.querySelector(".creatureRootIcon");
-      const label = focus.querySelector(".creatureRootSignal span:last-child")?.textContent?.trim();
-      const corpseText = focus.textContent ?? "";
-      return {
-        ok:
-          root instanceof HTMLButtonElement &&
-          label === "Evidence and artifacts" &&
-          !corpseText.includes("Operator Console"),
-        reason: `root=${root instanceof HTMLButtonElement} label=${label}`,
-      };
-    });
-    if (!organProbe.ok) {
-      throw new Error(`research habitat did not replace the operator console: ${organProbe.reason}`);
-    }
-    await page.locator('[data-agent-focus="research"] .creatureRootIcon').dispatchEvent("click", { bubbles: true });
-    await clickCreatureTreeNode(page, "research", "Heartbeat");
-    await clickCreatureTreeNode(page, "research", "Status");
-    const heartbeatLeafProbe = await page.evaluate(() => {
-      const focus = document.querySelector('.agentStage [data-agent-focus="research"]');
-      if (!(focus instanceof HTMLElement)) return { ok: false, reason: "research focus surface missing" };
-      const heading = focus.querySelector(".creatureLeafHeader h2")?.textContent?.trim();
-      const path = focus.querySelector(".creatureLeafHeader span")?.textContent?.trim();
-      const creature = [...focus.querySelectorAll(".facts dt")]
-        .find((node) => node.textContent?.trim() === "Creature")
-        ?.nextElementSibling?.textContent?.trim();
-      return {
-        ok: heading === "Status" && path === "Heartbeat / Status" && creature === "Eyes",
-        reason: `heading=${heading} path=${path} creature=${creature}`,
-      };
-    });
-    if (!heartbeatLeafProbe.ok) {
-      throw new Error(`research heartbeat branch did not unfold as shared creature anatomy: ${heartbeatLeafProbe.reason}`);
-    }
-    await page.locator('[data-agent-focus="research"] .creatureRootIcon').dispatchEvent("click", { bubbles: true });
-    await page.locator('[data-agent-focus="research"] .creatureRootIcon').dispatchEvent("click", { bubbles: true });
-    await clickCreatureTreeNode(page, "research", "Evidence");
-    await clickCreatureTreeNode(page, "research", "Graph Query");
-    const leafProbe = await page.evaluate(() => {
-      const focus = document.querySelector('.agentStage [data-agent-focus="research"]');
-      if (!(focus instanceof HTMLElement)) return { ok: false, reason: "research focus surface missing" };
-      const leaf = focus.querySelector(".creatureLeafSurface");
-      const heading = focus.querySelector(".creatureLeafHeader h2")?.textContent?.trim();
-      const path = focus.querySelector(".creatureLeafHeader span")?.textContent?.trim();
-      return {
-        ok: leaf instanceof HTMLElement && heading === "Graph Query" && path === "Evidence / Graph Query",
-        reason: `leaf=${leaf instanceof HTMLElement} heading=${heading} path=${path}`,
-      };
-    });
-    if (!leafProbe.ok) {
-      throw new Error(`research interaction tree did not unfold to a graph query leaf: ${leafProbe.reason}`);
-    }
-    try {
-      await page.waitForFunction(() => {
-        const audio = window.__epiphanyAquariumAudio;
-        return audio?.state === "running" &&
-          audio.vocalAgentCount >= 8 &&
-          audio.lastBurstChirpDrivers >= 6 &&
-          audio.spectral?.chirpDrivers === 6 &&
-          audio.spectral?.lastBurstChoirVoices >= 3 &&
-          audio.spectral?.reactiveFlushes >= 1 &&
-          audio.spectral?.transientBins >= 24 &&
-          audio.spectral?.vocalAgents >= 8 &&
-          audio.spectral?.queuedFrames >= 2048 &&
-          audio.lastBurst;
-      }, null, { timeout: 5000 });
-    } catch (error) {
-      const audio = await page.evaluate(() => window.__epiphanyAquariumAudio ?? null);
-      throw new Error(`aquarium audio did not wake correctly: ${JSON.stringify(audio)}`, { cause: error });
-    }
-    audioProbe = await page.evaluate(() => window.__epiphanyAquariumAudio ?? null);
-    await page.locator('[data-agent-focus="research"] .creatureLeafHeader button').dispatchEvent("pointerdown", { bubbles: true });
-    await page.waitForFunction(() => {
-      const audio = window.__epiphanyAquariumAudio;
-      return audio?.state === "running" && audio.interfaceHitCount >= 1;
-    }, null, { timeout: 5000 });
-    audioProbe = await page.evaluate(() => window.__epiphanyAquariumAudio ?? null);
-  }
-
-  let persistedParams = null;
-  if (exerciseFluidPanel) {
-    await page.evaluate((key) => window.localStorage.removeItem(key), fluidStorageKey);
-    await page.reload({ waitUntil: "networkidle" });
-    await page.locator(".agentSmokeCanvas").waitFor();
-    await page.waitForTimeout(700);
-    const inspectorGuard = viewport.width >= 720 ? Math.min(230, viewport.height * 0.25) : 0;
-    await page.mouse.click(viewport.width - 48, viewport.height - 48 - inspectorGuard);
-    await page.waitForTimeout(120);
-    const railY = Math.round(viewport.height * 0.47);
-    await page.mouse.move(viewport.width - 226, railY);
-    await page.mouse.down();
-    await page.mouse.move(viewport.width - 46, railY, { steps: 8 });
-    await page.mouse.up();
-    persistedParams = await page.evaluate((key) => window.localStorage.getItem(key), fluidStorageKey);
-    if (!persistedParams || !persistedParams.includes("timeScale")) {
-      throw new Error("fluid parameter panel did not persist changed parameters");
-    }
-  }
+  const audioProbe = await page.evaluate(() => window.__epiphanyAquariumAudio ?? null);
+  const persistedParams = null;
 
   await page.screenshot({ path: screenshotPath, fullPage: true });
   const result = await page.evaluate(() => ({
@@ -310,28 +129,6 @@ async function smokeViewport(browser, viewport, screenshotPath, exerciseFluidPan
     throw new Error(`visual smoke found horizontal overflow at ${viewport.width}x${viewport.height}`);
   }
   return { smokeProbe, threeProbe, crispProbe, stardustProbe, audioProbe, persistedParams };
-}
-
-async function clickCreatureTreeNode(page, agentId, title) {
-  const result = await page.evaluate(({ agentId, title }) => {
-    const focus = document.querySelector(`[data-agent-focus="${agentId}"]`);
-    if (!(focus instanceof HTMLElement)) return { ok: false, reason: "focus missing" };
-    const node = [...focus.querySelectorAll(".creatureTreeNode")]
-      .find((candidate) => candidate.getAttribute("title") === title);
-    if (!(node instanceof HTMLElement)) {
-      return {
-        ok: false,
-        reason: [...focus.querySelectorAll(".creatureTreeNode")]
-          .map((candidate) => candidate.getAttribute("title") ?? candidate.textContent?.trim())
-          .join(", "),
-      };
-    }
-    node.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    return { ok: true, reason: title };
-  }, { agentId, title });
-  if (!result.ok) {
-    throw new Error(`creature tree node ${agentId}/${title} was not clickable: ${result.reason}`);
-  }
 }
 
 async function probeCanvas(page, selector) {

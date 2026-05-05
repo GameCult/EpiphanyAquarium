@@ -1551,7 +1551,7 @@ body:has(.immersiveShell) {
   appearance: none;
   position: absolute;
   display: block;
-  pointer-events: auto;
+  pointer-events: none;
   min-width: 74px;
   height: 29px;
   border: 1px solid color-mix(in srgb, var(--agent-glow) 58%, rgba(255, 255, 255, 0.36));
@@ -1590,9 +1590,15 @@ body:has(.immersiveShell) {
   transform: translate(-50%, -50%) scale(1.04);
 }
 
+.agentStage .agentOptionHalo.open .agentOptionButton:not(:disabled),
+.agentStage .agentOptionHalo[data-agent-hot] .agentOptionButton:not(:disabled) {
+  pointer-events: auto;
+}
+
 .agentOptionButton:disabled {
   cursor: default;
   opacity: 0.38;
+  pointer-events: none;
 }
 
 .constellationInspector {

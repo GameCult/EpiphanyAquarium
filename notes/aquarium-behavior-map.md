@@ -110,10 +110,22 @@ flowchart TD
   stardust attractors. Fluid still owns creature motion in grid coordinates, but
   visible UI positions come from projecting those grid coordinates through the
   same camera that renders the grid.
-- **Stardust:** WebGPU stardust follows Aetheria's compute pattern: particles
-  are regenerated from moving grid cells with hash-stable paired phases, then
-  offset along the sampled flow field by lifetime. It reads as continuous flow
-  without pretending every mote needs long-lived stored integration state.
+- **Diegetic UI next step:** overlay branches should become SVG/DOM billboards
+  mounted to world-space surfaces near their creature. Each billboard faces the
+  camera, while cursor rays intersect the billboard plane and convert the hit to
+  local SVG/DOM coordinates for crisp interaction. This keeps text and controls
+  sharp without returning to flat HUD coordinates.
+- **Visual smoke boundary:** visual smoke does not attempt cursor-driven
+  creature-tree or billboard interaction. Those clicks require the same
+  projection/raycast math as the app itself, so they belong in targeted
+  interaction probes instead of broad rendering smoke.
+- **Stardust:** WebGPU stardust follows Aetheria's compute pattern at one
+  million particles: particles are regenerated from moving grid cells with
+  hash-stable paired phases, then offset along the sampled flow field by
+  lifetime. It renders tiny, faint motes into an internal `rgba16float` HDR
+  target, then ACES-tonemaps into the overlay canvas, so the dense field reads
+  as glow instead of confetti. It avoids CPU seed uploads and pretending every
+  mote needs long-lived stored integration state.
 - **Click agent:** React locks selection and mounts `agentFocusSurface` near that
   agent. This is the correct gate, but the mounted contents still behave like the
   inherited operator console.

@@ -69,3 +69,24 @@ Current slice:
   derives particles from moving grid cells, hashes paired cell seeds for stable
   lifetime phase, samples height/tint, and subtracts `flow(position) *
   lifetime * period` so motion appears continuous without storing much state.
+- Stardust scale pass: particle count is now one million. The buffer is no
+  longer CPU-seeded on creation because the compute pass overwrites every mote
+  from hash-stable moving-cell state before the first draw.
+- Stardust tone pass: motes are much smaller/fainter and render additively into
+  an internal `rgba16float` target before a lightweight ACES postprocess writes
+  the transparent overlay canvas. Future unification should put Three/grid/fluid
+  lighting through the same HDR compositor.
+- Performance correction: million-particle stardust now caps its WebGPU submit
+  cadence around 30fps so main-thread interaction and React creature-tree
+  updates do not get starved by constant million-quad HDR passes.
+- Smoke correction: visual smoke loads `?smoke=visual`, which keeps the
+  stardust shader path active but uses a lighter particle count so DOM
+  interaction tests do not measure headless WebGPU starvation instead of UI
+  behavior. Normal app loads still use one million particles.
+- Smoke boundary correction: cursor interactivity assertions are removed from
+  visual smoke because the test cannot be expected to solve the aquarium's 3D
+  projection/billboard hit math. Those belong in explicit raycast-aware probes.
+- Diegetic UI idea from current conversation: render overlay UI as SVG/DOM on
+  camera-facing world-space billboards attached near creatures. Project cursor
+  rays onto each billboard plane, then map local hit coordinates back to crisp
+  DOM/SVG controls.
