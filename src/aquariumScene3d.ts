@@ -159,9 +159,36 @@ class ThreeAquariumScene implements AquariumScene3d {
     return projections.map((projection) => {
       const target = gridToWorld(projection.gridXPercent, projection.gridYPercent);
       const height = this.agentHeight(projection);
-      const screen = this.projectWorldToScreen(new THREE.Vector3(target.x, target.y, height));
+      const body = new THREE.Vector3(target.x, target.y, height);
+      const screen = this.projectWorldToScreen(body);
+      const right = this.cameraRight();
+      const up = this.cameraUp();
+      const side = screen.xPercent > 62 ? -1 : screen.xPercent < 38 ? 1 : screen.xPercent > 50 ? -1 : 1;
+      const focus = this.projectWorldToScreen(
+        body.clone()
+          .addScaledVector(right, side * 2.35)
+          .addScaledVector(up, 1.04),
+      );
+      const thought = this.projectWorldToScreen(
+        body.clone()
+          .addScaledVector(right, side * 0.44)
+          .addScaledVector(up, 1.02),
+      );
+      const halo = this.projectWorldToScreen(
+        body.clone()
+          .addScaledVector(up, 0.18),
+      );
       return {
         ...projection,
+        billboardXPercent: halo.xPercent,
+        billboardYPercent: halo.yPercent,
+        billboardScale: halo.scale,
+        focusXPercent: focus.xPercent,
+        focusYPercent: focus.yPercent,
+        focusScale: focus.scale,
+        thoughtXPercent: thought.xPercent,
+        thoughtYPercent: thought.yPercent,
+        thoughtScale: thought.scale,
         xPercent: screen.xPercent,
         yPercent: screen.yPercent,
         screenScale: screen.scale,
@@ -459,6 +486,18 @@ class ThreeAquariumScene implements AquariumScene3d {
       xPercent: (projected.x * 0.5 + 0.5) * 100,
       yPercent: (0.5 - projected.y * 0.5) * 100,
     };
+  }
+
+  private cameraRight() {
+    const direction = new THREE.Vector3();
+    this.camera.getWorldDirection(direction);
+    return new THREE.Vector3().crossVectors(direction, this.camera.up).normalize();
+  }
+
+  private cameraUp() {
+    const direction = new THREE.Vector3();
+    this.camera.getWorldDirection(direction);
+    return new THREE.Vector3().crossVectors(this.cameraRight(), direction).normalize();
   }
 
   private agentHeight(projection: Pick<SceneProjection, "z">) {

@@ -482,8 +482,8 @@ body:has(.immersiveShell) {
 
 .agentFocusSurface {
   position: absolute;
-  left: var(--agent-x);
-  top: var(--agent-y);
+  left: var(--focus-x-world, var(--agent-x));
+  top: var(--focus-y-world, var(--agent-y));
   z-index: 7;
   display: grid;
   grid-template-areas:
@@ -497,39 +497,33 @@ body:has(.immersiveShell) {
   max-height: min(78vh, 820px);
   opacity: 0;
   pointer-events: auto;
-  transform: translate(var(--focus-x, -12%), var(--focus-y, -8%)) scale(0.94);
-  transform-origin: 18% 12%;
+  transform:
+    translate(-50%, -50%)
+    translate(var(--focus-offset-x, 0px), var(--focus-offset-y, 0px))
+    perspective(980px)
+    rotateX(var(--billboard-tilt-x, 3deg))
+    rotateY(var(--billboard-tilt-y, -5deg))
+    scale(calc(var(--focus-scale, 1) * 0.94));
+  transform-origin: 50% 50%;
   transition:
     opacity 170ms ease,
     filter 170ms ease,
     transform 170ms ease;
   filter: drop-shadow(0 0 22px color-mix(in srgb, var(--agent-glow) 32%, transparent));
+  color: var(--agent-glow);
+  isolation: isolate;
 }
 
 .agentFocusSurface.preview,
 .agentFocusSurface.locked {
   opacity: 1;
-  transform: translate(var(--focus-x, -12%), var(--focus-y, -8%)) scale(1);
-}
-
-.agentFocusSurface.anchorLeft {
-  --focus-x: -92%;
-}
-
-.agentFocusSurface.anchorRight {
-  --focus-x: 10%;
-}
-
-.agentFocusSurface.anchorCenter {
-  --focus-x: -48%;
-}
-
-.agentFocusSurface.anchorUp {
-  --focus-y: -86%;
-}
-
-.agentFocusSurface.anchorDown {
-  --focus-y: -10%;
+  transform:
+    translate(-50%, -50%)
+    translate(var(--focus-offset-x, 0px), var(--focus-offset-y, 0px))
+    perspective(980px)
+    rotateX(var(--billboard-tilt-x, 3deg))
+    rotateY(var(--billboard-tilt-y, -5deg))
+    scale(var(--focus-scale, 1));
 }
 
 .agentFocusSurface .immersiveTopbar,
@@ -542,6 +536,26 @@ body:has(.immersiveShell) {
   bottom: auto;
   left: auto;
   z-index: auto;
+}
+
+.billboardSurfaceSvg {
+  position: absolute;
+  inset: -10px;
+  z-index: -1;
+  overflow: visible;
+  pointer-events: none;
+  color: var(--agent-glow);
+  fill: rgba(5, 12, 10, 0.2);
+  stroke: color-mix(in srgb, var(--agent-glow) 42%, rgba(255, 255, 255, 0.36));
+  stroke-width: 0.45;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 18px color-mix(in srgb, var(--agent-glow) 22%, transparent));
+  opacity: 0.76;
+}
+
+.billboardSurfaceSvg rect {
+  fill:
+    color-mix(in srgb, var(--agent-color) 11%, rgba(5, 12, 10, 0.24));
 }
 
 .agentFocusSurface .immersiveTopbar {
@@ -1331,6 +1345,16 @@ body:has(.immersiveShell) {
   top: var(--agent-y);
 }
 
+.thoughtBubble {
+  left: var(--thought-x, var(--agent-x));
+  top: var(--thought-y, var(--agent-y));
+}
+
+.agentOptionHalo {
+  left: var(--billboard-x, var(--agent-x));
+  top: var(--billboard-y, var(--agent-y));
+}
+
 .agentCharacter {
   position: absolute;
   z-index: 4;
@@ -1465,9 +1489,13 @@ body:has(.immersiveShell) {
   opacity: 0;
   pointer-events: none;
   transform:
-    translate(-10%, -142%)
+    translate(-50%, -50%)
+    translate(34px, -42px)
+    perspective(760px)
+    rotateX(var(--billboard-tilt-x, 2deg))
+    rotateY(var(--billboard-tilt-y, -4deg))
     rotate(var(--agent-bubble-tilt, 0deg))
-    scale(calc(var(--agent-scale, 1) * 0.96));
+    scale(calc(var(--thought-scale, var(--agent-scale, 1)) * 0.96));
   animation: thoughtDrift 7600ms ease-in-out infinite;
   transition:
     opacity 160ms ease,
@@ -1479,9 +1507,13 @@ body:has(.immersiveShell) {
   z-index: 4;
   opacity: var(--agent-bubble-opacity, 0.62);
   transform:
-    translate(-10%, -142%)
+    translate(-50%, -50%)
+    translate(34px, -42px)
+    perspective(760px)
+    rotateX(var(--billboard-tilt-x, 2deg))
+    rotateY(var(--billboard-tilt-y, -4deg))
     rotate(var(--agent-bubble-tilt, 0deg))
-    scale(var(--agent-scale, 1));
+    scale(var(--thought-scale, var(--agent-scale, 1)));
 }
 
 .thoughtBubble.selected {
@@ -1533,8 +1565,11 @@ body:has(.immersiveShell) {
   contain: layout style;
   transform:
     translate(-50%, -50%)
+    perspective(720px)
+    rotateX(var(--billboard-tilt-x, 2deg))
+    rotateY(var(--billboard-tilt-y, -3deg))
     rotate(calc(var(--agent-tilt, 0deg) * 0.18))
-    scale(calc(0.92 + var(--agent-hover, 0) * 0.04));
+    scale(calc(var(--billboard-scale, 1) * (0.92 + var(--agent-hover, 0) * 0.04)));
   transition:
     opacity 150ms ease,
     filter 150ms ease,

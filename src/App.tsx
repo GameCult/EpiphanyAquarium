@@ -1752,9 +1752,18 @@ function AgentConstellation({
       const optionHaloNode = optionHaloNodeRefs.current.get(projection.id);
       const focusSurfaceNode = (selectedAgentId ?? hoveredAgentId) === projection.id ? focusSurfaceRef.current : null;
       const visualScale = projection.screenScale ?? 1;
+      const haloScale = projection.billboardScale ?? visualScale;
+      const thoughtScale = projection.thoughtScale ?? visualScale;
+      const focusScale = projection.focusScale ?? visualScale;
       const properties: Array<[string, string]> = [
         ["--agent-x", `${projection.xPercent}%`],
         ["--agent-y", `${projection.yPercent}%`],
+        ["--billboard-x", `${projection.billboardXPercent ?? projection.xPercent}%`],
+        ["--billboard-y", `${projection.billboardYPercent ?? projection.yPercent}%`],
+        ["--thought-x", `${projection.thoughtXPercent ?? projection.xPercent}%`],
+        ["--thought-y", `${projection.thoughtYPercent ?? projection.yPercent}%`],
+        ["--focus-x-world", `${projection.focusXPercent ?? projection.xPercent}%`],
+        ["--focus-y-world", `${projection.focusYPercent ?? projection.yPercent}%`],
         ["--agent-z", `${projection.z}`],
         ["--agent-elevation", `${-10 - projection.z * 36}px`],
         ["--agent-tilt", `${projection.tilt}deg`],
@@ -1766,6 +1775,9 @@ function AgentConstellation({
         ["--agent-hover", String(projection.hover)],
         ["--agent-ack", String(projection.acknowledgement)],
         ["--agent-scale", String(visualScale * (1 + projection.acknowledgement * 0.035 + projection.hover * 0.018 + projection.z * 0.055))],
+        ["--billboard-scale", String(haloScale)],
+        ["--thought-scale", String(thoughtScale)],
+        ["--focus-scale", String(focusScale)],
       ];
       for (const [name, value] of properties) {
         agentNode?.style.setProperty(name, value);
@@ -1953,6 +1965,12 @@ function AgentConstellation({
     }
   }
 
+  function handleBillboardPointerMove(event: React.PointerEvent<HTMLElement>) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    event.currentTarget.style.setProperty("--billboard-cursor-x", `${clampNumber(((event.clientX - rect.left) / Math.max(rect.width, 1)) * 100, 0, 100)}%`);
+    event.currentTarget.style.setProperty("--billboard-cursor-y", `${clampNumber(((event.clientY - rect.top) / Math.max(rect.height, 1)) * 100, 0, 100)}%`);
+  }
+
   function handleInterfacePointerDown(event: React.PointerEvent<HTMLElement>) {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
@@ -2049,21 +2067,31 @@ function AgentConstellation({
         <div className="agentStageVignette" aria-hidden="true" />
         {focusSurface && focusedAgent && (
           <div
-            className={`agentFocusSurface ${selectedAgentId === focusedAgent.id ? "locked" : "preview"} ${
-              focusedAgent.baseX > 62 ? "anchorLeft" : focusedAgent.baseX < 38 ? "anchorRight" : "anchorCenter"
-            } ${focusedAgent.baseY > 58 ? "anchorUp" : "anchorDown"}`}
+            className={`agentFocusSurface ${selectedAgentId === focusedAgent.id ? "locked" : "preview"}`}
             ref={focusSurfaceRef}
             data-agent-focus={focusedAgent.id}
+            data-billboard-surface="focus"
             onPointerDownCapture={handleInterfacePointerDown}
+            onPointerMove={handleBillboardPointerMove}
             style={
               {
-                "--agent-x": `${focusedAgent.baseX}%`,
-                "--agent-y": `${focusedAgent.baseY}%`,
+                "--focus-x-world": `${focusedAgent.baseX}%`,
+                "--focus-y-world": `${focusedAgent.baseY}%`,
                 "--agent-color": focusedAgent.color,
                 "--agent-glow": focusedAgent.glow,
               } as React.CSSProperties
             }
           >
+            <svg className="billboardSurfaceSvg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+              <defs>
+                <radialGradient id={`billboard-cursor-${focusedAgent.id}`} cx="50%" cy="50%" r="64%">
+                  <stop offset="0%" stopColor="currentColor" stopOpacity="0.18" />
+                  <stop offset="100%" stopColor="currentColor" stopOpacity="0" />
+                </radialGradient>
+              </defs>
+              <rect x="1" y="1" width="98" height="98" rx="4" />
+              <path d="M8 18 C28 10 72 10 92 18 M8 82 C32 91 68 91 92 82" />
+            </svg>
             {focusSurface(focusedAgent)}
           </div>
         )}
@@ -2113,10 +2141,11 @@ function AgentConstellation({
             key={`${agent.id}-thought`}
             ref={(node) => bindThoughtNode(agent.id, node)}
             data-agent-thought={agent.id}
+            data-billboard-surface="thought"
             style={
               {
-                "--agent-x": `${agent.baseX}%`,
-                "--agent-y": `${agent.baseY}%`,
+                "--thought-x": `${agent.baseX}%`,
+                "--thought-y": `${agent.baseY}%`,
                 "--agent-color": agent.color,
                 "--agent-glow": agent.glow,
                 "--agent-activity": agent.activity,
@@ -2138,17 +2167,21 @@ function AgentConstellation({
               key={`${agent.id}-options`}
               ref={(node) => bindOptionHaloNode(agent.id, node)}
               data-agent-options={agent.id}
+              data-billboard-surface="options"
               onPointerEnter={(event) => {
                 setHoveredAgentId(agent.id);
                 updatePointerProjection(event.clientX, event.clientY, event.currentTarget.closest(".agentStage"));
                 rendererRef.current?.setHoveredAgent(agent.id);
               }}
               onPointerMove={(event) => updatePointerProjection(event.clientX, event.clientY, event.currentTarget.closest(".agentStage"))}
+              onPointerOver={handleBillboardPointerMove}
               onPointerLeave={handleAgentPointerLeave}
               style={
                 {
                   "--agent-x": `${agent.baseX}%`,
                   "--agent-y": `${agent.baseY}%`,
+                  "--billboard-x": `${agent.baseX}%`,
+                  "--billboard-y": `${agent.baseY}%`,
                   "--agent-color": agent.color,
                   "--agent-glow": agent.glow,
                 } as React.CSSProperties

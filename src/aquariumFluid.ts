@@ -59,6 +59,15 @@ export interface AquariumAgentProjection {
   xPercent: number;
   yPercent: number;
   screenScale?: number;
+  billboardXPercent?: number;
+  billboardYPercent?: number;
+  billboardScale?: number;
+  focusXPercent?: number;
+  focusYPercent?: number;
+  focusScale?: number;
+  thoughtXPercent?: number;
+  thoughtYPercent?: number;
+  thoughtScale?: number;
   z: number;
   tilt: number;
   glowPulse: number;

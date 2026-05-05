@@ -44,7 +44,7 @@ interaction_laws:
   - The aquarium camera is near-omniscient: grid coordinates project through a tilted overhead camera, and cursor input unprojects back to the grid before applying force.
   - Three.js camera controls use an orbital rig: the target is a point on the XY grid, yaw/pitch/distance convert to a Cartesian camera offset, +Z is up, middle drag mutates yaw/pitch, wheel zooms exponentially, right drag pans by projected XY mouse-hit deltas, and WASD pans along the projected view basis.
   - Three camera projection is the placement authority for DOM agents, thought bubbles, option halos, focus surfaces, stardust attractors, and pointer-to-grid input; percent-space projection is fallback only.
-  - Next projection step: UI branches should be SVG/DOM camera-facing billboards attached to world-space surfaces near creatures, with cursor rays projected into billboard-local coordinates for crisp DOM interaction.
+  - UI branches now use SVG/DOM camera-facing billboards attached to world-space creature anchors: Three emits separate focus/thought/option screen anchors and scales, and DOM pointer movement maps into billboard-local coordinates for crisp interaction.
   - Visual smoke verifies render presence and layout health, not cursor-driven 3D interaction; billboard/creature clicks need targeted raycast-aware probes.
   - WebGPU stardust is optional progressive enhancement: real compute updates particles from mirrored flow sources, while WebGL2 remains the compatible surface/ink fallback.
   - Stardust follows Aetheria's hash-stable moving-cell model at one million particles: phase-paired particles are regenerated from cell seeds, then displaced by flow over lifetime, avoiding stored-state drift and CPU seed uploads.

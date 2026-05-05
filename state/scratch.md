@@ -90,3 +90,8 @@ Current slice:
   camera-facing world-space billboards attached near creatures. Project cursor
   rays onto each billboard plane, then map local hit coordinates back to crisp
   DOM/SVG controls.
+- Billboard implementation pass: Three now emits separate projected anchors for
+  creature bodies, option halos, thought bubbles, and focus surfaces. Focus
+  surfaces render with an SVG backplane and DOM controls as a camera-facing slab;
+  pointer movement over a billboard writes local surface coordinates for
+  interaction affordances.

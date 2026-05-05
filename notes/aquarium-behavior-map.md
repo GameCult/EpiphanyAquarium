@@ -110,11 +110,12 @@ flowchart TD
   stardust attractors. Fluid still owns creature motion in grid coordinates, but
   visible UI positions come from projecting those grid coordinates through the
   same camera that renders the grid.
-- **Diegetic UI next step:** overlay branches should become SVG/DOM billboards
-  mounted to world-space surfaces near their creature. Each billboard faces the
-  camera, while cursor rays intersect the billboard plane and convert the hit to
-  local SVG/DOM coordinates for crisp interaction. This keeps text and controls
-  sharp without returning to flat HUD coordinates.
+- **Diegetic UI billboards:** creature focus surfaces, thought bubbles, and
+  option halos receive separate camera-projected billboard anchors from the
+  Three scene rather than reusing the creature body point. The focus surface has
+  an SVG backplane and DOM controls mounted as a camera-facing slab; pointer
+  movement over a billboard is tracked in local surface coordinates for crisp
+  DOM behavior while the surface itself stays attached to the aquarium world.
 - **Visual smoke boundary:** visual smoke does not attempt cursor-driven
   creature-tree or billboard interaction. Those clicks require the same
   projection/raycast math as the app itself, so they belong in targeted
