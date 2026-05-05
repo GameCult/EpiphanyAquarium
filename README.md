@@ -40,6 +40,12 @@ npm run smoke:visual
 ```
 
 Smoke artifacts land under `.epiphany-aquarium/`.
+If `1420` is already occupied, run smoke on another port:
+
+```powershell
+$env:EPIPHANY_SMOKE_PORT = "1422"
+npm run smoke:visual
+```
 
 The smoke checks that:
 

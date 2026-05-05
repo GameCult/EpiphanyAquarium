@@ -1,2 +1,2 @@
 {"type":"seed","status":"ok","note":"Epiphany Aquarium split from EpiphanyAgent so the UI can evolve under its own pseudo-Epiphany state, memory, and taste doctrine. Backend harness scripts still live in EpiphanyAgent; the aquarium repo owns interaction, WebGL, audio, and visual smoke."}
-
+{"date":"2026-05-05","lesson":"The aquarium behavior contract is now mapped in notes/aquarium-behavior-map.md: snapshot bridge -> React projection -> DOM agents -> renderer/fluid/audio -> Tauri actions. The main design debt is preserving the old operator console as one gated panel instead of splitting it into agent-owned organs.","applies_to":["behavior-map","visual-smoke","aquarium-ui"]}

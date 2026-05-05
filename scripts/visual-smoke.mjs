@@ -8,7 +8,11 @@ const artifactDir = resolve(root, ".epiphany-aquarium");
 const desktopScreenshotPath = resolve(artifactDir, "operator-console-smoke-desktop.png");
 const wideScreenshotPath = resolve(artifactDir, "operator-console-smoke-wide.png");
 const mobileScreenshotPath = resolve(artifactDir, "operator-console-smoke-mobile.png");
-const url = "http://127.0.0.1:1420";
+const smokePort = Number.parseInt(process.env.EPIPHANY_SMOKE_PORT ?? "1420", 10);
+if (!Number.isFinite(smokePort) || smokePort < 1 || smokePort > 65535) {
+  throw new Error(`invalid EPIPHANY_SMOKE_PORT: ${process.env.EPIPHANY_SMOKE_PORT}`);
+}
+const url = `http://127.0.0.1:${smokePort}`;
 const fluidStorageKey = "epiphany:aquarium-fluid-params:v3";
 
 await mkdir(artifactDir, { recursive: true });
@@ -18,7 +22,7 @@ const server = await createServer({
   logLevel: "silent",
   server: {
     host: "127.0.0.1",
-    port: 1420,
+    port: smokePort,
     strictPort: true,
   },
 });

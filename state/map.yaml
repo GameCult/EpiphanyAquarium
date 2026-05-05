@@ -24,6 +24,7 @@ current_model:
   artifacts:
     aquarium: .epiphany-aquarium
     backend_gui: E:\Projects\EpiphanyAgent\.epiphany-gui
+  behavior_map: notes/aquarium-behavior-map.md
 
 interaction_laws:
   - The default screen shows only the aquarium, agents, fluid, and ambient state.
@@ -34,8 +35,9 @@ interaction_laws:
   - Audio must respond once per deliberate input gesture.
 
 next_actions:
-  - Replace inherited operator-console copy with aquarium-native object language.
-  - Split Self, Eyes, Imagination, Body, Hands, Soul, and Life into distinct menu organisms.
-  - Add visual tests for empty-water dismissal and offscreen-safe focus anchoring.
+  - Stop preserving the inherited operator console as a single surface; split its data and actions into agent-owned organs.
+  - Rename console-era copy and smoke artifact names toward aquarium-native focus language.
+  - Give Self, Eyes, Imagination, Body, Hands, Soul, and Life distinct motion/reveal signatures.
+  - Make agent petals more object-native while keeping them real DOM buttons.
+  - Add visual tests for empty-water dismissal, offscreen-safe focus anchoring, agent-specific petals, and one-hit control audio.
   - Consider a debug-only keyboard chord for utilitarian always-on panels.
-
