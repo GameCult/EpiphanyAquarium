@@ -17,6 +17,7 @@ type CameraDragMode = "orbit" | "pan";
 export type ProjectLabelProjection = {
   id: string;
   label: string;
+  subLabel?: string;
   opacity: number;
   scale: number;
   xPercent: number;
@@ -25,7 +26,7 @@ export type ProjectLabelProjection = {
 
 export interface AquariumScene3d {
   dispose(): void;
-  projectProjectLabels(labels: Array<{ id: string; label: string }>): ProjectLabelProjection[];
+  projectProjectLabels(labels: Array<{ id: string; label: string; subLabel?: string }>): ProjectLabelProjection[];
   projectPointerToGrid(pointer: PointerState): { xPercent: number; yPercent: number } | null;
   projectProjections(projections: SceneProjection[]): SceneProjection[];
   pointerDown(pointer: PointerState, button: number): void;
@@ -182,7 +183,7 @@ class ThreeAquariumScene implements AquariumScene3d {
     return worldToGridPercent(projected.x, projected.y);
   }
 
-  projectProjectLabels(labels: Array<{ id: string; label: string }>) {
+  projectProjectLabels(labels: Array<{ id: string; label: string; subLabel?: string }>) {
     const count = Math.max(labels.length, 1);
     const zoomOpacity = smoothstep(8.5, 15.5, this.cameraDistance);
     return labels.map((label, index) => {
@@ -253,6 +254,12 @@ class ThreeAquariumScene implements AquariumScene3d {
     const live = new Set<string>();
     let splatIndex = 0;
     let sourceIndex = 0;
+    const selfProjection = projections.find((projection) => projection.id === "coordinator") ?? projections[0];
+    if (selfProjection && splatIndex < this.splatMeshes.length) {
+      const selfTarget = gridToWorld(selfProjection.gridXPercent, selfProjection.gridYPercent);
+      this.configureSplat(this.splatMeshes[splatIndex], selfTarget.x, selfTarget.y, 4.25, 0.7, 2.35, 0, 0, 1.25);
+      splatIndex += 1;
+    }
     for (const projection of projections) {
       live.add(projection.id);
       const group = this.agentGroups.get(projection.id) ?? this.createAgent(projection);

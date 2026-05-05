@@ -1358,11 +1358,21 @@ body:has(.immersiveShell) {
   top: var(--billboard-y, var(--agent-y));
 }
 
-.projectWorldLabel {
+.projectWorldLabel,
+.projectOptionHalo {
   position: absolute;
   z-index: 3;
   left: var(--project-label-x, 50%);
   top: var(--project-label-y, 50%);
+  opacity: var(--project-label-opacity, 0);
+  pointer-events: none;
+  transform:
+    translate(-50%, -50%)
+    scale(var(--project-label-scale, 0.86));
+  transition: opacity 180ms ease;
+}
+
+.projectWorldLabel {
   display: grid;
   gap: 1px;
   min-width: 112px;
@@ -1373,14 +1383,49 @@ body:has(.immersiveShell) {
   color: rgba(248, 255, 241, 0.92);
   background: rgba(10, 18, 15, 0.44);
   box-shadow: 0 0 18px rgba(95, 255, 203, 0.13);
-  opacity: var(--project-label-opacity, 0);
-  pointer-events: none;
+  pointer-events: auto;
   text-align: center;
   text-shadow: 0 1px 8px rgba(2, 6, 5, 0.78);
-  transform:
-    translate(-50%, -50%)
-    scale(var(--project-label-scale, 0.86));
-  transition: opacity 180ms ease;
+}
+
+.projectOptionHalo {
+  z-index: 5;
+  width: 236px;
+  height: 236px;
+}
+
+.projectOptionHalo:hover,
+.projectOptionHalo:focus-within,
+.projectWorldLabel:hover + .projectOptionHalo {
+  pointer-events: auto;
+}
+
+.projectOptionButton {
+  appearance: none;
+  position: absolute;
+  min-width: 76px;
+  height: 28px;
+  border: 1px solid rgba(177, 255, 224, 0.42);
+  border-radius: 999px;
+  padding: 0 11px;
+  color: rgba(250, 255, 244, 0.94);
+  background:
+    radial-gradient(circle at 30% 18%, rgba(255, 255, 255, 0.16), transparent 17px),
+    rgba(16, 35, 28, 0.72);
+  box-shadow: 0 0 16px rgba(112, 255, 204, 0.17);
+  cursor: pointer;
+  font-size: 0.58rem;
+  font-weight: 900;
+  line-height: 1;
+  pointer-events: auto;
+  text-transform: uppercase;
+  transform: translate(-50%, -50%);
+}
+
+.projectOptionButton:hover,
+.projectOptionButton:focus-visible {
+  border-color: rgba(255, 255, 255, 0.78);
+  outline: none;
 }
 
 .projectWorldLabel strong,
@@ -1507,6 +1552,8 @@ body:has(.immersiveShell) {
   padding: 5px 7px;
   background: rgba(15, 25, 22, 0.64);
   backdrop-filter: blur(7px);
+  opacity: var(--agent-caption-opacity, 1);
+  transition: opacity 180ms ease;
 }
 
 .agentCaption strong,

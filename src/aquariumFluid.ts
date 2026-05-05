@@ -1041,10 +1041,8 @@ class WebglAquariumRenderer implements AquariumRenderer {
           normalY * orbitRadius * (0.78 - personality.eccentricity * 0.18) +
           (normalY * chirps.radial + tangentY * chirps.tangential) * swim * 0.72,
       };
-      const force = {
-        x: billboardHold ? 0 : (orbitSlot.x - state.x) * (0.012 + activity * 0.004 + personality.expressiveness * 0.0018),
-        y: billboardHold ? 0 : (orbitSlot.y - state.y) * (0.012 + activity * 0.004 + personality.expressiveness * 0.0018),
-      };
+      const orbitForce = billboardHold ? { x: 0, y: 0 } : this.orbitSlotGravityForce(agent, state.x, state.y, orbitSlot.x, orbitSlot.y);
+      const force = { x: orbitForce.x, y: orbitForce.y };
       force.x += pointerForce.x * 0.014 * lerp(1, 0.72, explicitHover);
       force.y += pointerForce.y * 0.014 * lerp(1, 0.72, explicitHover);
       if (explicitHover) {
@@ -1149,6 +1147,35 @@ class WebglAquariumRenderer implements AquariumRenderer {
     return {
       x: far.x * 78 + close.x * (112 + agent.activity * 96),
       y: far.y * 78 + close.y * (112 + agent.activity * 96),
+    };
+  }
+
+  private orbitSlotGravityForce(agent: AquariumAgentFrame, x: number, y: number, slotX: number, slotY: number) {
+    const orbitScale = Math.min(this.simWidth, this.simHeight) * (this.simWidth < 540 ? 0.3 : 0.32);
+    const personality = personalityFor(agent.id);
+    const local = aetheriaGravityForce(
+      { x, y },
+      { x: slotX, y: slotY },
+      Math.max(130, orbitScale * (0.9 + personality.radius * 0.28)),
+      -0.64 - agent.activity * 0.18,
+      2.45 + personality.expressiveness * 0.55,
+      7.5,
+      this.simWidth,
+      this.simHeight,
+    );
+    const swarm = aetheriaGravityForce(
+      { x, y },
+      this.basePoint(agent),
+      Math.max(360, orbitScale * 1.95),
+      -0.18 - agent.activity * 0.04,
+      2.18,
+      8,
+      this.simWidth,
+      this.simHeight,
+    );
+    return {
+      x: local.x * (46 + personality.expressiveness * 12) + swarm.x * 34,
+      y: local.y * (46 + personality.expressiveness * 12) + swarm.y * 34,
     };
   }
 

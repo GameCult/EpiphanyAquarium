@@ -128,9 +128,16 @@ flowchart TD
   creature billboard, the fluid projection holds that creature in place so the
   world object stops orbiting under the UI.
 - **Project labels:** registered Epiphany swarm members render as quiet
-  world-space project labels. They stay mostly absent while working close-up and
-  fade in when zoomed out far enough to read the aquarium as a multi-project
-  structure.
+  world-space project labels. The label text is the member workspace, with the
+  harness label as secondary text. They stay mostly absent while working
+  close-up and fade in when zoomed out far enough to read the aquarium as a
+  multi-project structure. As they fade in, sub-agent captions fade out. Each
+  workspace label is also a menu root with radial DOM petals for swarm-level
+  navigation.
+- **Swarm gravity:** the swarm has a large shared divot centered on Self in the
+  Three gravity texture. The force that keeps agents in orbit is expressed as a
+  combination of local orbit-slot gravity gradients and that larger swarm
+  gravity gradient, rather than as a hidden linear spring.
 - **Visual smoke boundary:** visual smoke does not attempt cursor-driven
   creature-tree or billboard interaction. Those clicks require the same
   projection/raycast math as the app itself, so they belong in targeted

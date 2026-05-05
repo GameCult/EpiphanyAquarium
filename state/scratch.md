@@ -112,3 +112,7 @@ Current slice:
   actual rendered grid extent. Project labels are projected DOM billboards that
   fade in while zooming out, and the cursor is represented as a visible gravity
   well whose gradient supplies the spring-like attraction force.
+- Current hierarchy correction: zoomed-out workspace labels now displace
+  sub-agent captions instead of stacking with them. Each workspace label exposes
+  radial swarm-level petals. Self also contributes a larger shared gravity divot
+  so swarm cohesion is visible and force-based.

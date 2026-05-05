@@ -1554,6 +1554,7 @@ function AgentConstellation({
   const optionByKeyRef = useRef(new globalThis.Map<string, AquariumOption>());
   const uiOptionByKeyRef = useRef(new globalThis.Map<string, AquariumOption>());
   const projectLabelNodeRefs = useRef(new globalThis.Map<string, HTMLDivElement>());
+  const projectHaloNodeRefs = useRef(new globalThis.Map<string, HTMLDivElement>());
   const cameraDragButtonRef = useRef<number | null>(null);
   const rendererRef = useRef<AquariumRenderer | null>(null);
   const scene3dRef = useRef<AquariumScene3d | null>(null);
@@ -1767,6 +1768,14 @@ function AgentConstellation({
     }
   }, []);
 
+  const bindProjectHaloNode = useCallback((id: string, node: HTMLDivElement | null) => {
+    if (node) {
+      projectHaloNodeRefs.current.set(id, node);
+    } else {
+      projectHaloNodeRefs.current.delete(id);
+    }
+  }, []);
+
   const applyProjectionFrame = useCallback((projections: AquariumAgentProjection[]) => {
     const sceneProjections = projections.map((projection) => {
       const agent = aquariumAgents.find((candidate) => candidate.id === projection.id);
@@ -1774,6 +1783,10 @@ function AgentConstellation({
     });
     scene3dRef.current?.setProjections(sceneProjections);
     const visualProjections = scene3dRef.current?.projectProjections(sceneProjections) ?? projections;
+    const projectLabels = scene3dRef.current?.projectProjectLabels(
+      (swarmMembers ?? []).map((member) => ({ id: member.id, label: workspaceLabel(member.workspaceRoot), subLabel: member.label })),
+    ) ?? [];
+    const swarmLabelOpacity = Math.max(0, ...projectLabels.map((label) => label.opacity));
     for (const projection of visualProjections) {
       const agentNode = agentNodeRefs.current.get(projection.id);
       const thoughtNode = thoughtNodeRefs.current.get(projection.id);
@@ -1802,6 +1815,7 @@ function AgentConstellation({
         ["--agent-expression", String(projection.expression)],
         ["--agent-hover", String(projection.hover)],
         ["--agent-ack", String(projection.acknowledgement)],
+        ["--agent-caption-opacity", String(1 - swarmLabelOpacity)],
         ["--agent-scale", String(visualScale * (1 + projection.acknowledgement * 0.035 + projection.hover * 0.018 + projection.z * 0.055))],
         ["--billboard-scale", String(haloScale)],
         ["--thought-scale", String(thoughtScale)],
@@ -1816,11 +1830,9 @@ function AgentConstellation({
       thoughtNode?.toggleAttribute("data-agent-hot", projection.hover > 0.35);
       optionHaloNode?.toggleAttribute("data-agent-hot", projection.hover > 0.2);
     }
-    const projectLabels = scene3dRef.current?.projectProjectLabels(
-      (swarmMembers ?? []).map((member) => ({ id: member.id, label: member.label })),
-    ) ?? [];
     for (const label of projectLabels) {
       applyProjectLabelProjection(projectLabelNodeRefs.current.get(label.id), label);
+      applyProjectLabelProjection(projectHaloNodeRefs.current.get(label.id), label);
     }
     stardustRef.current?.setProjections(visualProjections);
   }, [aquariumAgents, hoveredAgentId, selectedAgentId, swarmMembers]);
@@ -1965,6 +1977,11 @@ function AgentConstellation({
     if (option) {
       onAgentOption?.(option);
     }
+  }
+
+  function handleProjectOptionClick(event: React.MouseEvent<HTMLButtonElement>, option: AquariumOption) {
+    event.stopPropagation();
+    onAgentOption?.(option);
   }
 
   function optionPositionStyle(index: number, count: number): React.CSSProperties {
@@ -2258,22 +2275,36 @@ function AgentConstellation({
           );
         })}
         {(swarmMembers ?? []).map((member) => (
-          <div
-            className={`projectWorldLabel ${member.kind}`}
-            key={`project-label-${member.id}`}
-            ref={(node) => bindProjectLabelNode(member.id, node)}
-            data-project-label={member.id}
-            style={
-              {
-                "--project-label-x": "50%",
-                "--project-label-y": "50%",
-                "--project-label-opacity": 0,
-                "--project-label-scale": 0.86,
-              } as React.CSSProperties
-            }
-          >
-            <strong>{member.label}</strong>
-            <span>{member.kind}</span>
+          <div key={`project-shell-${member.id}`}>
+            <div
+              className={`projectWorldLabel ${member.kind}`}
+              ref={(node) => bindProjectLabelNode(member.id, node)}
+              data-project-label={member.id}
+              style={projectLabelBaseStyle}
+            >
+              <strong>{workspaceLabel(member.workspaceRoot)}</strong>
+              <span>{member.label}</span>
+            </div>
+            <div
+              className={`projectOptionHalo ${member.kind}`}
+              ref={(node) => bindProjectHaloNode(member.id, node)}
+              data-project-options={member.id}
+              style={projectLabelBaseStyle}
+            >
+              {projectOptionsForMember(member).map((option, index, options) => (
+                <button
+                  type="button"
+                  className="projectOptionButton"
+                  key={`${member.id}-${option.label}`}
+                  title={option.label}
+                  data-interface-sound="project-option"
+                  style={optionPositionStyle(index, options.length)}
+                  onClick={(event) => handleProjectOptionClick(event, option)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
           </div>
         ))}
         {variant !== "fullscreen" && (
@@ -2302,6 +2333,26 @@ function applyProjectLabelProjection(node: HTMLDivElement | undefined, label: Pr
   node.style.setProperty("--project-label-y", `${label.yPercent}%`);
   node.style.setProperty("--project-label-opacity", String(label.opacity));
   node.style.setProperty("--project-label-scale", String(label.scale));
+}
+
+const projectLabelBaseStyle = {
+  "--project-label-x": "50%",
+  "--project-label-y": "50%",
+  "--project-label-opacity": 0,
+  "--project-label-scale": 0.86,
+} as React.CSSProperties;
+
+function workspaceLabel(workspaceRoot?: string) {
+  const cleaned = text(workspaceRoot, "workspace").replace(/[\\/]+$/, "");
+  return cleaned.split(/[\\/]/).filter(Boolean).pop() ?? cleaned;
+}
+
+function projectOptionsForMember(_member: SwarmMember): AquariumOption[] {
+  return [
+    { label: "Members", deck: "swarm", subdeck: "members" },
+    { label: "Messages", deck: "swarm", subdeck: "messages" },
+    { label: "Command", deck: "command", subdeck: "connection" },
+  ];
 }
 
 function SectionHeader({ title, icon }: { title: string; icon: React.ReactNode }) {
