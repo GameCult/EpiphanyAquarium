@@ -80,6 +80,7 @@ class ThreeAquariumScene implements AquariumScene3d {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6));
     this.gravityUniforms.uGravityTex.value = this.gravityRenderTarget.texture;
+    this.camera.up.set(0, 0, 1);
     this.gravityCamera.position.set(0, 0, 5);
     this.gravityCamera.lookAt(0, 0, 0);
     this.createSplatPool(48);
@@ -133,7 +134,7 @@ class ThreeAquariumScene implements AquariumScene3d {
         this.cameraYaw -= dx * 0.012;
         this.cameraPitch = clamp(this.cameraPitch + dy * 0.008, 0.18, 1.38);
       } else {
-        this.panCamera(dx, dy);
+        this.panCamera(this.dragPointer, pointer);
       }
       this.updateCamera();
       this.dragPointer = pointer;
@@ -401,17 +402,16 @@ class ThreeAquariumScene implements AquariumScene3d {
     event.preventDefault();
   }
 
-  private panCamera(dxPercent: number, dyPercent: number) {
-    const scale = this.cameraDistance * 0.012;
-    const forward = this.cameraForwardOnPlane();
-    const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 0, 1)).normalize();
-    this.cameraTarget.addScaledVector(right, -dxPercent * scale);
-    this.cameraTarget.addScaledVector(forward, dyPercent * scale);
+  private panCamera(previousPointer: PointerState, nextPointer: PointerState) {
+    const previous = this.projectPointerToPlane(previousPointer);
+    const next = this.projectPointerToPlane(nextPointer);
+    if (!previous || !next) return;
+    this.cameraTarget.add(previous.sub(next));
     this.clampCameraTarget();
   }
 
   private cameraForwardOnPlane() {
-    return new THREE.Vector3(Math.sin(this.cameraYaw), Math.cos(this.cameraYaw), 0).normalize();
+    return new THREE.Vector3(-Math.sin(this.cameraYaw), Math.cos(this.cameraYaw), 0).normalize();
   }
 
   private clampCameraTarget() {
@@ -430,6 +430,7 @@ class ThreeAquariumScene implements AquariumScene3d {
   }
 
   private updateCamera() {
+    this.clampCameraTarget();
     const horizontal = Math.cos(this.cameraPitch) * this.cameraDistance;
     const z = Math.sin(this.cameraPitch) * this.cameraDistance;
     const offset = new THREE.Vector3(

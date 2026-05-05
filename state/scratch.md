@@ -55,3 +55,9 @@ Current slice:
   exponential distance curve, and right drag/WASD pan the camera target. Mouse
   coordinates project through the camera ray onto XY, so cursor, interactible,
   distance, drag, and force math can use one consistent plane.
+- Follow-up correction: the perspective camera is an explicit orbital rig now:
+  target point on the XY grid, polar yaw/pitch/distance converted to a Cartesian
+  camera offset, and `camera.up` locked to `+Z` before `lookAt`.
+- Pan correction: right-drag samples previous/current mouse ray intersections
+  with XY and shifts the camera target by their difference; this avoids bespoke
+  pan-vector compensation because the grid projection provides the delta.
