@@ -1019,9 +1019,14 @@ class WebglAquariumRenderer implements AquariumRenderer {
     const dx = this.pointer.x - x;
     const dy = this.pointer.y - y;
     const dist = Math.hypot(dx, dy);
-    if (dist < 1 || dist > 260) return { x: 0, y: 0 };
-    const influence = 1 - dist / 260;
-    const force = influence * influence * (34 + agent.activity * 76);
+    if (dist < 1 || dist > 540) return { x: 0, y: 0 };
+    const closeRadius = 128;
+    const farRadius = 540;
+    const close = 1 - clamp(dist / closeRadius, 0, 1);
+    const far = dist > closeRadius ? 1 - clamp((dist - closeRadius) / (farRadius - closeRadius), 0, 1) : 0;
+    const closeForce = close * close * (76 + agent.activity * 118);
+    const farForce = far * far * (agent.id === "coordinator" ? -10 : 7 + agent.activity * 8);
+    const force = closeForce + farForce;
     return { x: (dx / dist) * force, y: (dy / dist) * force };
   }
 

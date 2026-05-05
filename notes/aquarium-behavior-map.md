@@ -67,11 +67,14 @@ flowchart TD
 - **Idle:** fullscreen water, drifting agents, crisp labels, ambient state, no
   focus surface. The initial screen is aquarium-first, not paperwork-first.
 - **Hover/touch agent:** the renderer marks that agent hot, emits CSS projection
-  variables, attracts nearby agents toward the pointer, wakes sound on real user
-  input, and opens the agent-local option halo. Every creature carries the shared
-  heartbeat; the latest awakened role gets a stronger pluck. Touch and heartbeat
-  events resolve as damped string-like oscillations through both motion and audio.
-  Thought bubbles become readable when hot or selected.
+  variables, applies weak long-range pointer attraction to most creatures, gives
+  Self a weak long-range repulsion, and switches all creatures to strong
+  short-range attraction so they can be pulled out of orbit deliberately. It also
+  wakes sound on real user input and opens the agent-local option halo. Every
+  creature carries the shared heartbeat; the latest awakened role gets a stronger
+  pluck. Touch and heartbeat events resolve as damped string-like oscillations
+  through both motion and audio. Thought bubbles become readable when hot or
+  selected.
 - **Click agent:** React locks selection and mounts `agentFocusSurface` near that
   agent. This is the correct gate, but the mounted contents still behave like the
   inherited operator console.
