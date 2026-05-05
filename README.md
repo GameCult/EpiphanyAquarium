@@ -12,6 +12,12 @@ and taste without dragging harness architecture into every visual decision.
 - Idle state: fluid, agents, glow, motion, sound, vibes.
 - Interaction: hover an aquarium object for local option petals.
 - Selection: click an object to open its local focus surface.
+- Face: the human-facing chat surface; other organs expose internals for
+  inspection, not direct chat.
+- Swarm: Epiphany instances do not poke each other's workspaces. Coordinators
+  ask through visible messages and wait for callbacks.
+- Contract: API affordances mirror user-story affordances, so forbidden stories
+  are rejected by the backend instead of merely discouraged by the UI.
 - Audio: agents sing; non-agent interface controls answer with short
   subtractive resonator hits.
 - Backend: Tauri commands call the sibling EpiphanyAgent tools. Override with

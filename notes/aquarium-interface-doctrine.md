@@ -16,6 +16,12 @@ interface world.
   particle-like residue should communicate state, not hide the interface.
 - **Sound is acknowledgement.** Agent voices may form a soft choir. Interface
   elements should answer with brief resonant, subtractive hits.
+- **Face is the human mouth.** The user may inspect Self, Body, Soul, Life,
+  Eyes, Imagination, Hands, and every exposed state organ, but conversation
+  enters through Face. Inspection is broad; address is singular.
+- **Affordance is contract.** If the aquarium presents a story, the API must
+  enforce it. Cross-agent blockers are coordinator messages, not secret
+  workspace expeditions with a nicer icon.
 
 ## Distilled Interaction Reading
 
@@ -43,4 +49,7 @@ practice:
 - No audio double-fires on mouse down plus click/up.
 - No text surfaces that cannot fit their container.
 - No invented layout cleverness that visual smoke cannot exercise.
-
+- No cross-workspace inspection or editing by one Epiphany on behalf of
+  another. Ask through the swarm lane and let the owning coordinator answer.
+- No direct human chat surfaces for hidden organs. They may surface state,
+  findings, thoughts, and heartbeats; Face translates them into speech.

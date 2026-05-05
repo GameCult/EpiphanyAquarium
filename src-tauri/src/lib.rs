@@ -11,9 +11,12 @@ struct StatusRequest {
     member_id: Option<String>,
     thread_id: Option<String>,
     cwd: Option<String>,
-    codex_home: Option<String>,
     app_server: Option<String>,
     planning_draft_id: Option<String>,
+    target_member_id: Option<String>,
+    communication_subject: Option<String>,
+    communication_body: Option<String>,
+    response_to: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -38,6 +41,22 @@ struct OperatorActionResult {
     artifact_path: String,
     summary: String,
     thread_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SwarmCommunication {
+    id: String,
+    created_at: String,
+    from_member_id: String,
+    to_member_id: String,
+    kind: String,
+    status: String,
+    subject: String,
+    body: String,
+    blocker: Option<String>,
+    response_to: Option<String>,
+    artifact_path: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -138,6 +157,7 @@ struct OperatorSnapshot {
     swarm_members: Vec<SwarmMember>,
     status: Value,
     artifacts: Vec<ArtifactBundle>,
+    communications: Vec<SwarmCommunication>,
 }
 
 #[tauri::command]
@@ -147,6 +167,7 @@ fn load_operator_snapshot(request: Option<StatusRequest>) -> Result<OperatorSnap
     let active_member = resolve_swarm_member(&swarm_members, request.member_id.as_deref())?;
     let status = load_status(&active_member, request)?;
     let artifacts = list_artifacts(&active_member)?;
+    let communications = load_swarm_communications()?;
     Ok(OperatorSnapshot {
         generated_at: unix_millis().to_string(),
         repo_root: active_member.harness_root.display().to_string(),
@@ -154,6 +175,7 @@ fn load_operator_snapshot(request: Option<StatusRequest>) -> Result<OperatorSnap
         swarm_members,
         status,
         artifacts,
+        communications,
     })
 }
 
@@ -170,6 +192,7 @@ fn run_operator_action(
         "coordinatorPlan" => run_coordinator_plan(&active_member, request),
         "inspectUnity" => run_unity_inspection(&active_member, request),
         "inspectRider" => run_rider_inspection(&active_member, request),
+        "requestSwarmHelp" => run_swarm_help_request(&active_member, &swarm_members, request),
         "heartbeatStatus" | "runHeartbeat" | "faceBubble" => {
             run_gui_action_bridge(&active_member, request, action)
         }
@@ -198,15 +221,17 @@ fn run_rider_inspection(
 ) -> Result<OperatorActionResult, String> {
     let python = find_python()?;
     let artifact_root = member.artifact_root.join("rider");
-    let workspace = request
-        .cwd
-        .map(PathBuf::from)
-        .unwrap_or_else(|| member.workspace_root.clone());
+    let workspace = member_workspace(member, request.cwd)?;
 
     let mut command = Command::new(python);
     command
         .current_dir(&member.harness_root)
-        .arg(member.harness_root.join("tools").join("epiphany_rider_bridge.py"))
+        .arg(
+            member
+                .harness_root
+                .join("tools")
+                .join("epiphany_rider_bridge.py"),
+        )
         .arg("status")
         .arg("--project-root")
         .arg(workspace)
@@ -231,15 +256,17 @@ fn run_unity_inspection(
 ) -> Result<OperatorActionResult, String> {
     let python = find_python()?;
     let artifact_root = member.artifact_root.join("runtime");
-    let workspace = request
-        .cwd
-        .map(PathBuf::from)
-        .unwrap_or_else(|| member.workspace_root.clone());
+    let workspace = member_workspace(member, request.cwd)?;
 
     let mut command = Command::new(python);
     command
         .current_dir(&member.harness_root)
-        .arg(member.harness_root.join("tools").join("epiphany_unity_bridge.py"))
+        .arg(
+            member
+                .harness_root
+                .join("tools")
+                .join("epiphany_unity_bridge.py"),
+        )
         .arg("inspect")
         .arg("--project-path")
         .arg(workspace)
@@ -260,21 +287,14 @@ fn run_unity_inspection(
 
 fn load_status(member: &SwarmMember, request: StatusRequest) -> Result<Value, String> {
     let python = find_python()?;
-    let status_script = member.harness_root.join("tools").join("epiphany_mvp_status.py");
-    let workspace = request
-        .cwd
-        .map(PathBuf::from)
-        .unwrap_or_else(|| member.workspace_root.clone());
-    let codex_home = request
-        .codex_home
-        .map(PathBuf::from)
-        .unwrap_or_else(|| member.codex_home.clone());
-    let transcript = member
-        .artifact_root
-        .join("status-transcript.jsonl");
-    let stderr = member
-        .artifact_root
-        .join("status-server.stderr.log");
+    let status_script = member
+        .harness_root
+        .join("tools")
+        .join("epiphany_mvp_status.py");
+    let workspace = member_workspace(member, request.cwd)?;
+    let codex_home = member.codex_home.clone();
+    let transcript = member.artifact_root.join("status-transcript.jsonl");
+    let stderr = member.artifact_root.join("status-server.stderr.log");
 
     let mut command = Command::new(python);
     command
@@ -327,19 +347,18 @@ fn run_status_snapshot(
     let result_path = artifact_root.join("status.json");
     let transcript_path = artifact_root.join("transcript.jsonl");
     let stderr_path = artifact_root.join("server.stderr.log");
-    let workspace = request
-        .cwd
-        .map(PathBuf::from)
-        .unwrap_or_else(|| member.workspace_root.clone());
-    let codex_home = request
-        .codex_home
-        .map(PathBuf::from)
-        .unwrap_or_else(|| member.codex_home.clone());
+    let workspace = member_workspace(member, request.cwd)?;
+    let codex_home = member.codex_home.clone();
 
     let mut command = Command::new(python);
     command
         .current_dir(&member.harness_root)
-        .arg(member.harness_root.join("tools").join("epiphany_mvp_status.py"))
+        .arg(
+            member
+                .harness_root
+                .join("tools")
+                .join("epiphany_mvp_status.py"),
+        )
         .arg("--json")
         .arg("--cwd")
         .arg(workspace)
@@ -376,19 +395,18 @@ fn run_coordinator_plan(
         .artifact_root
         .join("coordinator")
         .join(format!("gui-coordinator-plan-{}", unix_millis()));
-    let workspace = request
-        .cwd
-        .map(PathBuf::from)
-        .unwrap_or_else(|| member.workspace_root.clone());
-    let codex_home = request
-        .codex_home
-        .map(PathBuf::from)
-        .unwrap_or_else(|| member.codex_home.clone());
+    let workspace = member_workspace(member, request.cwd)?;
+    let codex_home = member.codex_home.clone();
 
     let mut command = Command::new(python);
     command
         .current_dir(&member.harness_root)
-        .arg(member.harness_root.join("tools").join("epiphany_mvp_coordinator.py"))
+        .arg(
+            member
+                .harness_root
+                .join("tools")
+                .join("epiphany_mvp_coordinator.py"),
+        )
         .arg("--mode")
         .arg("plan")
         .arg("--max-steps")
@@ -422,19 +440,18 @@ fn run_gui_action_bridge(
     let thread_id = request.thread_id.clone();
     let python = find_python()?;
     let artifact_root = member.artifact_root.join("actions");
-    let workspace = request
-        .cwd
-        .map(PathBuf::from)
-        .unwrap_or_else(|| member.workspace_root.clone());
-    let codex_home = request
-        .codex_home
-        .map(PathBuf::from)
-        .unwrap_or_else(|| member.codex_home.clone());
+    let workspace = member_workspace(member, request.cwd)?;
+    let codex_home = member.codex_home.clone();
 
     let mut command = Command::new(python);
     command
         .current_dir(&member.harness_root)
-        .arg(member.harness_root.join("tools").join("epiphany_gui_action.py"))
+        .arg(
+            member
+                .harness_root
+                .join("tools")
+                .join("epiphany_gui_action.py"),
+        )
         .arg("--action")
         .arg(&action)
         .arg("--cwd")
@@ -462,6 +479,104 @@ fn run_gui_action_bridge(
             .and_then(Value::as_str)
             .map(ToString::to_string),
     })
+}
+
+fn run_swarm_help_request(
+    member: &SwarmMember,
+    swarm_members: &[SwarmMember],
+    request: StatusRequest,
+) -> Result<OperatorActionResult, String> {
+    let target = match request.target_member_id.as_deref() {
+        Some(target_member_id) => resolve_swarm_member(swarm_members, Some(target_member_id))?,
+        None => swarm_members
+            .iter()
+            .find(|candidate| candidate.id != member.id)
+            .ok_or_else(|| "no other swarm coordinator is registered".to_string())?
+            .clone(),
+    };
+    if target.id == member.id {
+        return Err("a swarm coordinator cannot request help from itself".to_string());
+    }
+
+    let path = swarm_communications_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("failed to create swarm communications dir: {err}"))?;
+    }
+    let created_at = unix_millis().to_string();
+    let subject = request
+        .communication_subject
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| format!("Request from {}", member.label));
+    let body = request.communication_body.filter(|value| !value.trim().is_empty()).unwrap_or_else(|| {
+        format!(
+            "{} needs {} to inspect or reshape its own workspace. No cross-workspace file access is permitted; answer through this coordinator lane when the blocker is sorted.",
+            member.label, target.label
+        )
+    });
+    let communication = SwarmCommunication {
+        id: format!("swarm-{}", created_at),
+        created_at,
+        from_member_id: member.id.clone(),
+        to_member_id: target.id.clone(),
+        kind: "request".to_string(),
+        status: "open".to_string(),
+        subject,
+        body,
+        blocker: None,
+        response_to: request.response_to,
+        artifact_path: Some(path.display().to_string()),
+    };
+    let line = serde_json::to_string(&communication)
+        .map_err(|err| format!("failed to serialize swarm communication: {err}"))?;
+    fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .and_then(|mut file| {
+            use std::io::Write;
+            writeln!(file, "{line}")
+        })
+        .map_err(|err| format!("failed to append swarm communication: {err}"))?;
+
+    Ok(OperatorActionResult {
+        action: "requestSwarmHelp".to_string(),
+        artifact_path: path.display().to_string(),
+        summary: format!("Asked {} coordinator for help.", target.label),
+        thread_id: request.thread_id,
+    })
+}
+
+fn member_workspace(member: &SwarmMember, requested: Option<String>) -> Result<PathBuf, String> {
+    let root = member.workspace_root.canonicalize().map_err(|err| {
+        format!(
+            "registered workspace is unavailable: {} ({err})",
+            member.workspace_root.display()
+        )
+    })?;
+    let candidate = requested
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| member.workspace_root.clone());
+    let candidate = if candidate.is_absolute() {
+        candidate
+    } else {
+        member.workspace_root.join(candidate)
+    };
+    let canonical = candidate.canonicalize().map_err(|err| {
+        format!(
+            "requested workspace is unavailable: {} ({err})",
+            candidate.display()
+        )
+    })?;
+    if canonical == root || canonical.starts_with(&root) {
+        return Ok(canonical);
+    }
+    Err(format!(
+        "swarm member {} may not operate outside {}; ask the other coordinator instead",
+        member.id,
+        root.display()
+    ))
 }
 
 fn run_command(mut command: Command, label: &str) -> Result<(), String> {
@@ -497,8 +612,16 @@ fn json_string(value: &Value, key: &str) -> Result<String, String> {
 
 fn list_artifacts(member: &SwarmMember) -> Result<Vec<ArtifactBundle>, String> {
     let mut bundles = Vec::new();
-    collect_artifact_root(&mut bundles, &member.artifact_root.join("coordinator"), "coordinator/")?;
-    collect_artifact_root(&mut bundles, &member.artifact_root.join("dogfood"), "dogfood/")?;
+    collect_artifact_root(
+        &mut bundles,
+        &member.artifact_root.join("coordinator"),
+        "coordinator/",
+    )?;
+    collect_artifact_root(
+        &mut bundles,
+        &member.artifact_root.join("dogfood"),
+        "dogfood/",
+    )?;
     collect_artifact_root(
         &mut bundles,
         &member.artifact_root.join("actions"),
@@ -514,13 +637,13 @@ fn list_artifacts(member: &SwarmMember) -> Result<Vec<ArtifactBundle>, String> {
         &member.artifact_root.join("runtime"),
         "runtime/",
     )?;
-    collect_artifact_root(
-        &mut bundles,
-        &member.artifact_root.join("rider"),
-        "rider/",
-    )?;
+    collect_artifact_root(&mut bundles, &member.artifact_root.join("rider"), "rider/")?;
     if member.id == "epiphany-agent" {
-        collect_artifact_root(&mut bundles, &member.harness_root.join(".epiphany-dogfood"), "")?;
+        collect_artifact_root(
+            &mut bundles,
+            &member.harness_root.join(".epiphany-dogfood"),
+            "",
+        )?;
     }
 
     bundles.sort_by(|a, b| b.modified_millis.cmp(&a.modified_millis));
@@ -733,10 +856,18 @@ fn read_implementation_audit(root: &Path) -> Option<ImplementationAudit> {
 fn load_swarm_members() -> Result<Vec<SwarmMember>, String> {
     let config_path = swarm_config_path()?;
     if config_path.exists() {
-        let text = fs::read_to_string(&config_path)
-            .map_err(|err| format!("failed to read swarm config {}: {err}", config_path.display()))?;
-        let value: Value = serde_json::from_str(&text)
-            .map_err(|err| format!("failed to parse swarm config {}: {err}", config_path.display()))?;
+        let text = fs::read_to_string(&config_path).map_err(|err| {
+            format!(
+                "failed to read swarm config {}: {err}",
+                config_path.display()
+            )
+        })?;
+        let value: Value = serde_json::from_str(&text).map_err(|err| {
+            format!(
+                "failed to parse swarm config {}: {err}",
+                config_path.display()
+            )
+        })?;
         let members = value
             .get("members")
             .and_then(Value::as_array)
@@ -754,7 +885,10 @@ fn load_swarm_members() -> Result<Vec<SwarmMember>, String> {
     default_swarm_members()
 }
 
-fn resolve_swarm_member(members: &[SwarmMember], member_id: Option<&str>) -> Result<SwarmMember, String> {
+fn resolve_swarm_member(
+    members: &[SwarmMember],
+    member_id: Option<&str>,
+) -> Result<SwarmMember, String> {
     if let Some(member_id) = member_id {
         if let Some(member) = members.iter().find(|member| member.id == member_id) {
             return Ok(member.clone());
@@ -802,7 +936,45 @@ fn default_swarm_members() -> Result<Vec<SwarmMember>, String> {
 }
 
 fn swarm_config_path() -> Result<PathBuf, String> {
-    Ok(aquarium_root()?.join(".epiphany-aquarium").join("swarm.json"))
+    Ok(aquarium_root()?
+        .join(".epiphany-aquarium")
+        .join("swarm.json"))
+}
+
+fn swarm_communications_path() -> Result<PathBuf, String> {
+    Ok(aquarium_root()?
+        .join(".epiphany-aquarium")
+        .join("swarm-communications.jsonl"))
+}
+
+fn load_swarm_communications() -> Result<Vec<SwarmCommunication>, String> {
+    let path = swarm_communications_path()?;
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let text = fs::read_to_string(&path).map_err(|err| {
+        format!(
+            "failed to read swarm communications {}: {err}",
+            path.display()
+        )
+    })?;
+    let mut messages = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let message = serde_json::from_str::<SwarmCommunication>(line).map_err(|err| {
+            format!(
+                "failed to parse swarm communication line {}: {err}",
+                index + 1
+            )
+        })?;
+        messages.push(message);
+    }
+    messages.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    messages.truncate(64);
+    Ok(messages)
 }
 
 fn aquarium_root() -> Result<PathBuf, String> {

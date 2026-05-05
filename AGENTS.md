@@ -28,6 +28,16 @@ interaction grammar.
   the DOM or canvas layer visibly owns the same object.
 - Keep the machine testable. Visual smoke should encode the interaction rule,
   not only check that pixels exist.
+- API contracts must mirror user-story contracts. If the story is "ask another
+  coordinator politely", the backend must expose that lane and reject
+  cross-workspace rummaging. Pretty affordances without authority are stage
+  dressing with a badge.
+- Users may inspect Epiphany internals aggressively: state, artifacts, messages,
+  role status, graphs, heartbeats, and evidence should surface in the aquarium.
+  But humans talk to Face. Sub-agents can talk soul-to-soul through coordinator
+  channels; they are not each a separate chat counter for the human to queue at.
+- One Epiphany instance must not inspect or edit another instance's workspace.
+  Cross-agent needs go through swarm coordinator messages and callbacks.
 
 ## Persistent State
 
@@ -68,4 +78,3 @@ The visual smoke must keep proving:
 - selecting an agent opens the local focus surface
 - non-agent interface controls trigger the subtractive resonator once
 - fluid parameters persist
-

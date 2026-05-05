@@ -5,6 +5,10 @@ export interface StatusRequest {
   codexHome?: string;
   appServer?: string;
   planningDraftId?: string;
+  targetMemberId?: string;
+  communicationSubject?: string;
+  communicationBody?: string;
+  responseTo?: string;
 }
 
 export type OperatorAction =
@@ -13,6 +17,7 @@ export type OperatorAction =
   | "heartbeatStatus"
   | "runHeartbeat"
   | "faceBubble"
+  | "requestSwarmHelp"
   | "inspectUnity"
   | "inspectRider"
   | "prepareCheckpoint"
@@ -104,6 +109,7 @@ export interface OperatorSnapshot {
   swarmMembers?: SwarmMember[];
   status: any;
   artifacts: ArtifactBundle[];
+  communications?: SwarmCommunication[];
 }
 
 export interface SwarmMember {
@@ -117,4 +123,18 @@ export interface SwarmMember {
   artifactRoot: string;
   description?: string;
   status?: string;
+}
+
+export interface SwarmCommunication {
+  id: string;
+  createdAt: string;
+  fromMemberId: string;
+  toMemberId: string;
+  kind: "request" | "callback" | "note";
+  status: "open" | "acknowledged" | "resolved" | "blocked";
+  subject: string;
+  body: string;
+  blocker?: string;
+  responseTo?: string;
+  artifactPath?: string;
 }

@@ -16,6 +16,7 @@ export async function loadOperatorSnapshot(request: StatusRequest): Promise<Oper
     ...sample,
     activeMember: swarmMembers.find((member) => member.id === request.memberId) ?? swarmMembers[0],
     swarmMembers,
+    communications: sample.communications ?? sampleCommunications,
   };
 }
 
@@ -28,7 +29,7 @@ export async function runOperatorAction(action: OperatorAction, request: StatusR
   return {
     action,
     artifactPath: "E:\\Projects\\EpiphanyAquarium\\.epiphany-aquarium\\sample-action",
-    summary: `${action} sample completed.`,
+    summary: action === "requestSwarmHelp" ? "Asked Aetheria Lore coordinator for help." : `${action} sample completed.`,
     threadId: action === "prepareCheckpoint" ? "019dd9d1-045b-7f13-b0e1-38ed89b31495" : request.threadId,
   };
 }
@@ -61,5 +62,19 @@ const sampleSwarmMembers: SwarmMember[] = [
     artifactRoot: "E:\\Projects\\AetheriaLore\\.epiphany\\artifacts",
     description: "Vault and website swarm instance",
     status: "bootstrap",
+  },
+];
+
+const sampleCommunications = [
+  {
+    id: "sample-swarm-communication",
+    createdAt: "1777980000000",
+    fromMemberId: "epiphany-agent",
+    toMemberId: "aetheria-lore",
+    kind: "request" as const,
+    status: "open" as const,
+    subject: "Ask the lore coordinator",
+    body: "Epiphany needs Aetheria Lore to inspect its own vault and call back through the coordinator lane.",
+    artifactPath: "E:\\Projects\\EpiphanyAquarium\\.epiphany-aquarium\\swarm-communications.jsonl",
   },
 ];
