@@ -131,12 +131,20 @@ For each pixel:
 1. March a small fixed number of frustum-depth samples.
 2. Map the sample to a froxel cell.
 3. Read that cell's primitive bitmask from the storage buffer.
-4. Evaluate only the named planet/atmosphere primitives.
-5. Accumulate Beer-Lambert transmittance and in-scattering.
+4. Evaluate only the named planet/atmosphere primitives for both solid SDF
+   hits and volumetric atmosphere density.
+5. If the ray touches a solid SDF, shade that solid, preserve the accumulated
+   in-scattering/transmittance up to the hit, and terminate the march.
+6. Otherwise accumulate Beer-Lambert transmittance and in-scattering for the
+   current volumetric sample.
 
 The WebGL field-volume shader still exists as fallback, but Three marks it as
 `webgpu-external-field` and skips that expensive path when WebGPU is available.
 No CPU readback or WebGPU-to-WebGL texture shuttle is used.
+
+The solid and volumetric paths intentionally share the same primitive map. A
+froxel says "these primitives may matter here"; the pixel ray then asks those
+primitives whether they are solid, atmospheric, or both at the current sample.
 
 ### 7. Agent Planet SDFs
 

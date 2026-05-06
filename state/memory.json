@@ -84,6 +84,7 @@
     ],
     "aquarium_renderer_architecture": [
       "The preferred live Aquarium renderer now uses a WebGPU field overlay for the agent/fog field: a compute pass builds one u32 primitive-membership bitmask per froxel, and the render pass marches pixels while evaluating only primitives named by the current froxel.",
+      "Solid and volumetric paths share that froxel primitive mask. While marching a ray, each sample reads the current froxel's bitmask; named primitives are evaluated for both solid SDF hits and atmosphere density. A solid SDF hit shades the solid and terminates the ray.",
       "The Three/WebGL layer still owns the moving Aetheria gravity grid, cursor, and fallback rendering. When navigator.gpu exists, Three marks the field as externally rendered and skips the expensive WebGL field-volume pass.",
       "Aetheria-style deferred 2D source fields are live now: sparse PowerPulse/wave splats accumulate into a grid texture, and grid/stardust/fog sample that moving domain. Full Wronski density/light injection, sparse bricks, TAA, and Bruneton atmosphere remain next-stage architecture.",
       "Only introduce sparse brick maps for fields that cannot be cheaply derived at sample time: persistent volumetric memory, authored complex gas, cached lighting, or demand-refined large spaces. Do not brick-map simple agent SDFs just to look serious."

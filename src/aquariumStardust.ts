@@ -344,6 +344,7 @@ fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
   var scattering = vec3f(0.0);
   var solid = vec3f(0.0);
   var solidAlpha = 0.0;
+  var solidTransmittance = 1.0;
   let jitter = hash(dot(pixel, vec2f(0.067, 0.131)) + uniforms.time * 3.1);
 
   for (var step = 0u; step < 32u; step = step + 1u) {
@@ -367,18 +368,24 @@ fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
       let local = vec3f((pixel - agent.xy) / max(radius, 0.001), (progress - depthCenter) * 6.0);
       let displacement = fbm4(vec4f(local * mix(1.8, 3.4, selfFlag), uniforms.time * mix(0.12, 0.34, selfFlag))) * mix(0.08, 0.26, selfFlag);
       let sdf = length(local) - (1.0 + displacement);
-      let atmosphere = exp(-max(sdf, 0.0) * mix(3.0, 1.35, selfFlag));
       let plasma = pow(max(fbm4(vec4f(local * 4.8, uniforms.time * 0.55)) * 0.5 + 0.5, 0.0), mix(2.8, 7.0, selfFlag));
-      let localDensity = atmosphere * (0.012 + radius / 260.0 + selfFlag * 0.14) * (0.72 + plasma * mix(0.8, 2.8, selfFlag));
-      density += localDensity;
-      tint += localDensity * mix(color.rgb, vec3f(3.8, 1.85, 0.42), selfFlag);
-      if (sdf < 0.016 && solidAlpha < 0.5) {
+      if (sdf < 0.016) {
         let fresnel = pow(clamp(length(local.xy) * 0.75, 0.0, 1.0), 3.0);
         let chrome = mix(color.rgb * 0.45, vec3f(0.75, 1.0, 0.88), 0.72 + fresnel * 0.22);
         let solar = vec3f(4.2, 2.1, 0.55) * (0.8 + plasma * 1.5);
         solid = mix(chrome, solar, selfFlag);
         solidAlpha = 0.92;
+        solidTransmittance = transmittance;
+        break;
       }
+      let atmosphere = exp(-max(sdf, 0.0) * mix(3.0, 1.35, selfFlag));
+      let localDensity = atmosphere * (0.012 + radius / 260.0 + selfFlag * 0.14) * (0.72 + plasma * mix(0.8, 2.8, selfFlag));
+      density += localDensity;
+      tint += localDensity * mix(color.rgb, vec3f(3.8, 1.85, 0.42), selfFlag);
+    }
+
+    if (solidAlpha > 0.5) {
+      break;
     }
 
     density += exp(-abs(progress - 0.58) * 6.5) * 0.004;
@@ -391,7 +398,7 @@ fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
   }
 
   let fogAlpha = clamp(1.0 - transmittance, 0.0, 0.72);
-  let color = solid * solidAlpha + scattering;
+  let color = solid * solidAlpha * solidTransmittance + scattering;
   return vec4f(color, max(fogAlpha, solidAlpha));
 }
 `;

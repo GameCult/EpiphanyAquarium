@@ -210,3 +210,8 @@ Current slice:
   only; when `navigator.gpu` exists it marks the field as externally rendered
   and skips the expensive WebGL SDF/fog pass. Build and visual smoke passed on
   port 14922.
+- Current solid/fog correction: both solid SDF and volumetric atmosphere
+  evaluation go through the same WebGPU froxel primitive mask. The pixel ray
+  reads the current froxel's bitset, evaluates only those primitives, and now
+  early-exits when a solid SDF is touched, shading the solid with accumulated
+  fog/transmittance up to the hit instead of continuing the march.
