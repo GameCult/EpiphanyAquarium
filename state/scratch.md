@@ -218,5 +218,13 @@ Current slice:
 - Current HDR lighting pass: copied Aetheria's `studio3.hdr` into
   `public/textures/studio3.hdr`, loaded it with Three `RGBELoader`, PMREM-
   filtered it, and assigned it to `scene.environment` for PBR lighting. WebGPU
-  field chrome now uses a matching warm-key/cool-fill studio response until HDR
-  parsing/prefiltering is owned by the WebGPU graph.
+  field chrome uses a sampled HDR summary because WebGPU cannot borrow the
+  Three/WebGL PMREM texture directly across APIs.
+- Current SH/froxel lighting pass: the WebGPU field layer now ping-pongs a
+  first-order spherical-harmonic lighting buffer through froxel space. It
+  propagates previous lighting through six neighbors, injects environment light
+  from grid-volume edges using the studio HDR summary, and injects local Self
+  emission so diffuse volumetric light belongs to the scene instead of the
+  screen. The old baseline screen-depth haze was removed, and planet
+  displacement/noise frequencies were lowered so chrome bodies read as smooth
+  gaseous planets rather than glittery shader rash.

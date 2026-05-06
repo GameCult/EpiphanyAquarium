@@ -58,6 +58,7 @@ interaction_laws:
   - When the pointer is inside a creature billboard, the creature's orbit integration holds position so menus do not drift away from the user's hand.
   - Visible non-DOM aquarium elements belong in the Three/HDR compositor. Legacy smoke, crisp, and stardust canvases may remain for compatibility, but they must not be visible screen-space layers.
   - Fog is now a first-class field-volume pass in the Three layer: camera rays sample SDF solids, gassy SDF density, pointer/agent density sources, and the shared moving gravity texture instead of rendering fog as detached screen tint.
+  - WebGPU froxels own soft directional volumetric light: first-order spherical harmonics are propagated through the froxel grid, environment light is injected from grid-volume edges, and Self injects warm local emission.
   - Global sky and aerial-perspective lighting should use Bruneton-style precomputed transport caches; local dynamic fog should not be forced to solve horizon-scale multiple scattering per frame.
   - Visual smoke verifies render presence and layout health, not cursor-driven 3D interaction; billboard/creature clicks need targeted raycast-aware probes.
   - Stardust is currently visible as tiny, faint 3D points inside the Three scene under ACES tone mapping; the old WebGPU overlay is disabled until it can feed the shared compositor instead of screen space.
@@ -91,3 +92,4 @@ landed:
   - Replaced visible agent mesh bodies with field-volume chrome planet SDFs. Each swarm member is displaced by cheap local-domain 4D fBm, wrapped in a mass-scaled gassy atmosphere, and Self renders as a solar body with hotter emissive/corona noise.
   - Documented the live renderer as a hybrid Three/Aetheria gravity-domain plus fullscreen analytic SDF/gas raymarch, and explicitly separated that from the intended future Wronski froxel and sparse brick-map architecture.
   - Added a real WebGPU froxel primitive-map field layer. A compute pass writes one primitive-membership bitmask per froxel into a storage buffer, and the WebGPU render pass samples those masks while marching so pixels evaluate only relevant agent planet/atmosphere fields. The older WebGL field-volume path is now fallback-only when WebGPU is absent.
+  - Added the first WebGPU froxel SH lighting cache. A compute pass ping-pongs low-order radiance coefficients, propagates neighbor light, injects the studio HDR summary from the volume edges, injects Self emission, and the raymarch samples that lighting for gas and solid wrap instead of relying on a screen-space glow.

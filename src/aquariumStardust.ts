@@ -213,6 +213,13 @@ const froxelWidth = 96;
 const froxelHeight = 54;
 const froxelDepth = 24;
 const froxelCount = froxelWidth * froxelHeight * froxelDepth;
+const froxelShStrideFloats = 16;
+const studioEnvironmentData = new Float32Array([
+  0.506, 0.516, 0.533, 1,
+  0.152, 0.178, 0.194, 1,
+  0.411, 0.531, 0.694, 1,
+  6.0, 7.625, 9.875, 1,
+]);
 
 const froxelMaskComputeShader = /* wgsl */ `
 struct SimUniforms {
@@ -272,6 +279,163 @@ fn buildPrimitiveMasks(@builtin(global_invocation_id) id: vec3u) {
 }
 `;
 
+const froxelLightingComputeShader = /* wgsl */ `
+struct SimUniforms {
+  time: f32,
+  width: f32,
+  height: f32,
+  count: f32,
+  froxelWidth: f32,
+  froxelHeight: f32,
+  froxelDepth: f32,
+  pad: f32,
+};
+
+@group(0) @binding(0) var<storage, read> primitiveMasks: array<u32>;
+@group(0) @binding(1) var<storage, read> agents: array<vec4f>;
+@group(0) @binding(2) var<storage, read> colors: array<vec4f>;
+@group(0) @binding(3) var<storage, read> environment: array<vec4f>;
+@group(0) @binding(4) var<storage, read> previousLighting: array<vec4f>;
+@group(0) @binding(5) var<storage, read_write> nextLighting: array<vec4f>;
+@group(0) @binding(6) var<uniform> uniforms: SimUniforms;
+
+fn index3(x: u32, y: u32, z: u32) -> u32 {
+  return z * u32(uniforms.froxelWidth) * u32(uniforms.froxelHeight) + y * u32(uniforms.froxelWidth) + x;
+}
+
+fn lightingBase(index: u32) -> u32 {
+  return index * 4u;
+}
+
+fn writeLobe(base: ptr<function, array<vec3f, 4>>, direction: vec3f, radiance: vec3f, weight: f32) {
+  let dir = normalize(direction + vec3f(0.0001, 0.0002, 0.0003));
+  (*base)[0] += radiance * weight;
+  (*base)[1] += radiance * dir.x * weight;
+  (*base)[2] += radiance * dir.y * weight;
+  (*base)[3] += radiance * dir.z * weight;
+}
+
+fn readLighting(index: u32) -> array<vec3f, 4> {
+  let base = lightingBase(index);
+  return array<vec3f, 4>(
+    previousLighting[base].rgb,
+    previousLighting[base + 1u].rgb,
+    previousLighting[base + 2u].rgb,
+    previousLighting[base + 3u].rgb
+  );
+}
+
+@compute @workgroup_size(128)
+fn propagateLighting(@builtin(global_invocation_id) id: vec3u) {
+  let index = id.x;
+  let total = u32(uniforms.froxelWidth * uniforms.froxelHeight * uniforms.froxelDepth);
+  if (index >= total) {
+    return;
+  }
+
+  let fw = u32(uniforms.froxelWidth);
+  let fh = u32(uniforms.froxelHeight);
+  let fd = u32(uniforms.froxelDepth);
+  let sliceSize = fw * fh;
+  let z = index / sliceSize;
+  let rem = index - z * sliceSize;
+  let y = rem / fw;
+  let x = rem - y * fw;
+
+  var lighting = array<vec3f, 4>(
+    vec3f(0.0),
+    vec3f(0.0),
+    vec3f(0.0),
+    vec3f(0.0)
+  );
+
+  let current = readLighting(index);
+  for (var c = 0u; c < 4u; c = c + 1u) {
+    lighting[c] += current[c] * 0.78;
+  }
+
+  var neighborCount = 0.0;
+  var neighbor = array<vec3f, 4>(vec3f(0.0), vec3f(0.0), vec3f(0.0), vec3f(0.0));
+  if (x > 0u) {
+    let sample = readLighting(index3(x - 1u, y, z));
+    for (var c = 0u; c < 4u; c = c + 1u) { neighbor[c] += sample[c]; }
+    neighborCount += 1.0;
+  }
+  if (x + 1u < fw) {
+    let sample = readLighting(index3(x + 1u, y, z));
+    for (var c = 0u; c < 4u; c = c + 1u) { neighbor[c] += sample[c]; }
+    neighborCount += 1.0;
+  }
+  if (y > 0u) {
+    let sample = readLighting(index3(x, y - 1u, z));
+    for (var c = 0u; c < 4u; c = c + 1u) { neighbor[c] += sample[c]; }
+    neighborCount += 1.0;
+  }
+  if (y + 1u < fh) {
+    let sample = readLighting(index3(x, y + 1u, z));
+    for (var c = 0u; c < 4u; c = c + 1u) { neighbor[c] += sample[c]; }
+    neighborCount += 1.0;
+  }
+  if (z > 0u) {
+    let sample = readLighting(index3(x, y, z - 1u));
+    for (var c = 0u; c < 4u; c = c + 1u) { neighbor[c] += sample[c]; }
+    neighborCount += 1.0;
+  }
+  if (z + 1u < fd) {
+    let sample = readLighting(index3(x, y, z + 1u));
+    for (var c = 0u; c < 4u; c = c + 1u) { neighbor[c] += sample[c]; }
+    neighborCount += 1.0;
+  }
+  if (neighborCount > 0.0) {
+    for (var c = 0u; c < 4u; c = c + 1u) {
+      lighting[c] += neighbor[c] * (0.14 / neighborCount);
+    }
+  }
+
+  let edgeX = max(1.0 - min(f32(x), f32(fw - 1u - x)) / 4.0, 0.0);
+  let edgeY = max(1.0 - min(f32(y), f32(fh - 1u - y)) / 4.0, 0.0);
+  let edgeZ = max(1.0 - min(f32(z), f32(fd - 1u - z)) / 3.0, 0.0);
+  let edge = max(max(edgeX, edgeY), edgeZ);
+  if (edge > 0.0) {
+    writeLobe(&lighting, vec3f(0.2, -0.1, 1.0), environment[0].rgb * 0.32, edge * 0.34);
+    writeLobe(&lighting, vec3f(-0.8, 0.25, 0.18), environment[1].rgb * 0.48, edge * max(edgeX, edgeY) * 0.28);
+    writeLobe(&lighting, vec3f(0.12, 0.08, -1.0), environment[2].rgb * 0.24, edgeZ * 0.22);
+    writeLobe(&lighting, vec3f(0.36, -0.28, 0.89), environment[3].rgb * 0.16, edge * 0.18);
+  }
+
+  let pixel = vec2f(
+    (f32(x) + 0.5) / uniforms.froxelWidth * uniforms.width,
+    (f32(y) + 0.5) / uniforms.froxelHeight * uniforms.height
+  );
+  let depth = (f32(z) + 0.5) / uniforms.froxelDepth;
+  let mask = primitiveMasks[index];
+  for (var i = 0u; i < ${maxStardustAgents}u; i = i + 1u) {
+    if (f32(i) >= uniforms.count) {
+      break;
+    }
+    if ((mask & (1u << i)) == 0u) {
+      continue;
+    }
+    let agent = agents[i];
+    let color = colors[i];
+    let selfFlag = color.w;
+    let radius = max(agent.z, 1.0);
+    let depthCenter = selfFlag * 0.16 + 0.34;
+    let delta = vec3f((pixel - agent.xy) / radius, (depth - depthCenter) * 6.0);
+    let dist = max(length(delta), 0.08);
+    let falloff = exp(-dist * mix(3.8, 1.45, selfFlag));
+    let emitter = mix(color.rgb * 0.52, vec3f(7.0, 3.2, 0.55), selfFlag);
+    writeLobe(&lighting, delta, emitter, falloff * mix(0.08, 0.52, selfFlag));
+  }
+
+  let outBase = lightingBase(index);
+  nextLighting[outBase] = vec4f(max(lighting[0], vec3f(0.0)), 1.0);
+  nextLighting[outBase + 1u] = vec4f(lighting[1] * 0.92, 1.0);
+  nextLighting[outBase + 2u] = vec4f(lighting[2] * 0.92, 1.0);
+  nextLighting[outBase + 3u] = vec4f(lighting[3] * 0.92, 1.0);
+}
+`;
+
 const froxelFieldRenderShader = /* wgsl */ `
 struct SimUniforms {
   time: f32,
@@ -288,6 +452,8 @@ struct SimUniforms {
 @group(0) @binding(1) var<storage, read> agents: array<vec4f>;
 @group(0) @binding(2) var<storage, read> colors: array<vec4f>;
 @group(0) @binding(3) var<uniform> uniforms: SimUniforms;
+@group(0) @binding(4) var<storage, read> environment: array<vec4f>;
+@group(0) @binding(5) var<storage, read> shLighting: array<vec4f>;
 
 struct VertexOut {
   @builtin(position) position: vec4f,
@@ -337,6 +503,35 @@ fn primitiveMask(pixel: vec2f, progress: f32) -> u32 {
   return primitiveMasks[z * u32(uniforms.froxelWidth) * u32(uniforms.froxelHeight) + y * u32(uniforms.froxelWidth) + x];
 }
 
+fn froxelIndex(pixel: vec2f, progress: f32) -> u32 {
+  let x = clamp(u32(pixel.x / max(uniforms.width, 1.0) * uniforms.froxelWidth), 0u, u32(uniforms.froxelWidth) - 1u);
+  let y = clamp(u32(pixel.y / max(uniforms.height, 1.0) * uniforms.froxelHeight), 0u, u32(uniforms.froxelHeight) - 1u);
+  let z = clamp(u32(progress * uniforms.froxelDepth), 0u, u32(uniforms.froxelDepth) - 1u);
+  return z * u32(uniforms.froxelWidth) * u32(uniforms.froxelHeight) + y * u32(uniforms.froxelWidth) + x;
+}
+
+fn environmentColor(direction: vec3f) -> vec3f {
+  let up = environment[0].rgb;
+  let horizon = environment[1].rgb;
+  let down = environment[2].rgb;
+  let key = environment[3].rgb;
+  let vertical = clamp(direction.z * 0.5 + 0.5, 0.0, 1.0);
+  let base = mix(down, up, vertical);
+  let side = smoothstep(0.1, 0.82, abs(direction.x) + abs(direction.y) * 0.55);
+  let keyLobe = pow(max(dot(normalize(direction), normalize(vec3f(0.36, -0.28, 0.89))), 0.0), 18.0);
+  return mix(base, horizon, side * 0.38) + key * keyLobe * 0.22;
+}
+
+fn froxelRadiance(pixel: vec2f, progress: f32, direction: vec3f) -> vec3f {
+  let base = froxelIndex(pixel, progress) * 4u;
+  let dir = normalize(direction + vec3f(0.0001, 0.0002, 0.0003));
+  let l0 = shLighting[base].rgb;
+  let lx = shLighting[base + 1u].rgb;
+  let ly = shLighting[base + 2u].rgb;
+  let lz = shLighting[base + 3u].rgb;
+  return max(l0 + lx * dir.x + ly * dir.y + lz * dir.z, vec3f(0.0));
+}
+
 @fragment
 fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
   let pixel = input.uv * vec2f(uniforms.width, uniforms.height);
@@ -351,7 +546,7 @@ fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
     let progress = (f32(step) + jitter) / 32.0;
     let mask = primitiveMask(pixel, progress);
     var density = 0.0;
-    var tint = vec3f(0.18, 0.84, 0.7);
+    var tint = vec3f(0.0);
 
     for (var i = 0u; i < ${maxStardustAgents}u; i = i + 1u) {
       if (f32(i) >= uniforms.count) {
@@ -366,23 +561,26 @@ fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
       let radius = agent.z;
       let depthCenter = selfFlag * 0.16 + 0.34;
       let local = vec3f((pixel - agent.xy) / max(radius, 0.001), (progress - depthCenter) * 6.0);
-      let displacement = fbm4(vec4f(local * mix(1.8, 3.4, selfFlag), uniforms.time * mix(0.12, 0.34, selfFlag))) * mix(0.08, 0.26, selfFlag);
+      let displacement = fbm4(vec4f(local * mix(0.72, 1.12, selfFlag), uniforms.time * mix(0.06, 0.16, selfFlag))) * mix(0.035, 0.14, selfFlag);
       let sdf = length(local) - (1.0 + displacement);
-      let plasma = pow(max(fbm4(vec4f(local * 4.8, uniforms.time * 0.55)) * 0.5 + 0.5, 0.0), mix(2.8, 7.0, selfFlag));
+      let plasma = pow(max(fbm4(vec4f(local * mix(1.35, 2.15, selfFlag), uniforms.time * 0.24)) * 0.5 + 0.5, 0.0), mix(2.4, 5.4, selfFlag));
       if (sdf < 0.016) {
-        let fresnel = pow(clamp(length(local.xy) * 0.75, 0.0, 1.0), 3.0);
-        let studioKey = vec3f(1.0, 0.92, 0.76);
-        let studioFill = vec3f(0.36, 0.72, 1.0);
-        let studioReflection = mix(studioFill, studioKey, clamp(local.y * 0.42 + local.z * 0.22 + 0.58, 0.0, 1.0));
-        let chrome = mix(color.rgb * 0.35, studioReflection, 0.76 + fresnel * 0.2);
+        let normal = normalize(local);
+        let viewDir = normalize(vec3f(0.0, 0.0, 1.35) - local);
+        let reflected = reflect(-viewDir, normal);
+        let fresnel = pow(1.0 - clamp(dot(normal, viewDir), 0.0, 1.0), 4.0);
+        let studioReflection = environmentColor(reflected);
+        let volumeLight = froxelRadiance(pixel, progress, normal);
+        let diffuseWrap = (environmentColor(normal) * 0.08 + volumeLight * 0.28) * (0.12 + 0.1 * color.rgb);
+        let chrome = diffuseWrap + mix(color.rgb * 0.18, studioReflection, 0.82 + fresnel * 0.16);
         let solar = vec3f(4.2, 2.1, 0.55) * (0.8 + plasma * 1.5);
         solid = mix(chrome, solar, selfFlag);
         solidAlpha = 0.92;
         solidTransmittance = transmittance;
         break;
       }
-      let atmosphere = exp(-max(sdf, 0.0) * mix(3.0, 1.35, selfFlag));
-      let localDensity = atmosphere * (0.012 + radius / 260.0 + selfFlag * 0.14) * (0.72 + plasma * mix(0.8, 2.8, selfFlag));
+      let atmosphere = exp(-max(sdf, 0.0) * mix(4.6, 2.25, selfFlag));
+      let localDensity = atmosphere * (0.004 + radius / 520.0 + selfFlag * 0.055) * (0.55 + plasma * mix(0.42, 1.45, selfFlag));
       density += localDensity;
       tint += localDensity * mix(color.rgb, vec3f(3.8, 1.85, 0.42), selfFlag);
     }
@@ -391,11 +589,11 @@ fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
       break;
     }
 
-    density += exp(-abs(progress - 0.58) * 6.5) * 0.004;
     let stepSize = 1.0 / 32.0;
     let extinction = density * 4.6;
     let stepTransmittance = exp(-extinction * stepSize);
-    let luminance = tint * density * 1.9;
+    let lighting = froxelRadiance(pixel, progress, vec3f(input.uv - vec2f(0.5), 0.72));
+    let luminance = tint * (0.38 + lighting * 0.72);
     scattering += transmittance * (luminance - luminance * stepTransmittance) / max(extinction, 0.0001);
     transmittance *= stepTransmittance;
   }
@@ -437,16 +635,21 @@ export async function createAquariumStardustOverlay(canvas: HTMLCanvasElement): 
 class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
   private agentData = new Float32Array(maxStardustAgents * 4);
   private agentsBuffer: any;
-  private bindGroup: any;
   private colorsBuffer: any;
   private colorData = new Float32Array(maxStardustAgents * 4);
   private computeBindGroup: any;
   private computePipeline: any;
   private disposed = false;
+  private environmentBuffer: any;
   private format: any;
+  private lightingBindGroups: any[] = [];
+  private lightingBuffers: any[] = [];
+  private lightingPipeline: any;
+  private lightingReadIndex = 0;
   private maskBuffer: any;
   private pipeline: any;
   private raf = 0;
+  private renderBindGroups: any[] = [];
   private uniforms = new Float32Array(8);
   private uniformBuffer: any;
 
@@ -457,6 +660,7 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
     this.canvas.style.zIndex = "2";
     this.context.configure({ alphaMode: "premultiplied", device, format: this.format });
     const computeModule = device.createShaderModule({ label: "froxel primitive mask compute", code: froxelMaskComputeShader });
+    const lightingModule = device.createShaderModule({ label: "froxel SH lighting compute", code: froxelLightingComputeShader });
     const renderModule = device.createShaderModule({ label: "froxel field renderer", code: froxelFieldRenderShader });
     this.maskBuffer = device.createBuffer({
       label: "froxel primitive masks",
@@ -473,6 +677,16 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
       size: maxStardustAgents * 4 * 4,
       usage: gpuBufferUsage.STORAGE | gpuBufferUsage.COPY_DST,
     });
+    this.environmentBuffer = device.createBuffer({
+      label: "studio HDR environment summary",
+      size: studioEnvironmentData.byteLength,
+      usage: gpuBufferUsage.STORAGE | gpuBufferUsage.COPY_DST,
+    });
+    this.lightingBuffers = [0, 1].map((index) => device.createBuffer({
+      label: `froxel spherical harmonics lighting ${index}`,
+      size: froxelCount * froxelShStrideFloats * 4,
+      usage: gpuBufferUsage.STORAGE,
+    }));
     this.uniformBuffer = device.createBuffer({
       label: "froxel uniforms",
       size: this.uniforms.byteLength,
@@ -482,6 +696,11 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
       label: "build froxel primitive masks",
       layout: "auto",
       compute: { module: computeModule, entryPoint: "buildPrimitiveMasks" },
+    });
+    this.lightingPipeline = device.createComputePipeline({
+      label: "propagate froxel SH lighting",
+      layout: "auto",
+      compute: { module: lightingModule, entryPoint: "propagateLighting" },
     });
     this.pipeline = device.createRenderPipeline({
       label: "render froxel field",
@@ -503,17 +722,33 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
         { binding: 2, resource: { buffer: this.uniformBuffer } },
       ],
     });
-    this.bindGroup = device.createBindGroup({
-      label: "froxel render bindings",
+    this.lightingBindGroups = [0, 1].map((readIndex) => device.createBindGroup({
+      label: `froxel SH lighting bindings ${readIndex}`,
+      layout: this.lightingPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: this.maskBuffer } },
+        { binding: 1, resource: { buffer: this.agentsBuffer } },
+        { binding: 2, resource: { buffer: this.colorsBuffer } },
+        { binding: 3, resource: { buffer: this.environmentBuffer } },
+        { binding: 4, resource: { buffer: this.lightingBuffers[readIndex] } },
+        { binding: 5, resource: { buffer: this.lightingBuffers[1 - readIndex] } },
+        { binding: 6, resource: { buffer: this.uniformBuffer } },
+      ],
+    }));
+    this.renderBindGroups = [0, 1].map((lightingIndex) => device.createBindGroup({
+      label: `froxel render bindings ${lightingIndex}`,
       layout: this.pipeline.getBindGroupLayout(0),
       entries: [
         { binding: 0, resource: { buffer: this.maskBuffer } },
         { binding: 1, resource: { buffer: this.agentsBuffer } },
         { binding: 2, resource: { buffer: this.colorsBuffer } },
         { binding: 3, resource: { buffer: this.uniformBuffer } },
+        { binding: 4, resource: { buffer: this.environmentBuffer } },
+        { binding: 5, resource: { buffer: this.lightingBuffers[lightingIndex] } },
       ],
-    });
-    this.canvas.dataset.stardustMode = "webgpu-froxel-primitive-map";
+    }));
+    this.device.queue.writeBuffer(this.environmentBuffer, 0, studioEnvironmentData);
+    this.canvas.dataset.stardustMode = "webgpu-froxel-sh-primitive-map";
     this.canvas.dataset.stardustParticles = String(froxelCount);
     this.raf = requestAnimationFrame(this.render);
   }
@@ -524,6 +759,8 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
     this.maskBuffer?.destroy?.();
     this.agentsBuffer?.destroy?.();
     this.colorsBuffer?.destroy?.();
+    this.environmentBuffer?.destroy?.();
+    this.lightingBuffers.forEach((buffer) => buffer?.destroy?.());
     this.uniformBuffer?.destroy?.();
   }
 
@@ -574,6 +811,12 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
     computePass.setBindGroup(0, this.computeBindGroup);
     computePass.dispatchWorkgroups(Math.ceil(froxelCount / 128));
     computePass.end();
+    const lightingPass = encoder.beginComputePass();
+    lightingPass.setPipeline(this.lightingPipeline);
+    lightingPass.setBindGroup(0, this.lightingBindGroups[this.lightingReadIndex]);
+    lightingPass.dispatchWorkgroups(Math.ceil(froxelCount / 128));
+    lightingPass.end();
+    const lightingWriteIndex = 1 - this.lightingReadIndex;
     const pass = encoder.beginRenderPass({
       colorAttachments: [{
         clearValue: { r: 0, g: 0, b: 0, a: 0 },
@@ -583,10 +826,11 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
       }],
     });
     pass.setPipeline(this.pipeline);
-    pass.setBindGroup(0, this.bindGroup);
+    pass.setBindGroup(0, this.renderBindGroups[lightingWriteIndex]);
     pass.draw(3);
     pass.end();
     this.device.queue.submit([encoder.finish()]);
+    this.lightingReadIndex = lightingWriteIndex;
     this.raf = requestAnimationFrame(this.render);
   };
 }

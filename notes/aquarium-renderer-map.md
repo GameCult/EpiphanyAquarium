@@ -12,8 +12,10 @@ Right now the live renderer is a hybrid:
 - `public/textures/studio3.hdr` is loaded through Three `RGBELoader`, filtered
   through PMREM, and assigned to `scene.environment` for PBR lighting;
 - a WebGPU field layer builds a froxel primitive mask in a storage buffer;
+- a second WebGPU compute pass ping-pongs low-order spherical-harmonic lighting
+  coefficients through froxel space;
 - the WebGPU field renderer marches screen/frustum samples and evaluates only
-  the primitives named by the current froxel;
+  the primitives and SH lighting named by the current froxel;
 - a WebGL analytic field-volume path remains as fallback when WebGPU is absent;
 - DOM labels and menus are projected from the same Three camera, but remain DOM.
 
@@ -100,8 +102,11 @@ available.
 It uses:
 
 - one storage buffer of `u32` masks, one entry per froxel;
+- two ping-ponged storage buffers of SH lighting, four `vec4` coefficients per
+  froxel;
 - one storage buffer of projected primitive data;
 - one storage buffer of primitive colors / Self flags;
+- one storage buffer containing a tiny sampled summary of `studio3.hdr`;
 - one uniform buffer for screen size, time, primitive count, and froxel size.
 
 The compute pass dispatches one invocation per froxel:
@@ -123,7 +128,34 @@ evaluates those fields while marching through the froxel. This is the machine
 we actually wanted; the earlier cached-density variant was the wrong little
 office job.
 
-### 6. WebGPU Field March
+### 6. WebGPU Froxel SH Lighting
+
+After primitive membership is built, a second compute pass updates a first-order
+lighting field in froxel space.
+
+Each froxel stores four RGB coefficients:
+
+```text
+L0, Lx, Ly, Lz
+```
+
+This is deliberately low order. It is for soft directional volumetric lighting,
+not mirror-perfect reflection. The pass:
+
+1. reads the previous frame's SH coefficients;
+2. blends in six-neighbor propagation;
+3. injects environment lighting from grid-volume edges using a small sampled
+   summary of `studio3.hdr`;
+4. injects local emissive light from intersecting primitives, with Self acting
+   as the warm solar emitter;
+5. writes the next SH buffer.
+
+This is propagation, not yet full camera-motion reprojection with history
+validity. It still changes the ownership model in the important way: diffuse
+volumetric light now belongs to froxel space. The previous baseline
+screen-depth haze was removed because it did not move with the camera or scene.
+
+### 7. WebGPU Field March
 
 The WebGPU render pass draws a fullscreen triangle over the stardust/field
 canvas. For each pixel:
@@ -135,9 +167,11 @@ For each pixel:
 3. Read that cell's primitive bitmask from the storage buffer.
 4. Evaluate only the named planet/atmosphere primitives for both solid SDF
    hits and volumetric atmosphere density.
-5. If the ray touches a solid SDF, shade that solid, preserve the accumulated
+5. Sample the froxel's SH lighting coefficients for local diffuse gas and
+   solid wrap lighting.
+6. If the ray touches a solid SDF, shade that solid, preserve the accumulated
    in-scattering/transmittance up to the hit, and terminate the march.
-6. Otherwise accumulate Beer-Lambert transmittance and in-scattering for the
+7. Otherwise accumulate Beer-Lambert transmittance and in-scattering for the
    current volumetric sample.
 
 The WebGL field-volume shader still exists as fallback, but Three marks it as
@@ -145,16 +179,16 @@ The WebGL field-volume shader still exists as fallback, but Three marks it as
 No CPU readback or WebGPU-to-WebGL texture shuttle is used.
 
 The current WebGPU chrome shader does not yet sample the HDR texture directly;
-it uses a matching warm-key/cool-fill studio response. Direct HDR sampling in
-WebGPU needs a parsed Radiance HDR texture or a prefiltered GPU-side environment
-resource owned by the WebGPU graph, not a WebGL PMREM texture borrowed across
-APIs.
+it uses a sampled HDR summary for SH/environment response and a procedural
+warm-key/cool-fill lobe for reflections. Direct HDR sampling in WebGPU needs a
+parsed Radiance HDR texture or a prefiltered GPU-side environment resource owned
+by the WebGPU graph, not a WebGL PMREM texture borrowed across APIs.
 
 The solid and volumetric paths intentionally share the same primitive map. A
 froxel says "these primitives may matter here"; the pixel ray then asks those
 primitives whether they are solid, atmospheric, or both at the current sample.
 
-### 7. Agent Planet SDFs
+### 8. Agent Planet SDFs
 
 Agent bodies are analytic SDF planets:
 
@@ -171,7 +205,11 @@ Displacement uses cheap 4D fBm:
 
 - local planet xyz is the spatial domain;
 - time is the fourth coordinate;
-- Self gets higher frequency/amplitude and ridge-like loop emphasis.
+- Self gets higher amplitude and ridge-like loop emphasis.
+
+The displacement frequencies are intentionally low. The planets should read as
+chrome/gas bodies with slow organic surface motion, not sandpaper covered in
+shader enthusiasm.
 
 Non-Self bodies shade as chrome planets: reflected view/sky color, Fresnel, and
 agent tint. Self shades as a solar body with warm emission, stronger plasma
@@ -180,7 +218,7 @@ noise, and corona-weighted gas.
 The visible old Three geometry for bodies has been removed. Invisible Three
 groups remain because DOM projection needs stable world anchors.
 
-### 8. Gas and Atmosphere
+### 9. Gas and Atmosphere
 
 Gas density has several terms:
 
@@ -238,16 +276,21 @@ Implemented now:
 
 - Beer-Lambert transmittance/in-scattering math;
 - WebGPU compute pass that builds a camera/frustum froxel primitive mask;
-- pixel march samples the primitive mask and evaluates only relevant fields.
+- WebGPU compute pass that propagates first-order SH lighting in froxel space;
+- edge environment injection from `studio3.hdr` summary;
+- local Self emission injection;
+- pixel march samples the primitive mask and SH lighting while evaluating only
+  relevant fields.
 
 Not implemented yet:
 
-- density/light injection cache;
+- density injection cache;
 - depth-wise scattering/transmittance scan;
+- camera-motion reprojection and history clipping for the SH field;
 - composition by sampling accumulated froxel fog at scene depth.
 
-The current WebGPU path is an acceleration grid for primitive evaluation, not a
-full Wronski fog lighting cache yet.
+The current WebGPU path is now an acceleration grid plus a small propagated
+lighting cache. It is still not a full Wronski fog integration cache yet.
 
 ### Gigavoxels / Brick Maps
 
@@ -358,6 +401,7 @@ Preferred WebGPU cost is now closer to:
 
 ```text
 froxel cells * cheap primitive overlap
+froxel cells * SH propagation/injection
 + screen pixels * fog steps * primitives named by current froxel
 ```
 
@@ -376,6 +420,7 @@ it lost a bet.
 ## Current Renderer In One Sentence
 
 Epiphany Aquarium currently renders a moving Aetheria-style gravity domain in
-Three, then overlays a WebGPU compute-built froxel primitive map and field march
-that turns agents into chrome/solar field planets, while DOM billboards are
-projected from the same camera for crisp interaction.
+Three, then overlays a WebGPU compute-built froxel primitive map, propagated SH
+lighting field, and SDF/atmosphere march that turns agents into chrome/solar
+field planets, while DOM billboards are projected from the same camera for crisp
+interaction.
