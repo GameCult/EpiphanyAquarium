@@ -308,5 +308,9 @@ Current slice:
   Vector, and Deferred prepasses; `AquariumDeferredPrepassNode` runs after
   Bevy's late deferred prepass and writes raymarched terrain/body depth,
   normals, motion vectors, packed deferred material data, and lighting-pass ids
-  into `ViewPrepassTextures`. The legacy fullscreen aquarium resolve still
-  draws until the TAA/deferred composite replaces it.
+  into `ViewPrepassTextures`.
+- Current single-raymarch correction: the legacy post-tonemap fullscreen
+  aquarium resolve has been removed from the graph. SH/brick compute runs at
+  the start of `AquariumDeferredPrepassNode`, and the only active surface
+  raymarch entry is `fs_deferred_prepass`; final composition must consume the
+  stored Bevy prepass/G-buffer data.
