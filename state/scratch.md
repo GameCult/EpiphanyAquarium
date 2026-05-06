@@ -201,3 +201,12 @@ Current slice:
   is 2D source fields, typed SDF source lists, optional sparse bricks only for
   non-cheap derived fields, froxel injection/integration, depth-aware
   composition, stochastic TAA resolve, and Bruneton-style global atmosphere.
+- Current WebGPU correction: the froxel layer should store primitive
+  membership, not pre-baked fog density. `src/aquariumStardust.ts` now creates
+  a WebGPU field overlay that builds one `u32` primitive bitmask per froxel in a
+  storage buffer, then the render pass marches pixels and evaluates only the
+  primitives named by that froxel. This avoids WebGPU->CPU->WebGL shuttling.
+  `src/aquariumScene3d.ts` keeps the Three/WebGL field-volume path as fallback
+  only; when `navigator.gpu` exists it marks the field as externally rendered
+  and skips the expensive WebGL SDF/fog pass. Build and visual smoke passed on
+  port 14922.

@@ -45,6 +45,12 @@ const stardustSpan = Math.ceil(Math.sqrt(stardustParticleCount));
 const stardustSpacing = (worldWidth * 3.4) / stardustSpan;
 const maxStardustSources = 8;
 const maxFieldSources = 8;
+const froxelWidth = 96;
+const froxelHeight = 54;
+const froxelDepth = 24;
+const froxelAtlasColumns = 6;
+const froxelAtlasRows = 4;
+const froxelMaxDistance = 28;
 
 export function createAquariumScene3d(canvas: HTMLCanvasElement): AquariumScene3d {
   return new ThreeAquariumScene(canvas);
@@ -84,9 +90,30 @@ class ThreeAquariumScene implements AquariumScene3d {
     uTime: { value: 0 },
   };
   private gridGroup!: THREE.Group;
+  private fieldColorData = Array.from({ length: maxFieldSources }, () => new THREE.Vector4(0.52, 1.0, 0.78, 0));
+  private fieldSourceData = Array.from({ length: maxFieldSources }, () => new THREE.Vector4(999, 999, 0, 0));
   private fieldVolumeMaterial!: THREE.ShaderMaterial;
   private fieldVolumeScene = new THREE.Scene();
   private fieldVolumeCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  private froxelCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  private froxelInjectionMaterial!: THREE.ShaderMaterial;
+  private froxelPrimitiveTargetA = new THREE.WebGLRenderTarget(froxelWidth * froxelAtlasColumns, froxelHeight * froxelAtlasRows, {
+    depthBuffer: false,
+    format: THREE.RGBAFormat,
+    magFilter: THREE.NearestFilter,
+    minFilter: THREE.NearestFilter,
+    stencilBuffer: false,
+    type: THREE.HalfFloatType,
+  });
+  private froxelPrimitiveTargetB = new THREE.WebGLRenderTarget(froxelWidth * froxelAtlasColumns, froxelHeight * froxelAtlasRows, {
+    depthBuffer: false,
+    format: THREE.RGBAFormat,
+    magFilter: THREE.NearestFilter,
+    minFilter: THREE.NearestFilter,
+    stencilBuffer: false,
+    type: THREE.HalfFloatType,
+  });
+  private froxelScene = new THREE.Scene();
   private pointer: PointerState = { active: false, xPercent: 50, yPercent: 50 };
   private pointerWorld = new THREE.Vector3(0, 0, 0);
   private raf = 0;
@@ -95,6 +122,7 @@ class ThreeAquariumScene implements AquariumScene3d {
   private scene = new THREE.Scene();
   private splatMeshes: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>[] = [];
   private stardustMaterial!: THREE.ShaderMaterial;
+  private useExternalFieldRenderer = Boolean((navigator as unknown as { gpu?: unknown }).gpu);
   private worldPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
   private readonly handleKeyDown = (event: KeyboardEvent) => this.keyPan(event);
 
@@ -129,6 +157,8 @@ class ThreeAquariumScene implements AquariumScene3d {
     this.scene.add(this.gridGroup);
     this.stardustMaterial = this.createStardustMaterial();
     this.gridGroup.add(this.createStardust());
+    this.froxelInjectionMaterial = this.createFroxelInjectionMaterial();
+    this.froxelScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.froxelInjectionMaterial));
     this.fieldVolumeMaterial = this.createFieldVolumeMaterial();
     this.fieldVolumeScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.fieldVolumeMaterial));
     this.scene.add(this.createCursor());
@@ -154,6 +184,8 @@ class ThreeAquariumScene implements AquariumScene3d {
       }
     });
     this.gravityRenderTarget.dispose();
+    this.froxelPrimitiveTargetA.dispose();
+    this.froxelPrimitiveTargetB.dispose();
     this.renderer.dispose();
   }
 
@@ -606,17 +638,123 @@ class ThreeAquariumScene implements AquariumScene3d {
     });
   }
 
-  private createFieldVolumeMaterial() {
-    const sourceData = Array.from({ length: maxFieldSources }, () => new THREE.Vector4(999, 999, 0, 0));
-    const sourceColors = Array.from({ length: maxFieldSources }, () => new THREE.Vector4(0.52, 1.0, 0.78, 0));
+  private createFroxelInjectionMaterial() {
     return new THREE.ShaderMaterial({
       uniforms: {
         uCameraMatrixWorld: { value: new THREE.Matrix4() },
         uCameraPosition: { value: new THREE.Vector3() },
         uCameraTarget: { value: this.cameraTarget },
-        uFieldColors: { value: sourceColors },
-        uFieldSources: { value: sourceData },
-        uFogSteps: { value: new URLSearchParams(globalThis.location?.search ?? "").has("smoke") ? 28 : 64 },
+        uFieldColors: { value: this.fieldColorData },
+        uFieldSources: { value: this.fieldSourceData },
+        uFroxelAtlas: { value: new THREE.Vector4(froxelWidth, froxelHeight, froxelAtlasColumns, froxelAtlasRows) },
+        uFroxelDepth: { value: froxelDepth },
+        uFroxelMaxDistance: { value: froxelMaxDistance },
+        uGravityOrigin: this.gravityUniforms.uGravityOrigin,
+        uGravitySize: this.gravityUniforms.uGravitySize,
+        uGravityTex: this.gravityUniforms.uGravityTex,
+        uInvProjectionMatrix: { value: new THREE.Matrix4() },
+        uPrimitiveOffset: { value: 0 },
+        uPointer: { value: new THREE.Vector4(999, 999, 0, 0) },
+        uTime: this.gravityUniforms.uTime,
+      },
+      vertexShader: `
+        varying vec2 vUv;
+
+        void main() {
+          vUv = uv;
+          gl_Position = vec4(position.xy, 0.0, 1.0);
+        }
+      `,
+      fragmentShader: `
+        precision highp float;
+
+        uniform mat4 uCameraMatrixWorld;
+        uniform vec3 uCameraPosition;
+        uniform vec3 uCameraTarget;
+        uniform vec4 uFieldColors[${maxFieldSources}];
+        uniform vec4 uFieldSources[${maxFieldSources}];
+        uniform vec4 uFroxelAtlas;
+        uniform int uFroxelDepth;
+        uniform float uFroxelMaxDistance;
+        uniform vec2 uGravityOrigin;
+        uniform vec2 uGravitySize;
+        uniform sampler2D uGravityTex;
+        uniform mat4 uInvProjectionMatrix;
+        uniform int uPrimitiveOffset;
+        uniform vec4 uPointer;
+        uniform float uTime;
+        varying vec2 vUv;
+
+        float sourceRadius(vec4 source) {
+          return 0.16 + source.z * 0.12 + source.w * 0.035;
+        }
+
+        float primitiveIntersectsFroxel(int index, vec3 p, float t) {
+          vec4 source = uFieldSources[index];
+          vec3 center = vec3(source.xy, 0.54 + source.w * 0.55);
+          float radius = sourceRadius(source);
+          float atmosphereRadius = radius * mix(1.45, 2.35, uFieldColors[index].w) * (0.95 + source.z * 0.42);
+          float cellRadius = 0.22 + t * 0.018;
+          return 1.0 - step(atmosphereRadius + cellRadius, length(p - center));
+        }
+
+        void main() {
+          vec2 atlasPixel = floor(vUv * uFroxelAtlas.xy * uFroxelAtlas.zw);
+          float tileX = mod(atlasPixel.x, uFroxelAtlas.x);
+          float tileY = mod(atlasPixel.y, uFroxelAtlas.y);
+          float column = floor(atlasPixel.x / uFroxelAtlas.x);
+          float row = floor(atlasPixel.y / uFroxelAtlas.y);
+          float slice = row * uFroxelAtlas.z + column;
+          if (slice >= float(uFroxelDepth)) discard;
+          vec2 sliceUv = (vec2(tileX, tileY) + 0.5) / uFroxelAtlas.xy;
+          vec2 ndc = sliceUv * 2.0 - 1.0;
+          vec4 farView = uInvProjectionMatrix * vec4(ndc, 1.0, 1.0);
+          farView /= farView.w;
+          vec3 rayOrigin = uCameraPosition;
+          vec3 rayFar = (uCameraMatrixWorld * farView).xyz;
+          vec3 rayDir = normalize(rayFar - rayOrigin);
+          float progress = (slice + 0.5) / max(float(uFroxelDepth), 1.0);
+          float t = mix(0.12, uFroxelMaxDistance, progress * progress);
+          vec3 p = rayOrigin + rayDir * t;
+          vec4 mask = vec4(0.0);
+          for (int channel = 0; channel < 4; channel += 1) {
+            int primitiveIndex = uPrimitiveOffset + channel;
+            float hit = 0.0;
+            if (primitiveIndex == 0) hit = primitiveIntersectsFroxel(0, p, t);
+            if (primitiveIndex == 1) hit = primitiveIntersectsFroxel(1, p, t);
+            if (primitiveIndex == 2) hit = primitiveIntersectsFroxel(2, p, t);
+            if (primitiveIndex == 3) hit = primitiveIntersectsFroxel(3, p, t);
+            if (primitiveIndex == 4) hit = primitiveIntersectsFroxel(4, p, t);
+            if (primitiveIndex == 5) hit = primitiveIntersectsFroxel(5, p, t);
+            if (primitiveIndex == 6) hit = primitiveIntersectsFroxel(6, p, t);
+            if (primitiveIndex == 7) hit = primitiveIntersectsFroxel(7, p, t);
+            if (channel == 0) mask.x = hit;
+            if (channel == 1) mask.y = hit;
+            if (channel == 2) mask.z = hit;
+            if (channel == 3) mask.w = hit;
+          }
+          gl_FragColor = mask;
+        }
+      `,
+      depthTest: false,
+      depthWrite: false,
+    });
+  }
+
+  private createFieldVolumeMaterial() {
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        uCameraMatrixWorld: { value: new THREE.Matrix4() },
+        uCameraPosition: { value: new THREE.Vector3() },
+        uCameraTarget: { value: this.cameraTarget },
+        uFieldColors: { value: this.fieldColorData },
+        uFieldSources: { value: this.fieldSourceData },
+        uFogSteps: { value: new URLSearchParams(globalThis.location?.search ?? "").has("smoke") ? 18 : 32 },
+        uFroxelAtlas: { value: new THREE.Vector4(froxelWidth, froxelHeight, froxelAtlasColumns, froxelAtlasRows) },
+        uFroxelDepth: { value: froxelDepth },
+        uFroxelMaxDistance: { value: froxelMaxDistance },
+        uFroxelPrimitiveTexA: { value: this.froxelPrimitiveTargetA.texture },
+        uFroxelPrimitiveTexB: { value: this.froxelPrimitiveTargetB.texture },
         uGravityOrigin: this.gravityUniforms.uGravityOrigin,
         uGravitySize: this.gravityUniforms.uGravitySize,
         uGravityTex: this.gravityUniforms.uGravityTex,
@@ -642,6 +780,11 @@ class ThreeAquariumScene implements AquariumScene3d {
         uniform vec4 uFieldColors[${maxFieldSources}];
         uniform vec4 uFieldSources[${maxFieldSources}];
         uniform int uFogSteps;
+        uniform vec4 uFroxelAtlas;
+        uniform int uFroxelDepth;
+        uniform float uFroxelMaxDistance;
+        uniform sampler2D uFroxelPrimitiveTexA;
+        uniform sampler2D uFroxelPrimitiveTexB;
         uniform vec2 uGravityOrigin;
         uniform vec2 uGravitySize;
         uniform sampler2D uGravityTex;
@@ -755,41 +898,57 @@ class ThreeAquariumScene implements AquariumScene3d {
           return -(field.r - field.g);
         }
 
-        float solidSdf(vec3 p, out vec3 color) {
+        float primitiveMask(int index, vec4 maskA, vec4 maskB) {
+          if (index == 0) return maskA.x;
+          if (index == 1) return maskA.y;
+          if (index == 2) return maskA.z;
+          if (index == 3) return maskA.w;
+          if (index == 4) return maskB.x;
+          if (index == 5) return maskB.y;
+          if (index == 6) return maskB.z;
+          if (index == 7) return maskB.w;
+          return 0.0;
+        }
+
+        float solidSdfMasked(vec3 p, vec4 maskA, vec4 maskB, out vec3 color) {
           float agentSolid = 999.0;
           vec3 agentColor = vec3(0.55, 1.0, 0.78);
           for (int i = 0; i < ${maxFieldSources}; i += 1) {
-            vec4 source = uFieldSources[i];
-            vec4 sourceColor = uFieldColors[i];
-            float d = planetSdf(p, source, sourceColor.w);
-            if (d < agentSolid) {
-              agentSolid = d;
-              agentColor = sourceColor.rgb;
+            if (primitiveMask(i, maskA, maskB) > 0.01) {
+              vec4 source = uFieldSources[i];
+              vec4 sourceColor = uFieldColors[i];
+              float d = planetSdf(p, source, sourceColor.w);
+              if (d < agentSolid) {
+                agentSolid = d;
+                agentColor = sourceColor.rgb;
+              }
             }
           }
           color = agentColor;
           return agentSolid;
         }
 
-        float nearestPlanet(vec3 p, out vec4 source, out vec4 sourceColor, out float sdfValue) {
+        float nearestPlanetMasked(vec3 p, vec4 maskA, vec4 maskB, out vec4 source, out vec4 sourceColor, out float sdfValue) {
           float nearest = 999.0;
           source = vec4(999.0, 999.0, 0.0, 0.0);
           sourceColor = vec4(0.5, 1.0, 0.76, 0.0);
           for (int i = 0; i < ${maxFieldSources}; i += 1) {
-            vec4 candidate = uFieldSources[i];
-            vec4 candidateColor = uFieldColors[i];
-            float d = planetSdf(p, candidate, candidateColor.w);
-            if (d < nearest) {
-              nearest = d;
-              source = candidate;
-              sourceColor = candidateColor;
+            if (primitiveMask(i, maskA, maskB) > 0.01) {
+              vec4 candidate = uFieldSources[i];
+              vec4 candidateColor = uFieldColors[i];
+              float d = planetSdf(p, candidate, candidateColor.w);
+              if (d < nearest) {
+                nearest = d;
+                source = candidate;
+                sourceColor = candidateColor;
+              }
             }
           }
           sdfValue = nearest;
           return nearest;
         }
 
-        float gasDensity(vec3 p, vec3 rayDir) {
+        float gasDensityMasked(vec3 p, vec3 rayDir, vec4 maskA, vec4 maskB, out vec3 tint) {
           vec3 anchor = uCameraTarget;
           vec3 gasP = p - (anchor + vec3(0.0, 0.0, 0.24));
           vec3 flow = triFlow(gasP * 0.42 - vec3(0.0, uTime * 0.035, 0.0));
@@ -807,22 +966,29 @@ class ThreeAquariumScene implements AquariumScene3d {
           float h = gravityHeight(p.xy);
           float surfaceFog = exp(-abs(p.z - h - 0.16) * 1.9) * 0.28;
           float sourceFog = 0.0;
+          vec3 sourceTint = vec3(0.0);
           for (int i = 0; i < ${maxFieldSources}; i += 1) {
-            vec4 source = uFieldSources[i];
-            vec4 sourceColor = uFieldColors[i];
-            vec3 center = vec3(source.xy, 0.54 + source.w * 0.55);
-            float radius = sourceRadius(source);
-            float selfFlag = sourceColor.w;
-            float d = planetSdf(p, source, selfFlag);
-            float shell = exp(-max(d, 0.0) / max(radius * mix(0.28, 0.82, selfFlag) * (0.78 + source.z * 0.55), 0.001));
-            float outside = smoothstep(-0.025, 0.08, d);
-            float loopNoise = pow(max(0.0, fbm4(vec4((p - center) / max(radius, 0.001) * 3.5, uTime * 0.42)) * 0.5 + 0.5), mix(2.6, 7.0, selfFlag));
-            sourceFog += shell * outside * (0.035 + source.z * 0.12 + selfFlag * 0.36) * (0.55 + loopNoise * mix(0.7, 2.4, selfFlag));
+            if (primitiveMask(i, maskA, maskB) > 0.01) {
+              vec4 source = uFieldSources[i];
+              vec4 sourceColor = uFieldColors[i];
+              vec3 center = vec3(source.xy, 0.54 + source.w * 0.55);
+              float radius = sourceRadius(source);
+              float selfFlag = sourceColor.w;
+              float d = planetSdf(p, source, selfFlag);
+              float shell = exp(-max(d, 0.0) / max(radius * mix(0.28, 0.82, selfFlag) * (0.78 + source.z * 0.55), 0.001));
+              float outside = smoothstep(-0.025, 0.08, d);
+              float loopNoise = pow(max(0.0, fbm4(vec4((p - center) / max(radius, 0.001) * 3.5, uTime * 0.42)) * 0.5 + 0.5), mix(2.6, 7.0, selfFlag));
+              float localFog = shell * outside * (0.035 + source.z * 0.12 + selfFlag * 0.36) * (0.55 + loopNoise * mix(0.7, 2.4, selfFlag));
+              sourceFog += localFog;
+              sourceTint += localFog * mix(sourceColor.rgb, vec3(2.8, 1.65, 0.46), selfFlag);
+            }
           }
           vec2 pointerDelta = p.xy - uPointer.xy;
           float pointerFog = exp(-dot(pointerDelta, pointerDelta) * 1.1 - abs(p.z - 0.28) * 2.2) * uPointer.z * 0.18;
           float horizonBias = smoothstep(0.1, 0.9, dot(rayDir, normalize(vec3(rayDir.xy, -0.18))) * 0.5 + 0.5);
-          return max(0.0, gasShape * (0.018 + low * 0.04 - high * 0.018) + surfaceFog + sourceFog + pointerFog) * (0.7 + horizonBias * 0.55);
+          float density = max(0.0, gasShape * (0.018 + low * 0.04 - high * 0.018) + surfaceFog + sourceFog + pointerFog) * (0.7 + horizonBias * 0.55);
+          tint = mix(fogTint(p, density), sourceTint / max(sourceFog, 0.0001), clamp(sourceFog * 9.0, 0.0, 1.0));
+          return density;
         }
 
         vec3 fogTint(vec3 p, float density) {
@@ -832,22 +998,33 @@ class ThreeAquariumScene implements AquariumScene3d {
           return mix(cool, base, clamp(density * 8.0, 0.0, 1.0));
         }
 
-        vec3 atmosphereTint(vec3 p) {
+        vec3 atmosphereTint(vec3 p, vec4 maskA, vec4 maskB) {
           vec4 nearestSource;
           vec4 nearestColor;
           float d;
-          nearestPlanet(p, nearestSource, nearestColor, d);
+          nearestPlanetMasked(p, maskA, maskB, nearestSource, nearestColor, d);
           float selfFlag = nearestColor.w;
           vec3 solar = vec3(2.8, 1.65, 0.46);
           return mix(nearestColor.rgb * 0.95 + vec3(0.08, 0.22, 0.18), solar, selfFlag);
         }
 
-        vec3 estimateNormal(vec3 p) {
+        void sampleFroxelMasks(vec2 screenUv, float progress, out vec4 maskA, out vec4 maskB) {
+          float z = clamp(progress, 0.0, 0.9999) * float(uFroxelDepth);
+          float slice = floor(z);
+          vec2 tileUv = clamp(screenUv, vec2(0.001), vec2(0.999));
+          float column = mod(slice, uFroxelAtlas.z);
+          float row = floor(slice / uFroxelAtlas.z);
+          vec2 atlas = (vec2(column, row) + tileUv) / uFroxelAtlas.zw;
+          maskA = texture2D(uFroxelPrimitiveTexA, atlas);
+          maskB = texture2D(uFroxelPrimitiveTexB, atlas);
+        }
+
+        vec3 estimateNormal(vec3 p, vec4 maskA, vec4 maskB) {
           vec3 c;
           vec2 e = vec2(0.015, 0.0);
-          float dx = solidSdf(p + e.xyy, c) - solidSdf(p - e.xyy, c);
-          float dy = solidSdf(p + e.yxy, c) - solidSdf(p - e.yxy, c);
-          float dz = solidSdf(p + e.yyx, c) - solidSdf(p - e.yyx, c);
+          float dx = solidSdfMasked(p + e.xyy, maskA, maskB, c) - solidSdfMasked(p - e.xyy, maskA, maskB, c);
+          float dy = solidSdfMasked(p + e.yxy, maskA, maskB, c) - solidSdfMasked(p - e.yxy, maskA, maskB, c);
+          float dz = solidSdfMasked(p + e.yyx, maskA, maskB, c) - solidSdfMasked(p - e.yyx, maskA, maskB, c);
           return normalize(vec3(dx, dy, dz));
         }
 
@@ -861,7 +1038,7 @@ class ThreeAquariumScene implements AquariumScene3d {
           vec3 rayFar = (uCameraMatrixWorld * farView).xyz;
           vec3 rayDir = normalize(rayFar - rayOrigin);
           float jitter = hash(gl_FragCoord.xy + uTime * 23.17);
-          float maxT = 28.0;
+          float maxT = uFroxelMaxDistance;
           float transmittance = 1.0;
           vec3 scattering = vec3(0.0);
           vec3 solidColor = vec3(0.0);
@@ -873,16 +1050,19 @@ class ThreeAquariumScene implements AquariumScene3d {
             float progress = (float(i) + jitter) / max(float(uFogSteps), 1.0);
             t = mix(0.12, maxT, progress * progress);
             vec3 p = rayOrigin + rayDir * t;
+            vec4 maskA;
+            vec4 maskB;
+            sampleFroxelMasks(vUv, progress, maskA, maskB);
             vec3 localSolidColor;
-            float sd = solidSdf(p, localSolidColor);
+            float sd = solidSdfMasked(p, maskA, maskB, localSolidColor);
             if (sd < 0.012 && solidHit < 0.5) {
               solidHit = 1.0;
               solidT = t;
-              vec3 normal = estimateNormal(p);
+              vec3 normal = estimateNormal(p, maskA, maskB);
               vec4 hitSource;
               vec4 hitColor;
               float hitSdf;
-              nearestPlanet(p, hitSource, hitColor, hitSdf);
+              nearestPlanetMasked(p, maskA, maskB, hitSource, hitColor, hitSdf);
               float selfFlag = hitColor.w;
               vec3 viewDir = normalize(rayOrigin - p);
               vec3 reflected = reflect(-viewDir, normal);
@@ -896,10 +1076,11 @@ class ThreeAquariumScene implements AquariumScene3d {
               break;
             }
             float stepSize = maxT / max(float(uFogSteps), 1.0) * (0.45 + progress * 1.45);
-            float d = gasDensity(p, rayDir);
+            vec3 tint;
+            float d = gasDensityMasked(p, rayDir, maskA, maskB, tint);
             float extinction = d * 0.82;
             float stepTransmittance = exp(-extinction * stepSize);
-            vec3 luminance = mix(fogTint(p, d), atmosphereTint(p), clamp(d * 4.0, 0.0, 1.0)) * d * 1.35;
+            vec3 luminance = mix(tint, atmosphereTint(p, maskA, maskB), clamp(d * 4.0, 0.0, 1.0)) * d * 1.35;
             scattering += transmittance * (luminance - luminance * stepTransmittance) / max(extinction, 0.0001);
             transmittance *= stepTransmittance;
             if (transmittance < 0.015) break;
@@ -1070,15 +1251,33 @@ class ThreeAquariumScene implements AquariumScene3d {
     this.renderer.setRenderTarget(previousTarget);
     this.renderer.setClearColor(0x000000, 0);
     this.renderer.render(this.scene, this.camera);
-    this.fieldVolumeMaterial.uniforms.uCameraMatrixWorld.value.copy(this.camera.matrixWorld);
-    this.fieldVolumeMaterial.uniforms.uCameraPosition.value.copy(this.camera.position);
-    this.fieldVolumeMaterial.uniforms.uCameraTarget.value.copy(this.cameraTarget);
-    this.fieldVolumeMaterial.uniforms.uInvProjectionMatrix.value.copy(this.camera.projectionMatrixInverse);
-    this.fieldVolumeMaterial.uniforms.uPointer.value.set(this.pointerWorld.x, this.pointerWorld.y, this.pointer.active ? 1 : 0, 0);
-    this.fieldVolumeMaterial.uniforms.uResolution.value.set(width, height);
-    this.renderer.autoClear = false;
-    this.renderer.render(this.fieldVolumeScene, this.fieldVolumeCamera);
-    this.renderer.autoClear = true;
+    if (!this.useExternalFieldRenderer) {
+      this.froxelInjectionMaterial.uniforms.uCameraMatrixWorld.value.copy(this.camera.matrixWorld);
+      this.froxelInjectionMaterial.uniforms.uCameraPosition.value.copy(this.camera.position);
+      this.froxelInjectionMaterial.uniforms.uCameraTarget.value.copy(this.cameraTarget);
+      this.froxelInjectionMaterial.uniforms.uInvProjectionMatrix.value.copy(this.camera.projectionMatrixInverse);
+      this.froxelInjectionMaterial.uniforms.uPointer.value.set(this.pointerWorld.x, this.pointerWorld.y, this.pointer.active ? 1 : 0, 0);
+      this.renderer.setRenderTarget(this.froxelPrimitiveTargetA);
+      this.renderer.setClearColor(0x000000, 1);
+      this.renderer.clear(true, false, false);
+      this.froxelInjectionMaterial.uniforms.uPrimitiveOffset.value = 0;
+      this.renderer.render(this.froxelScene, this.froxelCamera);
+      this.renderer.setRenderTarget(this.froxelPrimitiveTargetB);
+      this.renderer.clear(true, false, false);
+      this.froxelInjectionMaterial.uniforms.uPrimitiveOffset.value = 4;
+      this.renderer.render(this.froxelScene, this.froxelCamera);
+      this.renderer.setRenderTarget(previousTarget);
+      this.renderer.setClearColor(0x000000, 0);
+      this.fieldVolumeMaterial.uniforms.uCameraMatrixWorld.value.copy(this.camera.matrixWorld);
+      this.fieldVolumeMaterial.uniforms.uCameraPosition.value.copy(this.camera.position);
+      this.fieldVolumeMaterial.uniforms.uCameraTarget.value.copy(this.cameraTarget);
+      this.fieldVolumeMaterial.uniforms.uInvProjectionMatrix.value.copy(this.camera.projectionMatrixInverse);
+      this.fieldVolumeMaterial.uniforms.uPointer.value.set(this.pointerWorld.x, this.pointerWorld.y, this.pointer.active ? 1 : 0, 0);
+      this.fieldVolumeMaterial.uniforms.uResolution.value.set(width, height);
+      this.renderer.autoClear = false;
+      this.renderer.render(this.fieldVolumeScene, this.fieldVolumeCamera);
+      this.renderer.autoClear = true;
+    }
     this.canvas.dataset.threeReady = "true";
     this.canvas.dataset.threeAgents = String(this.agentGroups.size);
     this.canvas.dataset.threeCamera = [
@@ -1099,7 +1298,7 @@ class ThreeAquariumScene implements AquariumScene3d {
       this.gravityUniforms.uGravityOrigin.value.y.toFixed(3),
     ].join(",");
     this.canvas.dataset.threeStardust = String(stardustParticleCount);
-    this.canvas.dataset.threeFieldVolume = "sdf-solid+gas-fog";
+    this.canvas.dataset.threeFieldVolume = this.useExternalFieldRenderer ? "webgpu-external-field" : "webgl-froxel-primitive-mask+sdf-gas";
     this.raf = requestAnimationFrame(this.render);
   };
 

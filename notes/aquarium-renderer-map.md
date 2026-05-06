@@ -9,13 +9,15 @@ Right now the live renderer is a hybrid:
 
 - a Three.js scene renders the displaced gravity grid, cursor, and stardust;
 - a moving 2D gravity render target stores Aetheria-style height/energy fields;
-- a fullscreen field-volume shader reconstructs a camera ray per pixel;
-- that shader raymarches analytic SDF solids and procedural gas directly;
+- a WebGPU field layer builds a froxel primitive mask in a storage buffer;
+- the WebGPU field renderer marches screen/frustum samples and evaluates only
+  the primitives named by the current froxel;
+- a WebGL analytic field-volume path remains as fallback when WebGPU is absent;
 - DOM labels and menus are projected from the same Three camera, but remain DOM.
 
-So the current fog/planet path is a direct per-pixel raymarch over analytic
-fields. It is not yet a froxel cache, sparse brick field, or compute-owned
-volume.
+So the current preferred fog/planet path is now real compute: froxels store
+which primitives intersect each cell. It is not yet a sparse brick map or full
+Wronski lighting/integration cache.
 
 ## Pass Graph Today
 
@@ -88,27 +90,55 @@ Stardust samples the gravity texture for local grid height, spawns with an
 exponential vertical distribution around the grid, and fades near the grid
 domain edge.
 
-### 5. Field-Volume Fullscreen Raymarch
+### 5. WebGPU Froxel Primitive Map
 
-After the Three scene render, the renderer draws a fullscreen plane with
-`createFieldVolumeMaterial()`.
+`src/aquariumStardust.ts` now owns the preferred field renderer when WebGPU is
+available.
+
+It uses:
+
+- one storage buffer of `u32` masks, one entry per froxel;
+- one storage buffer of projected primitive data;
+- one storage buffer of primitive colors / Self flags;
+- one uniform buffer for screen size, time, primitive count, and froxel size.
+
+The compute pass dispatches one invocation per froxel:
+
+```wgsl
+primitiveMasks[index] = mask;
+```
+
+Each bit in the mask names one possible primitive. With the current eight-agent
+limit, one `u32` is enough. The important contract is:
+
+```text
+froxel cell -> primitive membership bitset
+```
+
+The froxel does **not** store pre-baked fog color/density as the primary truth.
+It stores which fields are worth sampling in that region. The pixel pass then
+evaluates those fields while marching through the froxel. This is the machine
+we actually wanted; the earlier cached-density variant was the wrong little
+office job.
+
+### 6. WebGPU Field March
+
+The WebGPU render pass draws a fullscreen triangle over the stardust/field
+canvas. For each pixel:
 
 For each pixel:
 
-1. Convert screen UV to NDC.
-2. Use the inverse camera projection and camera world matrix to reconstruct a
-   world-space ray.
-3. March the ray with jittered quadratic spacing.
-4. At each sample:
-   - evaluate the nearest agent planet SDF;
-   - if solid is hit, shade it and stop;
-   - otherwise evaluate dynamic gas density;
-   - integrate Beer-Lambert transmittance and in-scattering.
+1. March a small fixed number of frustum-depth samples.
+2. Map the sample to a froxel cell.
+3. Read that cell's primitive bitmask from the storage buffer.
+4. Evaluate only the named planet/atmosphere primitives.
+5. Accumulate Beer-Lambert transmittance and in-scattering.
 
-This is the important part: the shader marches the pixel ray directly. There is
-no precomputed froxel volume between source fields and final composition.
+The WebGL field-volume shader still exists as fallback, but Three marks it as
+`webgpu-external-field` and skips that expensive path when WebGPU is available.
+No CPU readback or WebGPU-to-WebGL texture shuttle is used.
 
-### 6. Agent Planet SDFs
+### 7. Agent Planet SDFs
 
 Agent bodies are analytic SDF planets:
 
@@ -134,7 +164,7 @@ noise, and corona-weighted gas.
 The visible old Three geometry for bodies has been removed. Invisible Three
 groups remain because DOM projection needs stable world anchors.
 
-### 7. Gas and Atmosphere
+### 8. Gas and Atmosphere
 
 Gas density has several terms:
 
@@ -191,17 +221,17 @@ Not fully implemented:
 Implemented now:
 
 - Beer-Lambert transmittance/in-scattering math;
-- separation of density sources from integration in concept only.
+- WebGPU compute pass that builds a camera/frustum froxel primitive mask;
+- pixel march samples the primitive mask and evaluates only relevant fields.
 
 Not implemented yet:
 
-- camera/frustum-aligned froxel texture;
-- density/light injection pass;
+- density/light injection cache;
 - depth-wise scattering/transmittance scan;
 - composition by sampling accumulated froxel fog at scene depth.
 
-The current raymarch is conceptually compatible with a Wronski path, but it is
-not that path.
+The current WebGPU path is an acceleration grid for primitive evaluation, not a
+full Wronski fog lighting cache yet.
 
 ### Gigavoxels / Brick Maps
 
@@ -246,7 +276,7 @@ Intended role:
 - local dynamic fog should be lit/composited against those fields rather than
   solving horizon-scale multiple scattering every frame.
 
-## Why Not Froxels Yet?
+## Why Not Full Wronski Yet?
 
 The current WebGL2 implementation is trying to prove the interaction grammar and
 field ownership first:
@@ -256,7 +286,7 @@ field ownership first:
 - DOM labels project from the same camera;
 - Self and swarm cohesion have physical visual consequences.
 
-A real Wronski path wants more infrastructure:
+A full Wronski path wants more infrastructure:
 
 - a 3D froxel texture or packed 2D atlas;
 - injection passes for density/light/source terms;
@@ -308,7 +338,14 @@ The likely grown-up path is:
 
 ## Current Cost Shape
 
-Current cost is roughly:
+Preferred WebGPU cost is now closer to:
+
+```text
+froxel cells * cheap primitive overlap
++ screen pixels * fog steps * primitives named by current froxel
+```
+
+The old WebGL fallback cost is still roughly:
 
 ```text
 screen pixels * fog steps * maxFieldSources * SDF/noise cost
@@ -316,13 +353,13 @@ screen pixels * fog steps * maxFieldSources * SDF/noise cost
 
 `?smoke=visual` lowers fog steps from 64 to 28.
 
-This is why the first nested 4D value-noise planet draft was cut. It built, but
-it was the wrong cost shape for a per-pixel raymarch. The live shader uses a
-compact analytic 4D fBm instead.
+This is why WebGPU matters here. The primitive map lets empty froxels skip most
+agent SDF/atmosphere work instead of making every pixel sample every object like
+it lost a bet.
 
 ## Current Renderer In One Sentence
 
 Epiphany Aquarium currently renders a moving Aetheria-style gravity domain in
-Three, then overlays a direct fullscreen analytic SDF/gas raymarch that turns
-agents into chrome/solar field planets, while DOM billboards are projected from
-the same camera for crisp interaction.
+Three, then overlays a WebGPU compute-built froxel primitive map and field march
+that turns agents into chrome/solar field planets, while DOM billboards are
+projected from the same camera for crisp interaction.

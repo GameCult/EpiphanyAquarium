@@ -2,6 +2,7 @@ import type { AquariumAgentProjection } from "./aquariumFluid";
 
 type StardustProjection = AquariumAgentProjection & {
   color?: string;
+  glow?: string;
 };
 
 type GpuApi = {
@@ -208,15 +209,376 @@ fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
 }
 `;
 
+const froxelWidth = 96;
+const froxelHeight = 54;
+const froxelDepth = 24;
+const froxelCount = froxelWidth * froxelHeight * froxelDepth;
+
+const froxelMaskComputeShader = /* wgsl */ `
+struct SimUniforms {
+  time: f32,
+  width: f32,
+  height: f32,
+  count: f32,
+  froxelWidth: f32,
+  froxelHeight: f32,
+  froxelDepth: f32,
+  pad: f32,
+};
+
+@group(0) @binding(0) var<storage, read_write> primitiveMasks: array<u32>;
+@group(0) @binding(1) var<storage, read> agents: array<vec4f>;
+@group(0) @binding(2) var<uniform> uniforms: SimUniforms;
+
+@compute @workgroup_size(128)
+fn buildPrimitiveMasks(@builtin(global_invocation_id) id: vec3u) {
+  let index = id.x;
+  let total = u32(uniforms.froxelWidth * uniforms.froxelHeight * uniforms.froxelDepth);
+  if (index >= total) {
+    return;
+  }
+
+  let fw = u32(uniforms.froxelWidth);
+  let fh = u32(uniforms.froxelHeight);
+  let sliceSize = fw * fh;
+  let z = index / sliceSize;
+  let rem = index - z * sliceSize;
+  let y = rem / fw;
+  let x = rem - y * fw;
+
+  let pixel = vec2f(
+    (f32(x) + 0.5) / uniforms.froxelWidth * uniforms.width,
+    (f32(y) + 0.5) / uniforms.froxelHeight * uniforms.height
+  );
+  let depth = (f32(z) + 0.5) / uniforms.froxelDepth;
+  var mask = 0u;
+
+  for (var i = 0u; i < ${maxStardustAgents}u; i = i + 1u) {
+    if (f32(i) >= uniforms.count) {
+      break;
+    }
+    let agent = agents[i];
+    let radius = agent.z;
+    let atmosphere = radius * mix(1.55, 2.65, agent.w);
+    let dz = abs(depth - agent.w * 0.16 - 0.34);
+    let depthRadius = mix(0.08, 0.2, agent.w) + radius / max(uniforms.width, uniforms.height) * 1.8;
+    let screenHit = distance(pixel, agent.xy) <= atmosphere + max(uniforms.width, uniforms.height) * 0.014;
+    let depthHit = dz <= depthRadius;
+    if (screenHit && depthHit) {
+      mask = mask | (1u << i);
+    }
+  }
+  primitiveMasks[index] = mask;
+}
+`;
+
+const froxelFieldRenderShader = /* wgsl */ `
+struct SimUniforms {
+  time: f32,
+  width: f32,
+  height: f32,
+  count: f32,
+  froxelWidth: f32,
+  froxelHeight: f32,
+  froxelDepth: f32,
+  pad: f32,
+};
+
+@group(0) @binding(0) var<storage, read> primitiveMasks: array<u32>;
+@group(0) @binding(1) var<storage, read> agents: array<vec4f>;
+@group(0) @binding(2) var<storage, read> colors: array<vec4f>;
+@group(0) @binding(3) var<uniform> uniforms: SimUniforms;
+
+struct VertexOut {
+  @builtin(position) position: vec4f,
+  @location(0) uv: vec2f,
+};
+
+@vertex
+fn vertexMain(@builtin(vertex_index) vertexIndex: u32) -> VertexOut {
+  let positions = array<vec2f, 3>(
+    vec2f(-1.0, -1.0),
+    vec2f(3.0, -1.0),
+    vec2f(-1.0, 3.0)
+  );
+  let position = positions[vertexIndex];
+  var out: VertexOut;
+  out.position = vec4f(position, 0.0, 1.0);
+  out.uv = position * vec2f(0.5, -0.5) + vec2f(0.5);
+  return out;
+}
+
+fn hash(value: f32) -> f32 {
+  return fract(sin(value * 12.9898) * 43758.5453);
+}
+
+fn noise4(p: vec4f) -> f32 {
+  return sin(dot(p, vec4f(1.71, 2.43, 3.17, 1.19)))
+    * cos(dot(p, vec4f(2.13, -1.37, 1.91, 2.61)))
+    + 0.45 * sin(dot(p, vec4f(-1.11, 3.03, 2.07, 1.73)) + sin(p.w + p.x));
+}
+
+fn fbm4(p0: vec4f) -> f32 {
+  var p = p0;
+  var value = 0.0;
+  var amplitude = 0.5;
+  for (var i = 0; i < 4; i = i + 1) {
+    value += noise4(p) * amplitude;
+    p = vec4f(p.yzx * 2.03 + vec3f(3.7, 1.9, 5.1), p.w * 1.37 + 2.11);
+    amplitude *= 0.52;
+  }
+  return clamp(value, -1.0, 1.0);
+}
+
+fn primitiveMask(pixel: vec2f, progress: f32) -> u32 {
+  let x = clamp(u32(pixel.x / max(uniforms.width, 1.0) * uniforms.froxelWidth), 0u, u32(uniforms.froxelWidth) - 1u);
+  let y = clamp(u32(pixel.y / max(uniforms.height, 1.0) * uniforms.froxelHeight), 0u, u32(uniforms.froxelHeight) - 1u);
+  let z = clamp(u32(progress * uniforms.froxelDepth), 0u, u32(uniforms.froxelDepth) - 1u);
+  return primitiveMasks[z * u32(uniforms.froxelWidth) * u32(uniforms.froxelHeight) + y * u32(uniforms.froxelWidth) + x];
+}
+
+@fragment
+fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
+  let pixel = input.uv * vec2f(uniforms.width, uniforms.height);
+  var transmittance = 1.0;
+  var scattering = vec3f(0.0);
+  var solid = vec3f(0.0);
+  var solidAlpha = 0.0;
+  let jitter = hash(dot(pixel, vec2f(0.067, 0.131)) + uniforms.time * 3.1);
+
+  for (var step = 0u; step < 32u; step = step + 1u) {
+    let progress = (f32(step) + jitter) / 32.0;
+    let mask = primitiveMask(pixel, progress);
+    var density = 0.0;
+    var tint = vec3f(0.18, 0.84, 0.7);
+
+    for (var i = 0u; i < ${maxStardustAgents}u; i = i + 1u) {
+      if (f32(i) >= uniforms.count) {
+        break;
+      }
+      if ((mask & (1u << i)) == 0u) {
+        continue;
+      }
+      let agent = agents[i];
+      let color = colors[i];
+      let selfFlag = color.w;
+      let radius = agent.z;
+      let depthCenter = selfFlag * 0.16 + 0.34;
+      let local = vec3f((pixel - agent.xy) / max(radius, 0.001), (progress - depthCenter) * 6.0);
+      let displacement = fbm4(vec4f(local * mix(1.8, 3.4, selfFlag), uniforms.time * mix(0.12, 0.34, selfFlag))) * mix(0.08, 0.26, selfFlag);
+      let sdf = length(local) - (1.0 + displacement);
+      let atmosphere = exp(-max(sdf, 0.0) * mix(3.0, 1.35, selfFlag));
+      let plasma = pow(max(fbm4(vec4f(local * 4.8, uniforms.time * 0.55)) * 0.5 + 0.5, 0.0), mix(2.8, 7.0, selfFlag));
+      let localDensity = atmosphere * (0.012 + radius / 260.0 + selfFlag * 0.14) * (0.72 + plasma * mix(0.8, 2.8, selfFlag));
+      density += localDensity;
+      tint += localDensity * mix(color.rgb, vec3f(3.8, 1.85, 0.42), selfFlag);
+      if (sdf < 0.016 && solidAlpha < 0.5) {
+        let fresnel = pow(clamp(length(local.xy) * 0.75, 0.0, 1.0), 3.0);
+        let chrome = mix(color.rgb * 0.45, vec3f(0.75, 1.0, 0.88), 0.72 + fresnel * 0.22);
+        let solar = vec3f(4.2, 2.1, 0.55) * (0.8 + plasma * 1.5);
+        solid = mix(chrome, solar, selfFlag);
+        solidAlpha = 0.92;
+      }
+    }
+
+    density += exp(-abs(progress - 0.58) * 6.5) * 0.004;
+    let stepSize = 1.0 / 32.0;
+    let extinction = density * 4.6;
+    let stepTransmittance = exp(-extinction * stepSize);
+    let luminance = tint * density * 1.9;
+    scattering += transmittance * (luminance - luminance * stepTransmittance) / max(extinction, 0.0001);
+    transmittance *= stepTransmittance;
+  }
+
+  let fogAlpha = clamp(1.0 - transmittance, 0.0, 0.72);
+  let color = solid * solidAlpha + scattering;
+  return vec4f(color, max(fogAlpha, solidAlpha));
+}
+`;
+
 export interface AquariumStardustOverlay {
   dispose(): void;
   setProjections(projections: StardustProjection[]): void;
 }
 
 export async function createAquariumStardustOverlay(canvas: HTMLCanvasElement): Promise<AquariumStardustOverlay | null> {
-  canvas.dataset.stardustParticles = "three-scene";
-  canvas.dataset.stardustMode = "composited";
-  return null;
+  const gpu = (navigator as unknown as { gpu?: GpuApi }).gpu;
+  if (!gpu) {
+    canvas.dataset.stardustParticles = "three-scene";
+    canvas.dataset.stardustMode = "webgpu-unavailable";
+    return null;
+  }
+  const adapter = await gpu.requestAdapter();
+  if (!adapter) {
+    canvas.dataset.stardustParticles = "three-scene";
+    canvas.dataset.stardustMode = "webgpu-no-adapter";
+    return null;
+  }
+  const device = await adapter.requestDevice();
+  const context = canvas.getContext("webgpu");
+  if (!context) {
+    canvas.dataset.stardustParticles = "three-scene";
+    canvas.dataset.stardustMode = "webgpu-no-context";
+    return null;
+  }
+  return new WebGpuFroxelFieldOverlay(canvas, device, context);
+}
+
+class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
+  private agentData = new Float32Array(maxStardustAgents * 4);
+  private agentsBuffer: any;
+  private bindGroup: any;
+  private colorsBuffer: any;
+  private colorData = new Float32Array(maxStardustAgents * 4);
+  private computeBindGroup: any;
+  private computePipeline: any;
+  private disposed = false;
+  private format: any;
+  private maskBuffer: any;
+  private pipeline: any;
+  private raf = 0;
+  private uniforms = new Float32Array(8);
+  private uniformBuffer: any;
+
+  constructor(private canvas: HTMLCanvasElement, private device: any, private context: any) {
+    const gpuBufferUsage = (globalThis as any).GPUBufferUsage;
+    this.format = (navigator as any).gpu.getPreferredCanvasFormat();
+    this.canvas.style.opacity = "1";
+    this.canvas.style.zIndex = "2";
+    this.context.configure({ alphaMode: "premultiplied", device, format: this.format });
+    const computeModule = device.createShaderModule({ label: "froxel primitive mask compute", code: froxelMaskComputeShader });
+    const renderModule = device.createShaderModule({ label: "froxel field renderer", code: froxelFieldRenderShader });
+    this.maskBuffer = device.createBuffer({
+      label: "froxel primitive masks",
+      size: froxelCount * 4,
+      usage: gpuBufferUsage.STORAGE,
+    });
+    this.agentsBuffer = device.createBuffer({
+      label: "froxel agents",
+      size: maxStardustAgents * 4 * 4,
+      usage: gpuBufferUsage.STORAGE | gpuBufferUsage.COPY_DST,
+    });
+    this.colorsBuffer = device.createBuffer({
+      label: "froxel colors",
+      size: maxStardustAgents * 4 * 4,
+      usage: gpuBufferUsage.STORAGE | gpuBufferUsage.COPY_DST,
+    });
+    this.uniformBuffer = device.createBuffer({
+      label: "froxel uniforms",
+      size: this.uniforms.byteLength,
+      usage: gpuBufferUsage.UNIFORM | gpuBufferUsage.COPY_DST,
+    });
+    this.computePipeline = device.createComputePipeline({
+      label: "build froxel primitive masks",
+      layout: "auto",
+      compute: { module: computeModule, entryPoint: "buildPrimitiveMasks" },
+    });
+    this.pipeline = device.createRenderPipeline({
+      label: "render froxel field",
+      layout: "auto",
+      vertex: { module: renderModule, entryPoint: "vertexMain" },
+      fragment: {
+        module: renderModule,
+        entryPoint: "fragmentMain",
+        targets: [{ format: this.format, blend: alphaBlend() }],
+      },
+      primitive: { topology: "triangle-list" },
+    });
+    this.computeBindGroup = device.createBindGroup({
+      label: "froxel compute bindings",
+      layout: this.computePipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: this.maskBuffer } },
+        { binding: 1, resource: { buffer: this.agentsBuffer } },
+        { binding: 2, resource: { buffer: this.uniformBuffer } },
+      ],
+    });
+    this.bindGroup = device.createBindGroup({
+      label: "froxel render bindings",
+      layout: this.pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: this.maskBuffer } },
+        { binding: 1, resource: { buffer: this.agentsBuffer } },
+        { binding: 2, resource: { buffer: this.colorsBuffer } },
+        { binding: 3, resource: { buffer: this.uniformBuffer } },
+      ],
+    });
+    this.canvas.dataset.stardustMode = "webgpu-froxel-primitive-map";
+    this.canvas.dataset.stardustParticles = String(froxelCount);
+    this.raf = requestAnimationFrame(this.render);
+  }
+
+  dispose() {
+    this.disposed = true;
+    cancelAnimationFrame(this.raf);
+    this.maskBuffer?.destroy?.();
+    this.agentsBuffer?.destroy?.();
+    this.colorsBuffer?.destroy?.();
+    this.uniformBuffer?.destroy?.();
+  }
+
+  setProjections(projections: StardustProjection[]) {
+    const width = Math.max(this.canvas.width, 1);
+    const height = Math.max(this.canvas.height, 1);
+    this.agentData.fill(0);
+    this.colorData.fill(0);
+    projections.slice(0, maxStardustAgents).forEach((projection, index) => {
+      const isSelf = projection.id === "coordinator" ? 1 : 0;
+      const radius = (18 + projection.z * 16 + projection.expression * 14 + projection.acknowledgement * 20) * (isSelf ? 1.45 : 1);
+      this.agentData[index * 4] = (projection.xPercent / 100) * width;
+      this.agentData[index * 4 + 1] = (projection.yPercent / 100) * height;
+      this.agentData[index * 4 + 2] = radius;
+      this.agentData[index * 4 + 3] = isSelf;
+      const color = parseColor(projection.color ?? "#8fffd3");
+      const glow = parseColor(projection.glow ?? projection.color ?? "#8fffd3");
+      this.colorData[index * 4] = isSelf ? 1.0 : (color[0] + glow[0]) * 0.5;
+      this.colorData[index * 4 + 1] = isSelf ? 0.74 : (color[1] + glow[1]) * 0.5;
+      this.colorData[index * 4 + 2] = isSelf ? 0.28 : (color[2] + glow[2]) * 0.5;
+      this.colorData[index * 4 + 3] = isSelf;
+    });
+    this.uniforms[3] = Math.min(maxStardustAgents, projections.length);
+    this.device.queue.writeBuffer(this.agentsBuffer, 0, this.agentData);
+    this.device.queue.writeBuffer(this.colorsBuffer, 0, this.colorData);
+  }
+
+  private render = (millis: number) => {
+    if (this.disposed) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.25);
+    const width = Math.max(1, Math.floor(rect.width * dpr));
+    const height = Math.max(1, Math.floor(rect.height * dpr));
+    if (this.canvas.width !== width || this.canvas.height !== height) {
+      this.canvas.width = width;
+      this.canvas.height = height;
+    }
+    this.uniforms[0] = millis / 1000;
+    this.uniforms[1] = width;
+    this.uniforms[2] = height;
+    this.uniforms[4] = froxelWidth;
+    this.uniforms[5] = froxelHeight;
+    this.uniforms[6] = froxelDepth;
+    this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniforms);
+    const encoder = this.device.createCommandEncoder({ label: "froxel field frame" });
+    const computePass = encoder.beginComputePass();
+    computePass.setPipeline(this.computePipeline);
+    computePass.setBindGroup(0, this.computeBindGroup);
+    computePass.dispatchWorkgroups(Math.ceil(froxelCount / 128));
+    computePass.end();
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [{
+        clearValue: { r: 0, g: 0, b: 0, a: 0 },
+        loadOp: "clear",
+        storeOp: "store",
+        view: this.context.getCurrentTexture().createView(),
+      }],
+    });
+    pass.setPipeline(this.pipeline);
+    pass.setBindGroup(0, this.bindGroup);
+    pass.draw(3);
+    pass.end();
+    this.device.queue.submit([encoder.finish()]);
+    this.raf = requestAnimationFrame(this.render);
+  };
 }
 
 class WebGpuStardustOverlay implements AquariumStardustOverlay {
@@ -474,6 +836,20 @@ function alphaBlend() {
       srcFactor: "src-alpha",
     },
   };
+}
+
+function parseColor(value: string): [number, number, number] {
+  const hex = value.trim().replace(/^#/, "");
+  const normalized = hex.length === 3
+    ? hex.split("").map((char) => `${char}${char}`).join("")
+    : hex.padEnd(6, "0").slice(0, 6);
+  const int = Number.parseInt(normalized, 16);
+  if (!Number.isFinite(int)) return [0.55, 1, 0.83];
+  return [
+    ((int >> 16) & 255) / 255,
+    ((int >> 8) & 255) / 255,
+    (int & 255) / 255,
+  ];
 }
 
 function clamp(value: number, min: number, max: number) {
