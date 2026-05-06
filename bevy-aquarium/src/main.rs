@@ -1113,7 +1113,6 @@ fn update_cursor_visual(
 fn integrate_bodies(
     time: Res<Time>,
     pointer: Res<PointerWorld>,
-    grid_frame: Res<GridFrame>,
     mut dirty: ResMut<GridDirty>,
     mut bodies: Query<(&mut Transform, &mut CelestialBody)>,
 ) {
@@ -1122,11 +1121,7 @@ fn integrate_bodies(
     for (mut transform, mut body) in &mut bodies {
         let anchor = if body.class == BodyClass::Agent {
             let t = time.elapsed_secs() * 0.07 + body.phase;
-            orbit_anchor(
-                Vec3::new(grid_frame.center.x, grid_frame.center.y, GRID_Z),
-                7.0 + body.phase.sin() * 0.35,
-                t,
-            ) + Vec3::Z * 2.6
+            orbit_anchor(Vec3::ZERO, 7.0 + body.phase.sin() * 0.35, t) + Vec3::Z * 2.6
         } else {
             body.anchor
         };
