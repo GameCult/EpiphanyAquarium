@@ -472,3 +472,10 @@ The raymarch shader therefore has a temporary survival path:
 This keeps the froxel/solid/deferred architecture intact while making darkness
 actionable. Once hits are visibly present, remove the unlit survival payload and
 let Self-injected SH/PBR lighting own the final surface response again.
+
+The Grid scale is also camera-volume aware. Since the shader defines the Grid
+volume top as `half_extent * 0.18`, the CPU chooses half extent from the max of
+zoom scale, camera XY offset, and camera height divided by that volume ratio.
+The camera should remain inside the Grid-bound volume across orbit/zoom changes,
+so volume sampling starts from within the box instead of looking down from
+outside it.

@@ -53,7 +53,9 @@ use std::time::Duration;
 
 const GRID_BASE_HALF_EXTENT: f32 = 42.0;
 const GRID_MIN_HALF_EXTENT: f32 = 12.0;
-const GRID_MAX_HALF_EXTENT: f32 = 180.0;
+const GRID_MAX_HALF_EXTENT: f32 = 720.0;
+const GRID_VOLUME_TOP_RATIO: f32 = 0.18;
+const GRID_CAMERA_VOLUME_MARGIN: f32 = 1.08;
 const BODY_RADIUS: f32 = 0.9;
 const SELF_RADIUS: f32 = 1.25;
 const GRID_Z: f32 = 0.0;
@@ -448,13 +450,14 @@ impl GridFrame {
         Self::from_camera(
             grid_center_from_array(settings.camera_target),
             settings.camera_distance,
+            settings.camera_pitch,
         )
     }
 
-    fn from_camera(target: Vec3, distance: f32) -> Self {
+    fn from_camera(target: Vec3, distance: f32, pitch: f32) -> Self {
         Self {
             center: target.truncate(),
-            half_extent: grid_half_extent_for_distance(distance),
+            half_extent: grid_half_extent_for_camera(distance, pitch),
         }
     }
 
@@ -468,8 +471,15 @@ fn grid_center_from_array(value: [f32; 3]) -> Vec3 {
     Vec3::new(value[0], value[1], GRID_Z)
 }
 
-fn grid_half_extent_for_distance(distance: f32) -> f32 {
-    (GRID_BASE_HALF_EXTENT * (distance / 34.0)).clamp(GRID_MIN_HALF_EXTENT, GRID_MAX_HALF_EXTENT)
+fn grid_half_extent_for_camera(distance: f32, pitch: f32) -> f32 {
+    let zoom_extent = GRID_BASE_HALF_EXTENT * (distance / 34.0);
+    let horizontal_extent = distance * pitch.cos().abs() * GRID_CAMERA_VOLUME_MARGIN;
+    let vertical_extent =
+        distance * pitch.sin().max(0.0) * GRID_CAMERA_VOLUME_MARGIN / GRID_VOLUME_TOP_RATIO;
+    zoom_extent
+        .max(horizontal_extent)
+        .max(vertical_extent)
+        .clamp(GRID_MIN_HALF_EXTENT, GRID_MAX_HALF_EXTENT)
 }
 
 #[derive(Resource, Default)]
@@ -1209,7 +1219,7 @@ fn reload_domain_input(
     spawn_domain(
         &mut commands,
         &bridge,
-        GridFrame::from_camera(rig.target, rig.distance),
+        GridFrame::from_camera(rig.target, rig.distance, rig.pitch),
         Some(cached_bodies),
     );
     info!(
@@ -1296,7 +1306,7 @@ fn sync_grid_frame(
     mut frame: ResMut<GridFrame>,
     mut dirty: ResMut<GridDirty>,
 ) {
-    let next = GridFrame::from_camera(rig.target, rig.distance);
+    let next = GridFrame::from_camera(rig.target, rig.distance, rig.pitch);
     let changed = frame.center.distance_squared(next.center) > 0.0001
         || (frame.half_extent - next.half_extent).abs() > 0.001;
     if changed {

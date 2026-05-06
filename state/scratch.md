@@ -321,3 +321,8 @@ Current slice:
   visibility payloads into Bevy's deferred G-buffer. This is a diagnostic
   bridge, not the final lighting model; restore PBR/SH authority only after
   hits are visibly proven.
+- Current Grid volume invariant: Grid scale is now camera-volume aware. The
+  half extent is the max of zoom scale, camera XY offset from the target, and
+  camera height divided by the shader's `grid_volume_top = half_extent * 0.18`
+  ratio, with a small margin. This keeps the camera inside the Grid-bound
+  lighting/raymarch volume instead of sampling from above the box.
