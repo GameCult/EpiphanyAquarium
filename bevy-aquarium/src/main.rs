@@ -39,6 +39,12 @@ const GRID_Z: f32 = 0.0;
 const CURSOR_WELL_RADIUS: f32 = 4.6;
 const CURSOR_WELL_MASS: f32 = 2.1;
 const MAX_RAYMARCH_BODIES: usize = 8;
+const RAYMARCH_FROXEL_WIDTH: usize = 16;
+const RAYMARCH_FROXEL_HEIGHT: usize = 9;
+const RAYMARCH_FROXEL_DEPTH: usize = 16;
+const RAYMARCH_FROXEL_COUNT: usize =
+    RAYMARCH_FROXEL_WIDTH * RAYMARCH_FROXEL_HEIGHT * RAYMARCH_FROXEL_DEPTH;
+const RAYMARCH_FROXEL_MASK_WORDS: usize = RAYMARCH_FROXEL_COUNT / 4;
 
 fn main() {
     let runtime_bridge = CultRuntimeBridge::load().unwrap_or_else(|err| {
@@ -483,6 +489,7 @@ struct AquariumRaymarch {
     ray11: Vec4,
     bodies: [Vec4; MAX_RAYMARCH_BODIES],
     colors: [Vec4; MAX_RAYMARCH_BODIES],
+    froxel_masks: [UVec4; RAYMARCH_FROXEL_MASK_WORDS],
 }
 
 impl Default for AquariumRaymarch {
@@ -502,6 +509,7 @@ impl Default for AquariumRaymarch {
             ray11: Vec4::new(0.5, 0.8, -0.28, 0.0),
             bodies: [Vec4::ZERO; MAX_RAYMARCH_BODIES],
             colors: [Vec4::ZERO; MAX_RAYMARCH_BODIES],
+            froxel_masks: [UVec4::ZERO; RAYMARCH_FROXEL_MASK_WORDS],
         }
     }
 }
@@ -1104,6 +1112,10 @@ fn update_raymarch_uniforms(
 
     raymarch.bodies = [Vec4::ZERO; MAX_RAYMARCH_BODIES];
     raymarch.colors = [Vec4::ZERO; MAX_RAYMARCH_BODIES];
+    raymarch.froxel_masks = [UVec4::ZERO; RAYMARCH_FROXEL_MASK_WORDS];
+    let camera_position = raymarch.camera_position.truncate();
+    let depth_near = raymarch.depth_near;
+    let depth_span = raymarch.depth_span;
     let mut count = 0usize;
     for (transform, body) in bodies.iter().take(MAX_RAYMARCH_BODIES) {
         let self_flag = if body.class == BodyClass::LivingSelf {
@@ -1123,9 +1135,86 @@ fn update_raymarch_uniforms(
             radius,
         );
         raymarch.colors[count] = body_color(body.class).extend(self_flag);
+        bin_body_into_froxels(
+            &mut raymarch.froxel_masks,
+            count,
+            radius * (1.18 + self_flag * 0.18),
+            depth_near,
+            depth_span,
+            transform.translation - camera_position,
+            right,
+            up,
+            forward,
+            half_x,
+            half_y,
+        );
         count += 1;
     }
     raymarch.body_count = count as f32;
+}
+
+fn bin_body_into_froxels(
+    masks: &mut [UVec4; RAYMARCH_FROXEL_MASK_WORDS],
+    body_index: usize,
+    radius: f32,
+    depth_near: f32,
+    depth_span: f32,
+    camera_to_body: Vec3,
+    camera_right: Vec3,
+    camera_up: Vec3,
+    camera_forward: Vec3,
+    half_x: f32,
+    half_y: f32,
+) {
+    let depth = camera_to_body.dot(camera_forward);
+    if depth <= depth_near || depth > depth_near + depth_span {
+        return;
+    }
+    let ndc_x = camera_to_body.dot(camera_right) / (depth * half_x).max(0.001);
+    let ndc_y = camera_to_body.dot(camera_up) / (depth * half_y).max(0.001);
+    let radius_x = radius / (depth * half_x).max(0.001);
+    let radius_y = radius / (depth * half_y).max(0.001);
+    if ndc_x + radius_x < -1.0
+        || ndc_x - radius_x > 1.0
+        || ndc_y + radius_y < -1.0
+        || ndc_y - radius_y > 1.0
+    {
+        return;
+    }
+
+    let u = (ndc_x * 0.5 + 0.5) * RAYMARCH_FROXEL_WIDTH as f32;
+    let v = (0.5 - ndc_y * 0.5) * RAYMARCH_FROXEL_HEIGHT as f32;
+    let z = ((depth - depth_near) / depth_span).clamp(0.0, 1.0) * RAYMARCH_FROXEL_DEPTH as f32;
+    let rx = (radius_x * 0.5 * RAYMARCH_FROXEL_WIDTH as f32).ceil() as isize + 1;
+    let ry = (radius_y * 0.5 * RAYMARCH_FROXEL_HEIGHT as f32).ceil() as isize + 1;
+    let rz = ((radius / depth_span) * RAYMARCH_FROXEL_DEPTH as f32).ceil() as isize + 1;
+    let bit = 1u32 << body_index;
+
+    for zz in (z.floor() as isize - rz)..=(z.ceil() as isize + rz) {
+        if !(0..RAYMARCH_FROXEL_DEPTH as isize).contains(&zz) {
+            continue;
+        }
+        for yy in (v.floor() as isize - ry)..=(v.ceil() as isize + ry) {
+            if !(0..RAYMARCH_FROXEL_HEIGHT as isize).contains(&yy) {
+                continue;
+            }
+            for xx in (u.floor() as isize - rx)..=(u.ceil() as isize + rx) {
+                if !(0..RAYMARCH_FROXEL_WIDTH as isize).contains(&xx) {
+                    continue;
+                }
+                let index = zz as usize * RAYMARCH_FROXEL_WIDTH * RAYMARCH_FROXEL_HEIGHT
+                    + yy as usize * RAYMARCH_FROXEL_WIDTH
+                    + xx as usize;
+                let word = index / 4;
+                match index % 4 {
+                    0 => masks[word].x |= bit,
+                    1 => masks[word].y |= bit,
+                    2 => masks[word].z |= bit,
+                    _ => masks[word].w |= bit,
+                }
+            }
+        }
+    }
 }
 
 fn project_pointer_to_grid(

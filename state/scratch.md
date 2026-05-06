@@ -259,3 +259,7 @@ Current slice:
   WebGPU marched field, not the Three helper scene. Three now acts as camera,
   projection, and source rigging, while the WebGPU froxel shader visibly renders
   the heightfield grid surface, fog bank, SDF bodies, and atmospheres.
+- Current Bevy raymarch correction: the lean native pass is solid-only for now.
+  Fog/atmosphere density accumulation is gone; the Grid remains in the march as
+  solid heightfield terrain, and agent SDF planets are skipped through a
+  conservative packed froxel membership mask before analytic solid intersection.

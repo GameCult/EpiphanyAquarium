@@ -75,6 +75,7 @@ interaction_laws:
   - WebGPU froxel x/y dimensions stay canvas-local and screen-fit; only froxel near/far depth is fitted to the projected moving grid volume.
   - Agent solid bodies use a consistent world-space radius across the swarm; WebGPU reconstructs world-space camera rays and intersects world-space planet SDFs, so apparent size follows the camera instead of a projection-scale multiplier.
   - The fitted grid/fog volume is the visibility window: solid bodies, atmospheres, and fog fade at its near/far bounds instead of rendering outside the current grid area of interest.
+  - In the Bevy renderer, the Grid remains a solid raymarched heightfield terrain surface. Fog can return later as a separate field pass, but this lean path marches terrain and body solids only.
   - Global sky and aerial-perspective lighting should use Bruneton-style precomputed transport caches; local dynamic fog should not be forced to solve horizon-scale multiple scattering per frame.
   - Visual smoke verifies render presence and layout health, not cursor-driven 3D interaction; billboard/creature clicks need targeted raycast-aware probes.
   - Stardust is currently visible as tiny, faint 3D points inside the Three scene under ACES tone mapping; the old WebGPU overlay is disabled until it can feed the shared compositor instead of screen space.
@@ -114,3 +115,4 @@ landed:
   - Separated swarm registry presence from runtime liveness. Standalone Aquarium now survives a missing status bridge by returning a sleeping snapshot, and the frontend renders dormant Epiphanies as cold project bodies instead of pretending the EpiphanyAgent specialist system is alive.
   - Promoted the WebGPU froxel renderer to the visible stage. It now reconstructs camera rays, renders the grid as a procedural marched heightfield with PowerPulse wells, layers a surface-hugging fog bank over it, and keeps the Three grid hidden as rigging/fallback machinery.
   - Added a Bevy `GridFrame` invariant. Camera target, Grid center, zoom-scaled Grid extent, pointer-to-grid projection, cursor gravity source clipping, and heightfield mesh generation now share the same moving XY square instead of leaving the Bevy grid nailed to world zero; world-space agent orbit anchors stay independent.
+  - Reworked the Bevy raymarcher into a solid-only pass: fog and volumetric density are removed, the Grid is raymarched as solid terrain, and agent SDF bodies are tested only when their packed froxel membership mask intersects the current ray.
