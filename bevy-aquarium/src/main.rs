@@ -37,6 +37,10 @@ fn main() {
         .insert_resource(CameraRig::from_settings(&settings))
         .insert_resource(PointerWorld::default())
         .insert_resource(GridDirty(true))
+        .insert_resource(LiveStateAutosave(Timer::from_seconds(
+            1.0,
+            TimerMode::Repeating,
+        )))
         .insert_resource(runtime_bridge)
         .add_plugins(
             DefaultPlugins
@@ -63,8 +67,10 @@ fn main() {
                 project_pointer_to_grid,
                 update_cursor_visual,
                 integrate_bodies,
+                autosave_live_state,
                 rebuild_grid,
                 billboard_labels,
+                reload_domain_input,
             ),
         )
         .run();
@@ -113,28 +119,102 @@ struct AquariumAgentPresence {
     liveness: String,
 }
 
+#[derive(Clone, Debug, PartialEq, DatabaseEntry)]
+#[cultcache(type = "epiphany.aquarium.domain-state")]
+struct AquariumDomainState {
+    #[cultcache(key = 0)]
+    schema_version: String,
+    #[cultcache(key = 1)]
+    reload_generation: u64,
+    #[cultcache(key = 2)]
+    swarm_label: String,
+}
+
+impl Default for AquariumDomainState {
+    fn default() -> Self {
+        Self {
+            schema_version: "epiphany.aquarium.domain-state.v0".to_string(),
+            reload_generation: 0,
+            swarm_label: "Epiphany".to_string(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, DatabaseEntry)]
+#[cultcache(type = "epiphany.aquarium.body-state")]
+struct AquariumBodyState {
+    #[cultcache(key = 0)]
+    schema_version: String,
+    #[cultcache(key = 1)]
+    body_id: String,
+    #[cultcache(key = 2)]
+    label: String,
+    #[cultcache(key = 3)]
+    class: String,
+    #[cultcache(key = 4)]
+    anchor: [f32; 3],
+    #[cultcache(key = 5)]
+    position: [f32; 3],
+    #[cultcache(key = 6)]
+    velocity: [f32; 3],
+    #[cultcache(key = 7)]
+    mass: f32,
+    #[cultcache(key = 8)]
+    phase: f32,
+}
+
+impl AquariumBodyState {
+    fn new(
+        body_id: impl Into<String>,
+        label: impl Into<String>,
+        class: BodyClass,
+        position: Vec3,
+        velocity: Vec3,
+        mass: f32,
+        phase: f32,
+        anchor: Vec3,
+    ) -> Self {
+        Self {
+            schema_version: "epiphany.aquarium.body-state.v0".to_string(),
+            body_id: body_id.into(),
+            label: label.into(),
+            class: class.cache_key().to_string(),
+            anchor: anchor.to_array(),
+            position: position.to_array(),
+            velocity: velocity.to_array(),
+            mass,
+            phase,
+        }
+    }
+
+    fn class(&self) -> BodyClass {
+        BodyClass::from_cache_key(&self.class)
+    }
+}
+
 #[derive(Resource, Clone, Debug)]
 struct CultRuntimeBridge {
     runtime_id: String,
     settings_path: PathBuf,
     settings: AquariumClientSettings,
+    domain_state: AquariumDomainState,
     supported_document_types: Vec<String>,
     hello_payload_bytes: usize,
 }
 
 impl CultRuntimeBridge {
     fn load() -> anyhow::Result<Self> {
-        let settings_path = PathBuf::from(".epiphany-aquarium")
-            .join("bevy-client-settings.msgpack");
-        let mut cache = CultCache::new();
-        cache.register_entry_type::<AquariumClientSettings>()?;
-        cache.register_entry_type::<AquariumAgentPresence>()?;
-        cache.add_generic_backing_store(SingleFileMessagePackBackingStore::new(&settings_path));
-        cache.pull_all_backing_stores()?;
+        let settings_path =
+            PathBuf::from(".epiphany-aquarium").join("bevy-client-settings.msgpack");
+        let mut cache = Self::open_cache(&settings_path)?;
 
         let settings = match cache.get::<AquariumClientSettings>("client")? {
             Some(settings) => settings,
             None => cache.put("client", &AquariumClientSettings::default())?,
+        };
+        let domain_state = match cache.get::<AquariumDomainState>("domain")? {
+            Some(domain_state) => domain_state,
+            None => cache.put("domain", &AquariumDomainState::default())?,
         };
 
         cache.put(
@@ -159,6 +239,8 @@ impl CultRuntimeBridge {
         let supported_document_types = vec![
             AquariumClientSettings::TYPE.to_string(),
             AquariumAgentPresence::TYPE.to_string(),
+            AquariumDomainState::TYPE.to_string(),
+            AquariumBodyState::TYPE.to_string(),
         ];
         let hello = CultNetMessage::Hello {
             runtime_id: "epiphany-aquarium-bevy".to_string(),
@@ -177,6 +259,7 @@ impl CultRuntimeBridge {
             runtime_id: "epiphany-aquarium-bevy".to_string(),
             settings_path,
             settings,
+            domain_state,
             supported_document_types,
             hello_payload_bytes,
         })
@@ -187,9 +270,70 @@ impl CultRuntimeBridge {
             runtime_id: "epiphany-aquarium-bevy".to_string(),
             settings_path: PathBuf::from(".epiphany-aquarium/bevy-client-settings.msgpack"),
             settings: AquariumClientSettings::default(),
+            domain_state: AquariumDomainState::default(),
             supported_document_types: Vec::new(),
             hello_payload_bytes: 0,
         }
+    }
+
+    fn open_cache(settings_path: &PathBuf) -> anyhow::Result<CultCache> {
+        let mut cache = CultCache::new();
+        cache.register_entry_type::<AquariumClientSettings>()?;
+        cache.register_entry_type::<AquariumAgentPresence>()?;
+        cache.register_entry_type::<AquariumDomainState>()?;
+        cache.register_entry_type::<AquariumBodyState>()?;
+        cache.add_generic_backing_store(SingleFileMessagePackBackingStore::new(settings_path));
+        cache.pull_all_backing_stores()?;
+        Ok(cache)
+    }
+
+    fn reload_domain(
+        &mut self,
+        settings: AquariumClientSettings,
+        body_states: &[AquariumBodyState],
+    ) -> anyhow::Result<Vec<AquariumBodyState>> {
+        let mut cache = Self::open_cache(&self.settings_path)?;
+        self.settings = cache.put("client", &settings)?;
+        for body_state in body_states {
+            cache.put(body_state.body_id.clone(), body_state)?;
+        }
+        let mut domain_state = cache
+            .get::<AquariumDomainState>("domain")?
+            .unwrap_or_default();
+        domain_state.reload_generation = domain_state.reload_generation.saturating_add(1);
+        self.domain_state = cache.put("domain", &domain_state)?;
+        cache.put(
+            "epiphany-agent",
+            &AquariumAgentPresence {
+                schema_version: "epiphany.aquarium.agent-presence.v0".to_string(),
+                member_id: "epiphany-agent".to_string(),
+                label: self.domain_state.swarm_label.clone(),
+                liveness: "sleeping".to_string(),
+            },
+        )?;
+        let mut cached_bodies = cache.get_all::<AquariumBodyState>()?;
+        cached_bodies.sort_by(|a, b| a.body_id.cmp(&b.body_id));
+        Ok(cached_bodies)
+    }
+
+    fn load_body_states(&self) -> anyhow::Result<Vec<AquariumBodyState>> {
+        let cache = Self::open_cache(&self.settings_path)?;
+        let mut body_states = cache.get_all::<AquariumBodyState>()?;
+        body_states.sort_by(|a, b| a.body_id.cmp(&b.body_id));
+        Ok(body_states)
+    }
+
+    fn save_live_state(
+        &mut self,
+        settings: AquariumClientSettings,
+        body_states: &[AquariumBodyState],
+    ) -> anyhow::Result<()> {
+        let mut cache = Self::open_cache(&self.settings_path)?;
+        self.settings = cache.put("client", &settings)?;
+        for body_state in body_states {
+            cache.put(body_state.body_id.clone(), body_state)?;
+        }
+        Ok(())
     }
 }
 
@@ -232,11 +376,17 @@ struct PointerWorld {
 #[derive(Resource)]
 struct GridDirty(bool);
 
+#[derive(Resource)]
+struct LiveStateAutosave(Timer);
+
 #[derive(Component)]
 struct AquariumCamera;
 
 #[derive(Component)]
 struct GridSurface;
+
+#[derive(Component)]
+struct AquariumDomainRoot;
 
 #[derive(Component)]
 struct BodyLabel;
@@ -260,7 +410,8 @@ struct OrbitGuide {
 #[derive(Component)]
 #[allow(dead_code)]
 struct CelestialBody {
-    label: &'static str,
+    body_id: String,
+    label: String,
     class: BodyClass,
     anchor: Vec3,
     velocity: Vec3,
@@ -275,6 +426,24 @@ enum BodyClass {
     Agent,
 }
 
+impl BodyClass {
+    fn cache_key(self) -> &'static str {
+        match self {
+            BodyClass::SleepingEpiphany => "sleeping-epiphany",
+            BodyClass::LivingSelf => "living-self",
+            BodyClass::Agent => "agent",
+        }
+    }
+
+    fn from_cache_key(value: &str) -> Self {
+        match value {
+            "living-self" => BodyClass::LivingSelf,
+            "agent" => BodyClass::Agent,
+            _ => BodyClass::SleepingEpiphany,
+        }
+    }
+}
+
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -287,6 +456,10 @@ fn setup(
         bridge.supported_document_types.len(),
         bridge.hello_payload_bytes,
         bridge.settings_path.display()
+    );
+    info!(
+        "aquarium domain generation {}",
+        bridge.domain_state.reload_generation
     );
     commands.spawn((
         DirectionalLight {
@@ -311,6 +484,31 @@ fn setup(
         AquariumCamera,
     ));
 
+    spawn_domain(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        &bridge,
+        bridge.load_body_states().ok(),
+    );
+}
+
+fn spawn_domain(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    bridge: &CultRuntimeBridge,
+    cached_bodies: Option<Vec<AquariumBodyState>>,
+) {
+    let domain_root = commands
+        .spawn((
+            Transform::default(),
+            Visibility::default(),
+            AquariumDomainRoot,
+            Name::new("Aquarium Domain"),
+        ))
+        .id();
+
     let grid_mesh = meshes.add(build_heightfield(&[]));
     let grid_material = materials.add(StandardMaterial {
         base_color: Color::srgba(0.13, 0.34, 0.36, 0.58),
@@ -325,6 +523,7 @@ fn setup(
         MeshMaterial3d(grid_material),
         Transform::default(),
         GridSurface,
+        ChildOf(domain_root),
     ));
 
     let cursor_material = materials.add(StandardMaterial {
@@ -336,11 +535,19 @@ fn setup(
         ..default()
     });
     commands.spawn((
-        Mesh3d(meshes.add(Sphere::new(0.23).mesh().ico(2).expect("valid cursor sphere"))),
+        Mesh3d(
+            meshes.add(
+                Sphere::new(0.23)
+                    .mesh()
+                    .ico(2)
+                    .expect("valid cursor sphere"),
+            ),
+        ),
         MeshMaterial3d(cursor_material.clone()),
         Transform::from_xyz(0.0, 0.0, GRID_Z),
         Visibility::Hidden,
         CursorPlaneMarker,
+        ChildOf(domain_root),
     ));
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(0.055, 0.055, 1.0))),
@@ -348,71 +555,104 @@ fn setup(
         Transform::default(),
         Visibility::Hidden,
         CursorProbe,
+        ChildOf(domain_root),
     ));
     commands.spawn((
-        Mesh3d(meshes.add(Sphere::new(0.16).mesh().ico(2).expect("valid cursor tip sphere"))),
+        Mesh3d(
+            meshes.add(
+                Sphere::new(0.16)
+                    .mesh()
+                    .ico(2)
+                    .expect("valid cursor tip sphere"),
+            ),
+        ),
         MeshMaterial3d(cursor_material),
         Transform::from_xyz(0.0, 0.0, GRID_Z),
         Visibility::Hidden,
         CursorTip,
+        ChildOf(domain_root),
     ));
 
-    spawn_body(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        "Epiphany",
-        BodyClass::LivingSelf,
-        Vec3::new(0.0, 0.0, 4.2),
-        5.6,
-        0.0,
-    );
-
-    let agents = [
-        ("Face", 0.0),
-        ("Eyes", 0.8),
-        ("Hands", 1.6),
-        ("Soul", 2.4),
-        ("Life", 3.2),
-        ("Body", 4.0),
-        ("Imagination", 4.8),
-    ];
-    for (label, phase) in agents {
-        let anchor = orbit_anchor(Vec3::ZERO, 7.0, phase);
-        spawn_body(
-            &mut commands,
-            &mut meshes,
-            &mut materials,
-            label,
-            BodyClass::Agent,
-            anchor + Vec3::Z * 2.6,
-            1.0,
-            phase,
-        );
+    let body_states = cached_bodies.unwrap_or_else(default_body_states);
+    let body_states = if body_states.is_empty() {
+        default_body_states()
+    } else {
+        body_states
+    };
+    for state in body_states {
+        spawn_body_from_state(commands, meshes, materials, domain_root, state);
     }
 
-    spawn_body(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        "Aetheria Lore",
-        BodyClass::SleepingEpiphany,
-        Vec3::new(-13.0, -9.0, 2.6),
-        2.4,
-        0.33,
+    info!(
+        "rehydrated aquarium domain '{}' generation {}",
+        bridge.domain_state.swarm_label, bridge.domain_state.reload_generation
     );
 }
 
-fn spawn_body(
+fn default_body_states() -> Vec<AquariumBodyState> {
+    let mut states = Vec::new();
+    states.push(AquariumBodyState::new(
+        "epiphany",
+        "Epiphany",
+        BodyClass::LivingSelf,
+        Vec3::new(0.0, 0.0, 4.2),
+        Vec3::ZERO,
+        5.6,
+        0.0,
+        Vec3::new(0.0, 0.0, 4.2),
+    ));
+
+    let agents = [
+        ("face", "Face", 0.0),
+        ("eyes", "Eyes", 0.8),
+        ("hands", "Hands", 1.6),
+        ("soul", "Soul", 2.4),
+        ("life", "Life", 3.2),
+        ("body", "Body", 4.0),
+        ("imagination", "Imagination", 4.8),
+    ];
+    for (body_id, label, phase) in agents {
+        let anchor = orbit_anchor(Vec3::ZERO, 7.0, phase) + Vec3::Z * 2.6;
+        states.push(AquariumBodyState::new(
+            body_id,
+            label,
+            BodyClass::Agent,
+            anchor,
+            Vec3::ZERO,
+            1.0,
+            phase,
+            anchor,
+        ));
+    }
+
+    states.push(AquariumBodyState::new(
+        "aetheria-lore",
+        "Aetheria Lore",
+        BodyClass::SleepingEpiphany,
+        Vec3::new(-13.0, -9.0, 2.6),
+        Vec3::ZERO,
+        2.4,
+        0.33,
+        Vec3::new(-13.0, -9.0, 2.6),
+    ));
+    states
+}
+
+fn spawn_body_from_state(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
-    label: &'static str,
-    class: BodyClass,
-    position: Vec3,
-    mass: f32,
-    phase: f32,
+    domain_root: Entity,
+    state: AquariumBodyState,
 ) {
+    let label = state.label.clone();
+    let label_for_body = label.clone();
+    let class = state.class();
+    let position = Vec3::from_array(state.position);
+    let anchor = Vec3::from_array(state.anchor);
+    let velocity = Vec3::from_array(state.velocity);
+    let mass = state.mass;
+    let phase = state.phase;
     let radius = if class == BodyClass::LivingSelf {
         SELF_RADIUS
     } else {
@@ -448,13 +688,15 @@ fn spawn_body(
             MeshMaterial3d(materials.add(body_material)),
             Transform::from_translation(position),
             CelestialBody {
-                label,
+                body_id: state.body_id,
+                label: label_for_body,
                 class,
-                anchor: position,
-                velocity: Vec3::ZERO,
+                anchor,
+                velocity,
                 mass,
                 phase,
             },
+            ChildOf(domain_root),
         ))
         .id();
 
@@ -478,8 +720,103 @@ fn spawn_body(
                 center: Vec3::ZERO,
                 radius: (position.truncate()).length(),
             },
+            ChildOf(domain_root),
         ));
     }
+}
+
+fn live_settings_from_rig(rig: &CameraRig, active_member_id: &str) -> AquariumClientSettings {
+    AquariumClientSettings {
+        schema_version: "epiphany.aquarium.client-settings.v0".to_string(),
+        camera_target: rig.target.to_array(),
+        camera_yaw: rig.yaw,
+        camera_pitch: rig.pitch,
+        camera_distance: rig.distance,
+        active_member_id: active_member_id.to_string(),
+    }
+}
+
+fn snapshot_body_states(bodies: &Query<(&Transform, &CelestialBody)>) -> Vec<AquariumBodyState> {
+    let mut body_states: Vec<_> = bodies
+        .iter()
+        .map(|(transform, body)| {
+            AquariumBodyState::new(
+                body.body_id.clone(),
+                body.label.clone(),
+                body.class,
+                transform.translation,
+                body.velocity,
+                body.mass,
+                body.phase,
+                body.anchor,
+            )
+        })
+        .collect();
+    body_states.sort_by(|a, b| a.body_id.cmp(&b.body_id));
+    body_states
+}
+
+fn autosave_live_state(
+    time: Res<Time>,
+    mut timer: ResMut<LiveStateAutosave>,
+    mut bridge: ResMut<CultRuntimeBridge>,
+    rig: Res<CameraRig>,
+    bodies: Query<(&Transform, &CelestialBody)>,
+) {
+    timer.0.tick(time.delta());
+    if !timer.0.just_finished() {
+        return;
+    }
+    let settings = live_settings_from_rig(&rig, &bridge.settings.active_member_id);
+    let body_states = snapshot_body_states(&bodies);
+    if let Err(err) = bridge.save_live_state(settings, &body_states) {
+        warn!("failed to autosave aquarium live state: {err}");
+    }
+}
+
+fn reload_domain_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut bridge: ResMut<CultRuntimeBridge>,
+    rig: Res<CameraRig>,
+    mut pointer: ResMut<PointerWorld>,
+    mut dirty: ResMut<GridDirty>,
+    roots: Query<Entity, With<AquariumDomainRoot>>,
+    bodies: Query<(&Transform, &CelestialBody)>,
+) {
+    if !keys.just_pressed(KeyCode::F5) {
+        return;
+    }
+
+    let settings = live_settings_from_rig(&rig, &bridge.settings.active_member_id);
+    let body_states = snapshot_body_states(&bodies);
+    let cached_bodies = match bridge.reload_domain(settings, &body_states) {
+        Ok(cached_bodies) => cached_bodies,
+        Err(err) => {
+            warn!("failed to reload aquarium domain from CultCache: {err}");
+            return;
+        }
+    };
+
+    for root in &roots {
+        commands.entity(root).despawn();
+    }
+    pointer.plane_position = None;
+    pointer.grid_position = None;
+    dirty.0 = true;
+    spawn_domain(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        &bridge,
+        Some(cached_bodies),
+    );
+    info!(
+        "domain reload complete; generation {}",
+        bridge.domain_state.reload_generation
+    );
 }
 
 fn camera_input(
@@ -587,7 +924,9 @@ fn project_pointer_to_grid(
         pointer.grid_position = None;
         return;
     };
-    let Some(distance) = ray.intersect_plane(Vec3::new(0.0, 0.0, GRID_Z), InfinitePlane3d::new(Vec3::Z)) else {
+    let Some(distance) =
+        ray.intersect_plane(Vec3::new(0.0, 0.0, GRID_Z), InfinitePlane3d::new(Vec3::Z))
+    else {
         if pointer.plane_position.is_some() {
             dirty.0 = true;
         }
@@ -612,10 +951,26 @@ fn project_pointer_to_grid(
 fn update_cursor_visual(
     pointer: Res<PointerWorld>,
     mut plane_marker: Query<(&mut Transform, &mut Visibility), With<CursorPlaneMarker>>,
-    mut probe: Query<(&mut Transform, &mut Visibility), (With<CursorProbe>, Without<CursorPlaneMarker>, Without<CursorTip>)>,
-    mut tip: Query<(&mut Transform, &mut Visibility), (With<CursorTip>, Without<CursorPlaneMarker>, Without<CursorProbe>)>,
+    mut probe: Query<
+        (&mut Transform, &mut Visibility),
+        (
+            With<CursorProbe>,
+            Without<CursorPlaneMarker>,
+            Without<CursorTip>,
+        ),
+    >,
+    mut tip: Query<
+        (&mut Transform, &mut Visibility),
+        (
+            With<CursorTip>,
+            Without<CursorPlaneMarker>,
+            Without<CursorProbe>,
+        ),
+    >,
 ) {
-    let (Some(plane_position), Some(grid_position)) = (pointer.plane_position, pointer.grid_position) else {
+    let (Some(plane_position), Some(grid_position)) =
+        (pointer.plane_position, pointer.grid_position)
+    else {
         if let Ok((_, mut visibility)) = plane_marker.single_mut() {
             *visibility = Visibility::Hidden;
         }
@@ -665,7 +1020,8 @@ fn integrate_bodies(
         acceleration -= body.velocity * 1.45;
 
         if let Some(pointer_position) = pointer.plane_position {
-            let to_pointer = pointer_position + Vec3::Z * transform.translation.z - transform.translation;
+            let to_pointer =
+                pointer_position + Vec3::Z * transform.translation.z - transform.translation;
             let distance = to_pointer.length().max(0.001);
             let near_attraction = 7.5 * smooth_well(distance, 0.0, 5.0);
             let far_pull = match body.class {
@@ -743,7 +1099,11 @@ fn body_wells(bodies: &Query<(&Transform, &CelestialBody)>) -> Vec<GravityWell> 
         .map(|(transform, body)| GravityWell {
             center: transform.translation.truncate(),
             mass: body.mass,
-            radius: if body.class == BodyClass::LivingSelf { 8.5 } else { 3.8 },
+            radius: if body.class == BodyClass::LivingSelf {
+                8.5
+            } else {
+                3.8
+            },
         })
         .collect()
 }
@@ -765,7 +1125,10 @@ fn build_heightfield(wells: &[GravityWell]) -> Mesh {
 
     for y in 0..=GRID_RESOLUTION {
         for x in 0..=GRID_RESOLUTION {
-            let uv = Vec2::new(x as f32 / GRID_RESOLUTION as f32, y as f32 / GRID_RESOLUTION as f32);
+            let uv = Vec2::new(
+                x as f32 / GRID_RESOLUTION as f32,
+                y as f32 / GRID_RESOLUTION as f32,
+            );
             let xy = (uv * 2.0 - Vec2::ONE) * GRID_HALF_EXTENT;
             let height = gravity_height(xy, wells);
             positions.push([xy.x, xy.y, height]);
@@ -791,7 +1154,14 @@ fn build_heightfield(wells: &[GravityWell]) -> Mesh {
     for y in 0..GRID_RESOLUTION {
         for x in 0..GRID_RESOLUTION {
             let i = (y * stride + x) as u32;
-            indices.extend_from_slice(&[i, i + 1, i + stride as u32, i + 1, i + stride as u32 + 1, i + stride as u32]);
+            indices.extend_from_slice(&[
+                i,
+                i + 1,
+                i + stride as u32,
+                i + 1,
+                i + stride as u32 + 1,
+                i + stride as u32,
+            ]);
         }
     }
 
