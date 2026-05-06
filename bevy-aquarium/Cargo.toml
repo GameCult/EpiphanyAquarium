@@ -3,9 +3,18 @@ name = "bevy-aquarium"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+dev = ["bevy/dynamic_linking", "bevy/hotpatching"]
+
 [dependencies]
 bevy = "0.18"
 anyhow = "1"
 cultcache-rs = { path = "../../cultcache-rs" }
 cultnet-rs = { path = "../../cultnet-rs" }
 serde = { version = "1", features = ["derive"] }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

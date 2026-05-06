@@ -1,4 +1,4 @@
-use bevy::asset::RenderAssetUsages;
+use bevy::asset::{AssetPlugin, RenderAssetUsages};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::light::GlobalAmbientLight;
@@ -36,15 +36,22 @@ fn main() {
         .insert_resource(PointerWorld::default())
         .insert_resource(GridDirty(true))
         .insert_resource(runtime_bridge)
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "Epiphany Aquarium - Bevy Host".to_string(),
-                resolution: (1600, 900).into(),
-                present_mode: bevy::window::PresentMode::AutoVsync,
-                ..default()
-            }),
-            ..default()
-        }))
+        .add_plugins(
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "Epiphany Aquarium - Bevy Host".to_string(),
+                        resolution: (1600, 900).into(),
+                        present_mode: bevy::window::PresentMode::AutoVsync,
+                        ..default()
+                    }),
+                    ..default()
+                })
+                .set(AssetPlugin {
+                    watch_for_changes_override: Some(true),
+                    ..default()
+                }),
+        )
         .add_systems(Startup, setup)
         .add_systems(
             Update,

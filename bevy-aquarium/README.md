@@ -11,6 +11,17 @@ Run it from the repo root:
 npm run bevy
 ```
 
+Fast iteration:
+
+```powershell
+npm run bevy:dev
+npm run bevy:watch
+```
+
+`bevy:dev` enables Bevy's dynamic-linking and hotpatching features and forces
+asset watching on. `bevy:watch` restarts the Bevy client when Rust, shader, or
+asset files change.
+
 Or directly:
 
 ```powershell

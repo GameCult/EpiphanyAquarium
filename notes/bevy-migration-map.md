@@ -50,6 +50,18 @@ Check:
 npm run bevy:check
 ```
 
+Fast iteration:
+
+```powershell
+npm run bevy:dev
+npm run bevy:watch
+```
+
+`bevy:dev` enables Bevy dynamic linking, hotpatching support, and asset
+watching. `bevy:watch` is a local restart loop for code and shader changes.
+True system hotpatching requires Bevy's hotpatch runtime path; until that is
+worth the extra moving parts, restart-on-save is the reliable default.
+
 ## Next Renderer Steps
 
 1. Replace CPU mesh heightfield regeneration with a Bevy render-graph gravity
