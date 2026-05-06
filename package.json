@@ -8,6 +8,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview --host 127.0.0.1 --port 1421",
     "smoke:visual": "node scripts/visual-smoke.mjs",
+    "bevy": "cargo run --manifest-path bevy-aquarium/Cargo.toml",
+    "bevy:check": "cargo check --manifest-path bevy-aquarium/Cargo.toml",
     "tauri": "tauri"
   },
   "dependencies": {
