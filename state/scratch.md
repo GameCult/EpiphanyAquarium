@@ -298,3 +298,8 @@ Current slice:
   cell samples previous SH coefficients from inward along the radial vector so
   stored light is pushed outward, scattered, and left to convect through the
   existing ping-pong field.
+- Current brickmap correction: the Bevy lighting volume has a dynamic GPU
+  occupancy layer. `cs_update_light_bricks` rebuilds an 8x8x4 Grid-space flag
+  buffer every frame from current terrain contact, moving body bounds, Self
+  influence, and flare bands; `cs_grid_lighting` reads the flags so empty
+  bricks decay cheaply while occupied bricks get extra scatter/detail advection.

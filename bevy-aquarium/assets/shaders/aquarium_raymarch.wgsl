@@ -25,12 +25,17 @@ struct ShVolume {
     values: array<vec4f>,
 };
 
+struct BrickMap {
+    flags: array<u32>,
+};
+
 @group(0) @binding(0) var in_texture: texture_2d<f32>;
 @group(0) @binding(1) var in_sampler: sampler;
 @group(0) @binding(2) var<uniform> field: AquariumRaymarch;
 @group(0) @binding(3) var<storage, read> sh_volume: ShVolume;
 @group(0) @binding(4) var<storage, read> previous_sh_volume: ShVolume;
 @group(0) @binding(5) var<storage, read_write> next_sh_volume: ShVolume;
+@group(0) @binding(6) var<storage, read_write> light_bricks: BrickMap;
 
 const FROXEL_WIDTH: u32 = 16u;
 const FROXEL_HEIGHT: u32 = 9u;
@@ -39,6 +44,14 @@ const LIGHT_GRID_WIDTH: u32 = 32u;
 const LIGHT_GRID_HEIGHT: u32 = 32u;
 const LIGHT_GRID_DEPTH: u32 = 12u;
 const LIGHT_GRID_COUNT: u32 = LIGHT_GRID_WIDTH * LIGHT_GRID_HEIGHT * LIGHT_GRID_DEPTH;
+const LIGHT_BRICK_WIDTH: u32 = 8u;
+const LIGHT_BRICK_HEIGHT: u32 = 8u;
+const LIGHT_BRICK_DEPTH: u32 = 4u;
+const LIGHT_BRICK_COUNT: u32 = LIGHT_BRICK_WIDTH * LIGHT_BRICK_HEIGHT * LIGHT_BRICK_DEPTH;
+const LIGHT_BRICK_TERRAIN: u32 = 1u;
+const LIGHT_BRICK_BODY: u32 = 2u;
+const LIGHT_BRICK_SELF: u32 = 4u;
+const LIGHT_BRICK_FLARE: u32 = 8u;
 const SH_L0_OFFSET: u32 = 0u;
 const SH_L1X_OFFSET: u32 = LIGHT_GRID_COUNT;
 const SH_L1Y_OFFSET: u32 = LIGHT_GRID_COUNT * 2u;
@@ -140,6 +153,36 @@ fn froxel_mask(uv: vec2f, depth_progress: f32) -> u32 {
 
 fn light_grid_index_xyz(x: u32, y: u32, z: u32) -> u32 {
     return z * LIGHT_GRID_WIDTH * LIGHT_GRID_HEIGHT + y * LIGHT_GRID_WIDTH + x;
+}
+
+fn light_brick_index_xyz(x: u32, y: u32, z: u32) -> u32 {
+    return z * LIGHT_BRICK_WIDTH * LIGHT_BRICK_HEIGHT + y * LIGHT_BRICK_WIDTH + x;
+}
+
+fn light_brick_for_cell(x: u32, y: u32, z: u32) -> u32 {
+    let bx = min(x * LIGHT_BRICK_WIDTH / LIGHT_GRID_WIDTH, LIGHT_BRICK_WIDTH - 1u);
+    let by = min(y * LIGHT_BRICK_HEIGHT / LIGHT_GRID_HEIGHT, LIGHT_BRICK_HEIGHT - 1u);
+    let bz = min(z * LIGHT_BRICK_DEPTH / LIGHT_GRID_DEPTH, LIGHT_BRICK_DEPTH - 1u);
+    return light_brick_index_xyz(bx, by, bz);
+}
+
+fn light_brick_center_and_half_extents(index: u32) -> array<vec3f, 2> {
+    let bz = index / (LIGHT_BRICK_WIDTH * LIGHT_BRICK_HEIGHT);
+    let rem = index - bz * LIGHT_BRICK_WIDTH * LIGHT_BRICK_HEIGHT;
+    let by = rem / LIGHT_BRICK_WIDTH;
+    let bx = rem - by * LIGHT_BRICK_WIDTH;
+    let brick_uv = vec2f((f32(bx) + 0.5) / f32(LIGHT_BRICK_WIDTH), (f32(by) + 0.5) / f32(LIGHT_BRICK_HEIGHT));
+    let local = brick_uv * 2.0 - 1.0;
+    let xy = field.grid_center + local * field.grid_half_extent;
+    let top = grid_volume_top(field.grid_half_extent);
+    let height_above_grid = ((f32(bz) + 0.5) / f32(LIGHT_BRICK_DEPTH)) * top;
+    let center = vec3f(xy, grid_height(xy) + height_above_grid);
+    let half_extent = vec3f(
+        field.grid_half_extent / f32(LIGHT_BRICK_WIDTH),
+        field.grid_half_extent / f32(LIGHT_BRICK_HEIGHT),
+        top / f32(LIGHT_BRICK_DEPTH) * 0.5,
+    );
+    return array<vec3f, 2>(center, half_extent);
 }
 
 fn sh_read(volume_index: u32, offset: u32) -> vec3f {
@@ -251,6 +294,47 @@ fn flare_impulse(phase: f32) -> f32 {
 }
 
 @compute @workgroup_size(64)
+fn cs_update_light_bricks(@builtin(global_invocation_id) id: vec3u) {
+    let index = id.x;
+    if (index >= LIGHT_BRICK_COUNT) {
+        return;
+    }
+
+    let brick = light_brick_center_and_half_extents(index);
+    let center = brick[0];
+    let half_extent = brick[1];
+    let local_radius = length(grid_local(center.xy));
+    var flags = select(0u, LIGHT_BRICK_TERRAIN, local_radius < 1.05 && center.z - half_extent.z <= grid_height(center.xy) + 0.55);
+
+    for (var body_index = 0u; body_index < 8u; body_index = body_index + 1u) {
+        if (f32(body_index) >= field.body_count) {
+            break;
+        }
+        let body = field.bodies[body_index];
+        let delta = abs(body.xyz - center) - half_extent;
+        let outside_distance = length(max(delta, vec3f(0.0)));
+        let self_flag = field.colors[body_index].w;
+        let influence_radius = body.w + mix(2.6, field.grid_half_extent * 0.18, self_flag);
+        if (outside_distance <= influence_radius) {
+            flags |= LIGHT_BRICK_BODY;
+        }
+        if (self_flag > 0.5 && outside_distance <= influence_radius * 1.8) {
+            flags |= LIGHT_BRICK_SELF;
+        }
+        let flare_phase = fract(field.time / 2.15);
+        let impulse = flare_impulse(flare_phase);
+        let flare_radius = field.grid_half_extent * (0.16 + 0.72 * flare_phase);
+        let flare_width = max(field.grid_half_extent * 0.16, 2.0);
+        let distance_to_self = distance(center.xy, body.xy);
+        if (self_flag > 0.5 && impulse > 0.0 && abs(distance_to_self - flare_radius) <= flare_width) {
+            flags |= LIGHT_BRICK_FLARE;
+        }
+    }
+
+    light_bricks.flags[index] = flags;
+}
+
+@compute @workgroup_size(64)
 fn cs_grid_lighting(@builtin(global_invocation_id) id: vec3u) {
     let index = id.x;
     if (index >= LIGHT_GRID_COUNT) {
@@ -265,6 +349,7 @@ fn cs_grid_lighting(@builtin(global_invocation_id) id: vec3u) {
     let local = uv * 2.0 - 1.0;
     let xy = field.grid_center + local * field.grid_half_extent;
     let edge_fade = grid_edge_fade(xy);
+    let brick_flags = light_bricks.flags[light_brick_for_cell(x, y, z)];
     let top = grid_volume_top(field.grid_half_extent);
     let height_above_grid = ((f32(z) + 0.5) / f32(LIGHT_GRID_DEPTH)) * top;
     let point = vec3f(xy, grid_height(xy) + height_above_grid);
@@ -285,6 +370,11 @@ fn cs_grid_lighting(@builtin(global_invocation_id) id: vec3u) {
     var l1y = previous_coeff_sample(sample_position, SH_L1Y_OFFSET) * 0.78;
     var l1z = previous_coeff_sample(sample_position, SH_L1Z_OFFSET) * 0.78;
 
+    if (brick_flags == 0u) {
+        write_sh(index, l0 * edge_fade * 0.72, l1x * edge_fade * 0.72, l1y * edge_fade * 0.72, l1z * edge_fade * 0.72);
+        return;
+    }
+
     let neighbors = array<vec3i, 6>(
         vec3i(-1, 0, 0),
         vec3i(1, 0, 0),
@@ -297,11 +387,23 @@ fn cs_grid_lighting(@builtin(global_invocation_id) id: vec3u) {
         let n = vec3i(i32(x), i32(y), i32(z)) + neighbors[i];
         if (all(n >= vec3i(0)) && n.x < i32(LIGHT_GRID_WIDTH) && n.y < i32(LIGHT_GRID_HEIGHT) && n.z < i32(LIGHT_GRID_DEPTH)) {
             let ni = light_grid_index_xyz(u32(n.x), u32(n.y), u32(n.z));
-            l0 += previous_coeff_at(ni, SH_L0_OFFSET) * 0.018;
-            l1x += previous_coeff_at(ni, SH_L1X_OFFSET) * 0.018;
-            l1y += previous_coeff_at(ni, SH_L1Y_OFFSET) * 0.018;
-            l1z += previous_coeff_at(ni, SH_L1Z_OFFSET) * 0.018;
+            let scatter = select(0.016, 0.026, (brick_flags & (LIGHT_BRICK_BODY | LIGHT_BRICK_SELF | LIGHT_BRICK_FLARE)) != 0u);
+            l0 += previous_coeff_at(ni, SH_L0_OFFSET) * scatter;
+            l1x += previous_coeff_at(ni, SH_L1X_OFFSET) * scatter;
+            l1y += previous_coeff_at(ni, SH_L1Y_OFFSET) * scatter;
+            l1z += previous_coeff_at(ni, SH_L1Z_OFFSET) * scatter;
         }
+    }
+
+    if ((brick_flags & (LIGHT_BRICK_BODY | LIGHT_BRICK_SELF | LIGHT_BRICK_FLARE)) != 0u) {
+        let detail_phase = sin(dot(point, vec3f(0.31, -0.23, 0.47)) + field.time * 1.7);
+        let twist = vec2f(-local.y, local.x) * (0.45 + 0.2 * detail_phase);
+        let detailed_xy = xy - twist * field.grid_half_extent * 0.018;
+        let detailed_sample = previous_grid_volume_position(detailed_xy, height_above_grid + detail_phase * top * 0.018);
+        l0 += previous_coeff_sample(detailed_sample, SH_L0_OFFSET) * 0.10;
+        l1x += previous_coeff_sample(detailed_sample, SH_L1X_OFFSET) * 0.10;
+        l1y += previous_coeff_sample(detailed_sample, SH_L1Y_OFFSET) * 0.10;
+        l1z += previous_coeff_sample(detailed_sample, SH_L1Z_OFFSET) * 0.10;
     }
 
     for (var body_index = 0u; body_index < 8u; body_index = body_index + 1u) {

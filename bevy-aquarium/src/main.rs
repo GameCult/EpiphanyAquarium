@@ -65,6 +65,10 @@ const LIGHT_GRID_HEIGHT: usize = 32;
 const LIGHT_GRID_DEPTH: usize = 12;
 const LIGHT_GRID_COUNT: usize = LIGHT_GRID_WIDTH * LIGHT_GRID_HEIGHT * LIGHT_GRID_DEPTH;
 const LIGHT_COEFFICIENT_COUNT: usize = LIGHT_GRID_COUNT * 4;
+const LIGHT_BRICK_WIDTH: usize = 8;
+const LIGHT_BRICK_HEIGHT: usize = 8;
+const LIGHT_BRICK_DEPTH: usize = 4;
+const LIGHT_BRICK_COUNT: usize = LIGHT_BRICK_WIDTH * LIGHT_BRICK_HEIGHT * LIGHT_BRICK_DEPTH;
 
 fn main() {
     let runtime_bridge = CultRuntimeBridge::load().unwrap_or_else(|err| {
@@ -596,11 +600,13 @@ struct AquariumRaymarchPipeline {
     render_pipeline_id: CachedRenderPipelineId,
     render_pipeline_id_hdr: CachedRenderPipelineId,
     compute_pipeline_id: CachedComputePipelineId,
+    brick_pipeline_id: CachedComputePipelineId,
 }
 
 #[derive(Resource)]
 struct AquariumLightBuffers {
     buffers: [Buffer; 2],
+    brick_occupancy: Buffer,
     frame: AtomicU32,
 }
 
@@ -612,6 +618,7 @@ fn init_aquarium_raymarch_pipeline(
     pipeline_cache: Res<PipelineCache>,
 ) {
     let storage_size = (LIGHT_COEFFICIENT_COUNT * size_of::<Vec4>()) as u64;
+    let brick_storage_size = (LIGHT_BRICK_COUNT * size_of::<u32>()) as u64;
     let buffers = [
         render_device.create_buffer(&BufferDescriptor {
             label: Some("aquarium_sh_volume_a"),
@@ -626,6 +633,12 @@ fn init_aquarium_raymarch_pipeline(
             mapped_at_creation: false,
         }),
     ];
+    let brick_occupancy = render_device.create_buffer(&BufferDescriptor {
+        label: Some("aquarium_light_brick_occupancy"),
+        size: brick_storage_size,
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
 
     let render_layout = BindGroupLayoutDescriptor::new(
         "aquarium_raymarch_render_layout",
@@ -647,6 +660,7 @@ fn init_aquarium_raymarch_pipeline(
                 (2, uniform_buffer::<AquariumRaymarch>(true)),
                 (4, storage_buffer_read_only_sized(false, None)),
                 (5, storage_buffer_sized(false, None)),
+                (6, storage_buffer_sized(false, None)),
             ),
         ),
     );
@@ -676,10 +690,18 @@ fn init_aquarium_raymarch_pipeline(
         .format = ViewTarget::TEXTURE_FORMAT_HDR;
     let render_pipeline_id_hdr = pipeline_cache.queue_render_pipeline(render_desc);
     let compute_pipeline_id = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
-        label: Some("aquarium_sh_froxel_compute".into()),
+        label: Some("aquarium_sh_grid_compute".into()),
         layout: vec![compute_layout.clone()],
         shader,
         entry_point: Some("cs_grid_lighting".into()),
+        ..default()
+    });
+    let shader = asset_server.load("shaders/aquarium_raymarch.wgsl");
+    let brick_pipeline_id = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+        label: Some("aquarium_light_brick_occupancy_compute".into()),
+        layout: vec![compute_layout.clone()],
+        shader,
+        entry_point: Some("cs_update_light_bricks".into()),
         ..default()
     });
 
@@ -690,9 +712,11 @@ fn init_aquarium_raymarch_pipeline(
         render_pipeline_id,
         render_pipeline_id_hdr,
         compute_pipeline_id,
+        brick_pipeline_id,
     });
     commands.insert_resource(AquariumLightBuffers {
         buffers,
+        brick_occupancy,
         frame: AtomicU32::new(0),
     });
 }
@@ -728,6 +752,10 @@ impl ViewNode for AquariumRaymarchNode {
         else {
             return Ok(());
         };
+        let Some(brick_pipeline) = pipeline_cache.get_compute_pipeline(pipeline.brick_pipeline_id)
+        else {
+            return Ok(());
+        };
 
         let uniforms = world.resource::<ComponentUniforms<AquariumRaymarch>>();
         let Some(settings_binding) = uniforms.uniforms().binding() else {
@@ -746,6 +774,7 @@ impl ViewNode for AquariumRaymarchNode {
                 (2, settings_binding.clone()),
                 (4, buffers.buffers[read_index].as_entire_binding()),
                 (5, buffers.buffers[write_index].as_entire_binding()),
+                (6, buffers.brick_occupancy.as_entire_binding()),
             )),
         );
         {
@@ -753,9 +782,12 @@ impl ViewNode for AquariumRaymarchNode {
                 render_context
                     .command_encoder()
                     .begin_compute_pass(&ComputePassDescriptor {
-                        label: Some("aquarium_sh_froxel_compute"),
+                        label: Some("aquarium_light_compute"),
                         ..default()
                     });
+            pass.set_pipeline(brick_pipeline);
+            pass.set_bind_group(0, &compute_bind_group, &[settings_index.index()]);
+            pass.dispatch_workgroups(LIGHT_BRICK_COUNT.div_ceil(64) as u32, 1, 1);
             pass.set_pipeline(compute_pipeline);
             pass.set_bind_group(0, &compute_bind_group, &[settings_index.index()]);
             pass.dispatch_workgroups(LIGHT_GRID_COUNT.div_ceil(64) as u32, 1, 1);
