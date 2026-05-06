@@ -4,11 +4,23 @@ type StardustProjection = AquariumAgentProjection & {
   color?: string;
   glow?: string;
   screenDepth?: number;
+  viewDistance?: number;
+  worldX?: number;
+  worldY?: number;
+  worldZ?: number;
 };
 
 type FroxelDepthBounds = {
   far: number;
   near: number;
+};
+
+type FroxelCameraFrame = {
+  position: [number, number, number];
+  ray00: [number, number, number];
+  ray01: [number, number, number];
+  ray10: [number, number, number];
+  ray11: [number, number, number];
 };
 
 type GpuApi = {
@@ -220,13 +232,21 @@ const froxelHeight = 54;
 const froxelDepth = 24;
 const froxelCount = froxelWidth * froxelHeight * froxelDepth;
 const froxelShStrideFloats = 16;
-const agentBodyWorldRadiusPixels = 34;
+const agentBodyScreenCullRadiusPixels = 58;
+const agentBodyWorldRadius = 0.42;
 const studioEnvironmentData = new Float32Array([
   0.506, 0.516, 0.533, 1,
   0.152, 0.178, 0.194, 1,
   0.411, 0.531, 0.694, 1,
   6.0, 7.625, 9.875, 1,
 ]);
+const defaultCameraFrame: FroxelCameraFrame = {
+  position: [0, -7.7, 6.3],
+  ray00: [-0.48, 0.52, -0.7],
+  ray01: [-0.48, 0.83, -0.28],
+  ray10: [0.48, 0.52, -0.7],
+  ray11: [0.48, 0.83, -0.28],
+};
 
 const froxelMaskComputeShader = /* wgsl */ `
 struct SimUniforms {
@@ -242,6 +262,11 @@ struct SimUniforms {
   depthFar: f32,
   depthSpan: f32,
   pad2: f32,
+  cameraPosition: vec4f,
+  ray00: vec4f,
+  ray10: vec4f,
+  ray01: vec4f,
+  ray11: vec4f,
 };
 
 @group(0) @binding(0) var<storage, read_write> primitiveMasks: array<u32>;
@@ -475,6 +500,7 @@ struct SimUniforms {
 @group(0) @binding(3) var<uniform> uniforms: SimUniforms;
 @group(0) @binding(4) var<storage, read> environment: array<vec4f>;
 @group(0) @binding(5) var<storage, read> shLighting: array<vec4f>;
+@group(0) @binding(6) var<storage, read> worldAgents: array<vec4f>;
 
 struct VertexOut {
   @builtin(position) position: vec4f,
@@ -553,22 +579,90 @@ fn froxelRadiance(pixel: vec2f, progress: f32, direction: vec3f) -> vec3f {
   return max(l0 + lx * dir.x + ly * dir.y + lz * dir.z, vec3f(0.0));
 }
 
+fn cameraRay(uv: vec2f) -> vec3f {
+  let top = mix(uniforms.ray00.xyz, uniforms.ray10.xyz, uv.x);
+  let bottom = mix(uniforms.ray01.xyz, uniforms.ray11.xyz, uv.x);
+  return normalize(mix(top, bottom, uv.y));
+}
+
+fn depthWindowFade(distanceValue: f32) -> f32 {
+  let edge = max(uniforms.depthSpan * 0.08, 0.08);
+  let nearFade = smoothstep(uniforms.depthNear, uniforms.depthNear + edge, distanceValue);
+  let farFade = 1.0 - smoothstep(uniforms.depthFar - edge, uniforms.depthFar, distanceValue);
+  return clamp(nearFade * farFade, 0.0, 1.0);
+}
+
+fn sphereHit(rayOrigin: vec3f, rayDir: vec3f, center: vec3f, radius: f32) -> f32 {
+  let oc = rayOrigin - center;
+  let b = dot(oc, rayDir);
+  let c = dot(oc, oc) - radius * radius;
+  let h = b * b - c;
+  if (h < 0.0) {
+    return -1.0;
+  }
+  let t = -b - sqrt(h);
+  if (t > 0.0) {
+    return t;
+  }
+  return -b + sqrt(h);
+}
+
 @fragment
 fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
   let pixel = input.uv * vec2f(uniforms.width, uniforms.height);
+  let rayOrigin = uniforms.cameraPosition.xyz;
+  let rayDir = cameraRay(input.uv);
   var transmittance = 1.0;
   var scattering = vec3f(0.0);
   var solid = vec3f(0.0);
   var solidAlpha = 0.0;
   var solidTransmittance = 1.0;
+  var solidHitT = 100000.0;
+  var solidHitIndex = 999u;
   let jitter = hash(dot(pixel, vec2f(0.067, 0.131)) + uniforms.time * 3.1);
+
+  for (var i = 0u; i < ${maxStardustAgents}u; i = i + 1u) {
+    if (f32(i) >= uniforms.count) {
+      break;
+    }
+    let worldAgent = worldAgents[i];
+    let hitT = sphereHit(rayOrigin, rayDir, worldAgent.xyz, worldAgent.w * 1.16);
+    if (depthWindowFade(hitT) > 0.0 && hitT < solidHitT) {
+      solidHitT = hitT;
+      solidHitIndex = i;
+    }
+  }
 
   for (var step = 0u; step < 32u; step = step + 1u) {
     let progress01 = (f32(step) + jitter) / 32.0;
-    let progress = uniforms.depthNear + progress01 * uniforms.depthSpan;
+    let rayDistance = uniforms.depthNear + progress01 * uniforms.depthSpan;
+    let boundsFade = depthWindowFade(rayDistance);
+    let samplePoint = rayOrigin + rayDir * rayDistance;
     let mask = primitiveMask(pixel, progress01);
     var density = 0.0;
     var tint = vec3f(0.0);
+
+    if (solidHitIndex < ${maxStardustAgents}u && rayDistance >= solidHitT) {
+      let worldAgent = worldAgents[solidHitIndex];
+      let color = colors[solidHitIndex];
+      let selfFlag = color.w;
+      let hitPoint = rayOrigin + rayDir * solidHitT;
+      let local = (hitPoint - worldAgent.xyz) / max(worldAgent.w, 0.001);
+      let normal = normalize(local);
+      let plasma = pow(max(fbm4(vec4f(local * mix(1.35, 2.15, selfFlag), uniforms.time * 0.24)) * 0.5 + 0.5, 0.0), mix(2.4, 5.4, selfFlag));
+      let viewDir = normalize(rayOrigin - hitPoint);
+      let reflected = reflect(-viewDir, normal);
+      let fresnel = pow(1.0 - clamp(dot(normal, viewDir), 0.0, 1.0), 4.0);
+      let studioReflection = environmentColor(reflected);
+      let volumeLight = froxelRadiance(pixel, progress01, normal);
+      let diffuseWrap = (environmentColor(normal) * 0.08 + volumeLight * 0.28) * (0.12 + 0.1 * color.rgb);
+      let chrome = diffuseWrap + mix(color.rgb * 0.18, studioReflection, 0.82 + fresnel * 0.16);
+      let solar = vec3f(4.2, 2.1, 0.55) * (0.8 + plasma * 1.5);
+      solid = mix(chrome, solar, selfFlag) * depthWindowFade(solidHitT);
+      solidAlpha = 0.92 * depthWindowFade(solidHitT);
+      solidTransmittance = transmittance;
+      break;
+    }
 
     for (var i = 0u; i < ${maxStardustAgents}u; i = i + 1u) {
       if (f32(i) >= uniforms.count) {
@@ -578,32 +672,18 @@ fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
         continue;
       }
       let agent = agents[i];
+      let worldAgent = worldAgents[i];
       let color = colors[i];
       let selfFlag = color.w;
-      let radius = agent.z;
-      let local = vec3f((pixel - agent.xy) / max(radius, 0.001), (progress - agent.w) * 6.0);
+      let radius = max(worldAgent.w, 0.001);
+      let local = (samplePoint - worldAgent.xyz) / radius;
       let displacement = fbm4(vec4f(local * mix(0.72, 1.12, selfFlag), uniforms.time * mix(0.06, 0.16, selfFlag))) * mix(0.035, 0.14, selfFlag);
       let sdf = length(local) - (1.0 + displacement);
       let plasma = pow(max(fbm4(vec4f(local * mix(1.35, 2.15, selfFlag), uniforms.time * 0.24)) * 0.5 + 0.5, 0.0), mix(2.4, 5.4, selfFlag));
-      if (sdf < 0.016) {
-        let normal = normalize(local);
-        let viewDir = normalize(vec3f(0.0, 0.0, 1.35) - local);
-        let reflected = reflect(-viewDir, normal);
-        let fresnel = pow(1.0 - clamp(dot(normal, viewDir), 0.0, 1.0), 4.0);
-        let studioReflection = environmentColor(reflected);
-        let volumeLight = froxelRadiance(pixel, progress01, normal);
-        let diffuseWrap = (environmentColor(normal) * 0.08 + volumeLight * 0.28) * (0.12 + 0.1 * color.rgb);
-        let chrome = diffuseWrap + mix(color.rgb * 0.18, studioReflection, 0.82 + fresnel * 0.16);
-        let solar = vec3f(4.2, 2.1, 0.55) * (0.8 + plasma * 1.5);
-        solid = mix(chrome, solar, selfFlag);
-        solidAlpha = 0.92;
-        solidTransmittance = transmittance;
-        break;
-      }
       let atmosphere = exp(-max(sdf, 0.0) * mix(4.6, 2.25, selfFlag));
-      let localDensity = atmosphere * (0.004 + radius / 520.0 + selfFlag * 0.055) * (0.55 + plasma * mix(0.42, 1.45, selfFlag));
-      density += localDensity;
-      tint += localDensity * mix(color.rgb, vec3f(3.8, 1.85, 0.42), selfFlag);
+      let localDensity = atmosphere * (0.004 + radius * 0.18 + selfFlag * 0.055) * (0.55 + plasma * mix(0.42, 1.45, selfFlag));
+      density += localDensity * boundsFade;
+      tint += localDensity * boundsFade * mix(color.rgb, vec3f(3.8, 1.85, 0.42), selfFlag);
     }
 
     if (solidAlpha > 0.5) {
@@ -627,6 +707,7 @@ fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
 
 export interface AquariumStardustOverlay {
   dispose(): void;
+  setCameraFrame(frame: FroxelCameraFrame | null): void;
   setDepthBounds(bounds: FroxelDepthBounds | null): void;
   setProjections(projections: StardustProjection[]): void;
 }
@@ -657,6 +738,7 @@ export async function createAquariumStardustOverlay(canvas: HTMLCanvasElement): 
 class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
   private agentData = new Float32Array(maxStardustAgents * 4);
   private agentsBuffer: any;
+  private cameraFrame: FroxelCameraFrame | null = null;
   private colorsBuffer: any;
   private colorData = new Float32Array(maxStardustAgents * 4);
   private computeBindGroup: any;
@@ -672,8 +754,10 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
   private pipeline: any;
   private raf = 0;
   private renderBindGroups: any[] = [];
-  private uniforms = new Float32Array(12);
+  private uniforms = new Float32Array(32);
   private uniformBuffer: any;
+  private worldAgentData = new Float32Array(maxStardustAgents * 4);
+  private worldAgentsBuffer: any;
   private depthBounds: FroxelDepthBounds | null = null;
 
   constructor(private canvas: HTMLCanvasElement, private device: any, private context: any) {
@@ -697,6 +781,11 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
     });
     this.colorsBuffer = device.createBuffer({
       label: "froxel colors",
+      size: maxStardustAgents * 4 * 4,
+      usage: gpuBufferUsage.STORAGE | gpuBufferUsage.COPY_DST,
+    });
+    this.worldAgentsBuffer = device.createBuffer({
+      label: "froxel world agents",
       size: maxStardustAgents * 4 * 4,
       usage: gpuBufferUsage.STORAGE | gpuBufferUsage.COPY_DST,
     });
@@ -769,6 +858,7 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
         { binding: 3, resource: { buffer: this.uniformBuffer } },
         { binding: 4, resource: { buffer: this.environmentBuffer } },
         { binding: 5, resource: { buffer: this.lightingBuffers[lightingIndex] } },
+        { binding: 6, resource: { buffer: this.worldAgentsBuffer } },
       ],
     }));
     this.device.queue.writeBuffer(this.environmentBuffer, 0, studioEnvironmentData);
@@ -783,6 +873,7 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
     this.maskBuffer?.destroy?.();
     this.agentsBuffer?.destroy?.();
     this.colorsBuffer?.destroy?.();
+    this.worldAgentsBuffer?.destroy?.();
     this.environmentBuffer?.destroy?.();
     this.lightingBuffers.forEach((buffer) => buffer?.destroy?.());
     this.uniformBuffer?.destroy?.();
@@ -793,12 +884,17 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
     const height = Math.max(this.canvas.height, 1);
     this.agentData.fill(0);
     this.colorData.fill(0);
+    this.worldAgentData.fill(0);
     projections.slice(0, maxStardustAgents).forEach((projection, index) => {
       const isSelf = projection.id === "coordinator" ? 1 : 0;
       this.agentData[index * 4] = (projection.xPercent / 100) * width;
       this.agentData[index * 4 + 1] = (projection.yPercent / 100) * height;
-      this.agentData[index * 4 + 2] = agentBodyWorldRadiusPixels * clamp(projection.screenScale ?? 1, 0.48, 3.4);
-      this.agentData[index * 4 + 3] = clamp(projection.screenDepth ?? (isSelf ? 0.5 : 0.42), 0, 1);
+      this.agentData[index * 4 + 2] = agentBodyScreenCullRadiusPixels * clamp(projection.screenScale ?? 1, 0.48, 3.4);
+      this.agentData[index * 4 + 3] = projection.viewDistance ?? 0;
+      this.worldAgentData[index * 4] = projection.worldX ?? 999;
+      this.worldAgentData[index * 4 + 1] = projection.worldY ?? 999;
+      this.worldAgentData[index * 4 + 2] = projection.worldZ ?? 999;
+      this.worldAgentData[index * 4 + 3] = agentBodyWorldRadius;
       const color = parseColor(projection.color ?? "#8fffd3");
       const glow = parseColor(projection.glow ?? projection.color ?? "#8fffd3");
       this.colorData[index * 4] = isSelf ? 1.0 : (color[0] + glow[0]) * 0.5;
@@ -809,6 +905,11 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
     this.uniforms[3] = Math.min(maxStardustAgents, projections.length);
     this.device.queue.writeBuffer(this.agentsBuffer, 0, this.agentData);
     this.device.queue.writeBuffer(this.colorsBuffer, 0, this.colorData);
+    this.device.queue.writeBuffer(this.worldAgentsBuffer, 0, this.worldAgentData);
+  }
+
+  setCameraFrame(frame: FroxelCameraFrame | null) {
+    this.cameraFrame = frame;
   }
 
   setDepthBounds(bounds: FroxelDepthBounds | null) {
@@ -839,6 +940,12 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
     this.uniforms[9] = depthFar;
     this.uniforms[10] = depthSpan;
     this.uniforms[11] = 0;
+    const cameraFrame = this.cameraFrame ?? defaultCameraFrame;
+    this.uniforms.set([...cameraFrame.position, 0], 12);
+    this.uniforms.set([...cameraFrame.ray00, 0], 16);
+    this.uniforms.set([...cameraFrame.ray10, 0], 20);
+    this.uniforms.set([...cameraFrame.ray01, 0], 24);
+    this.uniforms.set([...cameraFrame.ray11, 0], 28);
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniforms);
     const encoder = this.device.createCommandEncoder({ label: "froxel field frame" });
     const computePass = encoder.beginComputePass();
@@ -1008,6 +1115,10 @@ class WebGpuStardustOverlay implements AquariumStardustOverlay {
 
   setDepthBounds(_bounds: FroxelDepthBounds | null) {
     // The particle overlay is screen-space fallback work; only the froxel field consumes depth fitting.
+  }
+
+  setCameraFrame(_frame: FroxelCameraFrame | null) {
+    // The particle overlay is screen-space fallback work; only the froxel field consumes camera rays.
   }
 
   private render = (millis: number) => {

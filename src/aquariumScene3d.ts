@@ -5,6 +5,10 @@ import type { AquariumAgentProjection } from "./aquariumFluid";
 type SceneProjection = AquariumAgentProjection & {
   color?: string;
   glow?: string;
+  viewDistance?: number;
+  worldX?: number;
+  worldY?: number;
+  worldZ?: number;
 };
 
 type PointerState = {
@@ -25,9 +29,18 @@ export type ProjectLabelProjection = {
   yPercent: number;
 };
 
+export type FroxelCameraFrame = {
+  position: [number, number, number];
+  ray00: [number, number, number];
+  ray01: [number, number, number];
+  ray10: [number, number, number];
+  ray11: [number, number, number];
+};
+
 export interface AquariumScene3d {
   dispose(): void;
   projectGridDepthBounds(): { far: number; near: number };
+  projectFroxelCameraFrame(): FroxelCameraFrame;
   projectProjectLabels(labels: Array<{ id: string; label: string; subLabel?: string }>): ProjectLabelProjection[];
   projectPointerToGrid(pointer: PointerState): { xPercent: number; yPercent: number } | null;
   projectProjections(projections: SceneProjection[]): SceneProjection[];
@@ -296,6 +309,10 @@ class ThreeAquariumScene implements AquariumScene3d {
         yPercent: screen.yPercent,
         screenScale: screen.scale,
         screenDepth: screen.depth,
+        viewDistance: screen.distance,
+        worldX: body.x,
+        worldY: body.y,
+        worldZ: body.z,
       };
     });
   }
@@ -313,12 +330,22 @@ class ThreeAquariumScene implements AquariumScene3d {
       new THREE.Vector3(origin.x + halfSize.x, origin.y - halfSize.y, 1.7),
       new THREE.Vector3(origin.x + halfSize.x, origin.y + halfSize.y, 1.7),
       new THREE.Vector3(origin.x - halfSize.x, origin.y + halfSize.y, 1.7),
-    ].map((point) => point.project(this.camera).z * 0.5 + 0.5);
-    const near = clamp(Math.min(...corners) - margin, 0, 0.98);
-    const far = clamp(Math.max(...corners) + margin, near + 0.02, 1);
+    ].map((point) => this.camera.position.distanceTo(point));
+    const near = Math.max(0.12, Math.min(...corners) - margin * this.cameraDistance);
+    const far = Math.max(near + 0.2, Math.max(...corners) + margin * this.cameraDistance);
     return {
       far,
       near,
+    };
+  }
+
+  projectFroxelCameraFrame() {
+    return {
+      position: [this.camera.position.x, this.camera.position.y, this.camera.position.z] as [number, number, number],
+      ray00: this.cameraRayForUv(0, 0),
+      ray01: this.cameraRayForUv(0, 1),
+      ray10: this.cameraRayForUv(1, 0),
+      ray11: this.cameraRayForUv(1, 1),
     };
   }
 
@@ -740,7 +767,7 @@ class ThreeAquariumScene implements AquariumScene3d {
         varying vec2 vUv;
 
         float sourceRadius(vec4 source) {
-          return 0.24;
+          return 0.42;
         }
 
         float primitiveIntersectsFroxel(int index, vec3 p, float t) {
@@ -923,7 +950,7 @@ class ThreeAquariumScene implements AquariumScene3d {
         }
 
         float sourceRadius(vec4 source) {
-          return 0.24;
+          return 0.42;
         }
 
         float sourceDisplacement(vec3 local, float radius, float mass, float selfFlag) {
@@ -1240,10 +1267,17 @@ class ThreeAquariumScene implements AquariumScene3d {
     const distance = this.camera.position.distanceTo(point);
     return {
       depth: clamp(projected.z * 0.5 + 0.5, 0, 1),
+      distance,
       scale: clamp((this.cameraDistance / Math.max(distance, 0.001)) * 0.96, 0.62, 1.72),
       xPercent: (projected.x * 0.5 + 0.5) * 100,
       yPercent: (0.5 - projected.y * 0.5) * 100,
     };
+  }
+
+  private cameraRayForUv(x: number, y: number): [number, number, number] {
+    const world = new THREE.Vector3(x * 2 - 1, 1 - y * 2, 1).unproject(this.camera);
+    const direction = world.sub(this.camera.position).normalize();
+    return [direction.x, direction.y, direction.z];
   }
 
   private cameraRight() {

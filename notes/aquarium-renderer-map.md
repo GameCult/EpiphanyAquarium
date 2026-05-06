@@ -105,10 +105,13 @@ It uses:
 - two ping-ponged storage buffers of SH lighting, four `vec4` coefficients per
   froxel;
 - one storage buffer of projected primitive data;
+- one storage buffer of world-space primitive centers/radii;
 - one storage buffer of primitive colors / Self flags;
 - one storage buffer containing a tiny sampled summary of `studio3.hdr`;
 - one uniform buffer for screen size, time, primitive count, froxel size, and
-  the near/far depth interval fitted to the projected grid volume.
+  the near/far depth interval fitted to the projected grid volume;
+- one camera-frame uniform containing the camera position and four frustum
+  corner rays.
 
 The compute pass dispatches one invocation per froxel:
 
@@ -136,6 +139,10 @@ interval: Three projects the moving grid-volume bounds through the camera, and
 WebGPU maps froxel depth slices into that near/far range. Agent primitives carry
 their projected body depth, so primitive masks, SH propagation, and the field
 march stop spending depth samples outside the grid volume.
+
+The fitted depth window is also the visibility window. Solid bodies,
+atmospheres, and fog all fade at the near/far grid-volume bounds; planets
+should not punch through from outside the current grid area of interest.
 
 ### 6. WebGPU Froxel SH Lighting
 
@@ -167,7 +174,12 @@ screen-depth haze was removed because it did not move with the camera or scene.
 ### 7. WebGPU Field March
 
 The WebGPU render pass draws a fullscreen triangle over the stardust/field
-canvas. For each pixel:
+canvas. For each pixel it reconstructs a world-space camera ray by interpolating
+the four camera corner rays emitted by Three. Projected primitive data is only a
+screen/froxel culling aid; the planet body and atmosphere SDFs evaluate against
+world-space centers and radii.
+
+For each pixel:
 
 1. March a small fixed number of frustum-depth samples.
 2. Map the sample to a froxel cell.
@@ -197,7 +209,8 @@ primitives whether they are solid, atmospheric, or both at the current sample.
 
 ### 8. Agent Planet SDFs
 
-Agent bodies are analytic SDF planets:
+Agent bodies are analytic SDF planets. The WebGL fallback evaluates them from
+the field-source list:
 
 ```glsl
 float planetSdf(vec3 p, vec4 source, float selfFlag) {
@@ -215,10 +228,12 @@ Displacement uses cheap 4D fBm:
 - Self gets higher amplitude and ridge-like loop emphasis.
 
 Solid body radius is intentionally uniform in world terms across agents in both
-WebGPU and WebGL fallback SDF paths. In WebGPU the projected pixel radius follows
-the Three camera scale so zooming in makes planets inspectable; state changes
-can affect atmosphere, emission, surface motion, glow, grid wells, and labels,
-but they should not make Self a different body class.
+WebGPU and WebGL fallback SDF paths. In WebGPU the ray is reconstructed in world
+space and intersects world-space analytic spheres before atmosphere marching, so
+zooming changes apparent size through the camera instead of through a manual
+projection-scale multiplier. State changes can affect atmosphere, emission,
+surface motion, glow, grid wells, and labels, but they should not make Self a
+different body class.
 
 The displacement frequencies are intentionally low. The planets should read as
 chrome/gas bodies with slow organic surface motion, not sandpaper covered in

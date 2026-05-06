@@ -241,6 +241,12 @@ Current slice:
   screen-space elevation offset; the Three camera projection is the sole label
   anchor, so Self should not bob independently from its body.
 - Follow-up body-scale correction: consistent means world-space, not fixed
-  pixel-space. WebGPU now multiplies the shared body radius by Three's projected
-  camera scale, so zooming in enlarges planets on screen and makes surface
-  inspection possible while preserving one shared world radius across agents.
+  pixel-space or projection-scale cosplay. WebGPU now receives Three's camera
+  position plus frustum corner rays, reconstructs each pixel ray in world space,
+  and intersects shared-radius planet SDFs against world-space agent centers.
+  Zoom changes apparent body size through the camera itself.
+- Current grid-volume boundary correction: solid planets should not ignore the
+  fitted fog bounds. The moving grid volume is the cartesian area of interest,
+  so WebGPU now applies a near/far depth-window fade to solid hits and gas
+  density instead of letting world-space bodies render outside the current
+  volume.
