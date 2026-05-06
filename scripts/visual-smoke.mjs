@@ -67,7 +67,7 @@ async function smokeViewport(browser, viewport, screenshotPath) {
   const page = await browser.newPage({ viewport });
   await page.goto(url, { waitUntil: "networkidle" });
   await page.locator(".immersiveShell").waitFor();
-  await page.locator('[data-agent-node="coordinator"]').waitFor({ state: "attached" });
+  await page.locator("[data-agent-node]").first().waitFor({ state: "attached" });
   await page.locator(".agentThreeCanvas").waitFor();
   await page.locator(".agentSmokeCanvas").waitFor();
   await page.locator(".agentStardustCanvas").waitFor();
@@ -77,11 +77,15 @@ async function smokeViewport(browser, viewport, screenshotPath) {
   const smokeProbe = await probeCanvas(page, ".agentSmokeCanvas");
   const threeProbe = await probeCanvas(page, ".agentThreeCanvas");
   const crispProbe = await probeCanvas(page, ".agentCrispCanvas");
+  const hasLivingCoordinator = await page.locator('[data-agent-node="coordinator"]').count() > 0;
   const stardustProbe = await page.evaluate(() => {
     const canvas = document.querySelector(".agentStardustCanvas");
+    const style = canvas instanceof HTMLElement ? getComputedStyle(canvas) : null;
     return {
       hasCanvas: canvas instanceof HTMLCanvasElement,
+      visible: style ? Number.parseFloat(style.opacity) > 0.5 : false,
       hasWebGpu: Boolean(navigator.gpu),
+      mode: canvas instanceof HTMLCanvasElement ? canvas.dataset.stardustMode ?? null : null,
     };
   });
   if (!smokeProbe.nonBlank) {
@@ -90,7 +94,10 @@ async function smokeViewport(browser, viewport, screenshotPath) {
   if (!threeProbe.nonBlank) {
     throw new Error(`agent three scene did not render: ${threeProbe.reason}`);
   }
-  if (!crispProbe.nonBlank) {
+  if (stardustProbe.hasWebGpu && (!stardustProbe.hasCanvas || !stardustProbe.visible || stardustProbe.mode !== "webgpu-froxel-sh-primitive-map")) {
+    throw new Error(`WebGPU field renderer is not visibly owning the stage: ${JSON.stringify(stardustProbe)}`);
+  }
+  if (hasLivingCoordinator && !crispProbe.nonBlank) {
     throw new Error(`agent crisp canvas did not render orbit guides: ${crispProbe.reason}`);
   }
 
@@ -100,8 +107,8 @@ async function smokeViewport(browser, viewport, screenshotPath) {
   }
 
   const projectionProbe = await page.evaluate(() => {
-    const node = document.querySelector('[data-agent-node="coordinator"]');
-    if (!(node instanceof HTMLElement)) return { ok: false, reason: "coordinator DOM node missing" };
+    const node = document.querySelector('[data-agent-node="coordinator"]') ?? document.querySelector("[data-agent-node]");
+    if (!(node instanceof HTMLElement)) return { ok: false, reason: "agent DOM node missing" };
     const style = node.style;
     const x = style.getPropertyValue("--agent-x");
     const y = style.getPropertyValue("--agent-y");
