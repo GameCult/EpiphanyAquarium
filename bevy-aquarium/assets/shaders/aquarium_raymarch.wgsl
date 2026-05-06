@@ -1,4 +1,9 @@
 #import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput
+#import bevy_pbr::{
+    pbr_deferred_types as deferred_types,
+    rgb9e5,
+    utils::octahedral_encode,
+}
 
 struct AquariumRaymarch {
     time: f32,
@@ -16,6 +21,8 @@ struct AquariumRaymarch {
     ray10: vec4f,
     ray01: vec4f,
     ray11: vec4f,
+    clip_from_world: mat4x4f,
+    previous_clip_from_world: mat4x4f,
     bodies: array<vec4f, 8>,
     colors: array<vec4f, 8>,
     froxel_masks: array<vec4u, 576>,
@@ -459,6 +466,161 @@ fn atmosphere_sample(point: vec3f) -> f32 {
     let surface_height = grid_height(point.xy);
     let height_above_grid = max(point.z - surface_height, 0.0);
     return exp(-height_above_grid * 0.62) * 0.018 * edge_fade;
+}
+
+struct DeferredPrepassOutput {
+    @location(0) normal: vec4f,
+    @location(1) motion_vector: vec2f,
+    @location(2) deferred: vec4u,
+    @location(3) deferred_lighting_pass_id: u32,
+    @builtin(frag_depth) depth: f32,
+};
+
+struct SurfaceSample {
+    hit: bool,
+    point: vec3f,
+    normal: vec3f,
+    color: vec3f,
+    emissive: vec3f,
+    roughness: f32,
+    metallic: f32,
+    t: f32,
+};
+
+fn clip_depth(point: vec3f) -> f32 {
+    let clip = field.clip_from_world * vec4f(point, 1.0);
+    return clamp(clip.z / max(clip.w, 0.0001), 0.0, 1.0);
+}
+
+fn motion_vector(point: vec3f) -> vec2f {
+    let clip = field.clip_from_world * vec4f(point, 1.0);
+    let previous_clip = field.previous_clip_from_world * vec4f(point, 1.0);
+    let current_position = clip.xy / max(clip.w, 0.0001);
+    let previous_position = previous_clip.xy / max(previous_clip.w, 0.0001);
+    return (current_position - previous_position) * vec2f(0.5, -0.5);
+}
+
+fn deferred_flags(unlit: bool) -> u32 {
+    return select(0u, 1u, unlit);
+}
+
+fn pack_deferred_gbuffer(sample: SurfaceSample) -> vec4u {
+    let base_color_srgb = pow(clamp(sample.color, vec3f(0.0), vec3f(1.0)), vec3f(1.0 / 2.2));
+    let base_rough = deferred_types::pack_unorm4x8_(vec4f(base_color_srgb, sample.roughness));
+    let emissive = rgb9e5::vec3_to_rgb9e5_(sample.emissive);
+    let props = deferred_types::pack_unorm4x8_(vec4f(0.5, sample.metallic, 1.0, 0.0));
+    let oct_normal = octahedral_encode(normalize(sample.normal));
+    let normal_flags = deferred_types::pack_24bit_normal_and_flags(oct_normal, deferred_flags(length(sample.emissive) > 0.8));
+    return vec4u(base_rough, emissive, props, normal_flags);
+}
+
+fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> SurfaceSample {
+    let terrain = terrain_hit(ray_origin, ray_dir, jitter);
+    var sample = SurfaceSample(
+        false,
+        vec3f(0.0),
+        vec3f(0.0, 0.0, 1.0),
+        vec3f(0.0),
+        vec3f(0.0),
+        0.72,
+        0.0,
+        field.depth_far + 1.0,
+    );
+
+    if (terrain.alpha > 0.0) {
+        let point = ray_origin + ray_dir * terrain.t;
+        let eps = 0.05;
+        let hx = grid_height(point.xy + vec2f(eps, 0.0)) - grid_height(point.xy - vec2f(eps, 0.0));
+        let hy = grid_height(point.xy + vec2f(0.0, eps)) - grid_height(point.xy - vec2f(0.0, eps));
+        sample.hit = true;
+        sample.point = point;
+        sample.normal = normalize(vec3f(-hx, -hy, 2.0 * eps));
+        sample.color = mix(vec3f(0.015, 0.18, 0.16), vec3f(0.58, 1.0, 0.84), grid_line_factor(point.xy));
+        sample.emissive = terrain.color * 0.12;
+        sample.roughness = 0.82;
+        sample.t = terrain.t;
+    }
+
+    var tested_mask = 0u;
+    for (var step = 0u; step < FROXEL_DEPTH; step = step + 1u) {
+        let progress = (f32(step) + 0.5) / f32(FROXEL_DEPTH);
+        let mask = froxel_mask(uv, progress) & ~tested_mask;
+        tested_mask |= mask;
+        if (mask == 0u) {
+            continue;
+        }
+        for (var i = 0u; i < 8u; i = i + 1u) {
+            if (f32(i) >= field.body_count || (mask & (1u << i)) == 0u) {
+                continue;
+            }
+            let body = field.bodies[i];
+            let color = field.colors[i];
+            let self_flag = color.w;
+            let radius = body.w;
+            let oc = ray_origin - body.xyz;
+            let b = dot(oc, ray_dir);
+            let c = dot(oc, oc) - radius * radius;
+            let h = b * b - c;
+            if (h < 0.0) {
+                continue;
+            }
+            let root = sqrt(h);
+            let t0 = -b - root;
+            let t1 = -b + root;
+            let hit_t = select(t1, t0, t0 > field.depth_near);
+            if (hit_t <= field.depth_near || hit_t >= sample.t || hit_t > field.depth_far) {
+                continue;
+            }
+            let hit = ray_origin + ray_dir * hit_t;
+            let local = (hit - body.xyz) / max(radius, 0.001);
+            let displacement = fbm4(vec4f(local * mix(0.72, 1.12, self_flag), field.time * mix(0.06, 0.16, self_flag))) * mix(0.035, 0.14, self_flag);
+            let displaced_radius = radius * (1.0 + displacement);
+            let displaced_c = dot(oc, oc) - displaced_radius * displaced_radius;
+            let displaced_h = b * b - displaced_c;
+            if (displaced_h < 0.0) {
+                continue;
+            }
+            let displaced_root = sqrt(displaced_h);
+            let displaced_t0 = -b - displaced_root;
+            let displaced_t1 = -b + displaced_root;
+            let displaced_t = select(displaced_t1, displaced_t0, displaced_t0 > field.depth_near);
+            if (displaced_t <= field.depth_near || displaced_t >= sample.t || displaced_t > field.depth_far) {
+                continue;
+            }
+            let point = ray_origin + ray_dir * displaced_t;
+            let normal = normalize((point - body.xyz) / max(displaced_radius, 0.001));
+            let plasma = pow(max(fbm4(vec4f(local * mix(1.35, 2.15, self_flag), field.time * 0.24)) * 0.5 + 0.5, 0.0), mix(2.4, 5.4, self_flag));
+            sample.hit = true;
+            sample.point = point;
+            sample.normal = normal;
+            sample.color = color.rgb;
+            sample.emissive = vec3f(4.2, 2.1, 0.55) * self_flag * (0.6 + plasma);
+            sample.roughness = mix(0.18, 0.38, self_flag);
+            sample.metallic = 1.0 - self_flag * 0.45;
+            sample.t = displaced_t;
+        }
+    }
+
+    return sample;
+}
+
+@fragment
+fn fs_deferred_prepass(input: FullscreenVertexOutput) -> DeferredPrepassOutput {
+    let jitter = interleaved_noise(input.position.xy + field.time);
+    let ray_origin = field.camera_position.xyz;
+    let ray_dir = camera_ray(input.uv);
+    let sample = surface_sample(ray_origin, ray_dir, input.uv, jitter);
+    if (!sample.hit) {
+        discard;
+    }
+
+    return DeferredPrepassOutput(
+        vec4f(sample.normal * 0.5 + vec3f(0.5), 1.0),
+        motion_vector(sample.point),
+        pack_deferred_gbuffer(sample),
+        1u,
+        clip_depth(sample.point),
+    );
 }
 
 fn aces(color: vec3f) -> vec3f {

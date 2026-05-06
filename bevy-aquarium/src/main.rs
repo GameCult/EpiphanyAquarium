@@ -1,10 +1,19 @@
 use bevy::asset::AssetPlugin;
 use bevy::audio::{AudioPlayer, PlaybackSettings, SpatialListener, Volume};
-use bevy::core_pipeline::tonemapping::Tonemapping;
+use bevy::core_pipeline::prepass::{
+    DeferredPrepass, DepthPrepass, MotionVectorPrepass, NormalPrepass, ViewPrepassTextures,
+};
 use bevy::core_pipeline::{FullscreenShader, core_3d::graph::Core3d, core_3d::graph::Node3d};
+use bevy::core_pipeline::{
+    core_3d::CORE_3D_DEPTH_FORMAT,
+    deferred::{DEFERRED_LIGHTING_PASS_ID_FORMAT, DEFERRED_PREPASS_FORMAT},
+    prepass::{MOTION_VECTOR_PREPASS_FORMAT, NORMAL_PREPASS_FORMAT},
+    tonemapping::Tonemapping,
+};
 use bevy::ecs::query::QueryItem;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::light::GlobalAmbientLight;
+use bevy::pbr::DefaultOpaqueRendererMethod;
 use bevy::prelude::*;
 use bevy::render::{
     RenderApp, RenderStartup,
@@ -18,17 +27,19 @@ use bevy::render::{
     render_resource::{
         BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer,
         BufferDescriptor, BufferUsages, CachedComputePipelineId, CachedRenderPipelineId,
-        ColorTargetState, ColorWrites, ComputePassDescriptor, ComputePipelineDescriptor,
-        FragmentState, Operations, PipelineCache, RenderPassColorAttachment, RenderPassDescriptor,
-        RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages,
-        ShaderType, TextureFormat, TextureSampleType,
+        ColorTargetState, ColorWrites, CompareFunction, ComputePassDescriptor,
+        ComputePipelineDescriptor, DepthBiasState, DepthStencilState, FragmentState, Operations,
+        PipelineCache, RenderPassColorAttachment, RenderPassDepthStencilAttachment,
+        RenderPassDescriptor, RenderPipelineDescriptor, Sampler, SamplerBindingType,
+        SamplerDescriptor, ShaderStages, ShaderType, StencilState, StoreOp, TextureFormat,
+        TextureSampleType,
         binding_types::{
             sampler, storage_buffer_read_only_sized, storage_buffer_sized, texture_2d,
             uniform_buffer,
         },
     },
     renderer::{RenderContext, RenderDevice},
-    view::ViewTarget,
+    view::{ViewDepthTexture, ViewTarget},
 };
 use bevy_procedural_audio::prelude::{
     AudioUnit, DspAppExt, DspGraph, DspManager, DspPlugin, DspSource, SourceType, sine_hz,
@@ -83,6 +94,7 @@ fn main() {
             brightness: 0.18,
             affects_lightmapped_meshes: true,
         })
+        .insert_resource(DefaultOpaqueRendererMethod::deferred())
         .insert_resource(CameraRig::from_settings(&settings))
         .insert_resource(GridFrame::from_camera_settings(&settings))
         .insert_resource(LightingGridHistory::default())
@@ -500,6 +512,7 @@ impl Default for AquariumAudioState {
 struct LightingGridHistory {
     previous_center: Vec2,
     previous_half_extent: f32,
+    previous_clip_from_world: Mat4,
     initialized: bool,
 }
 
@@ -508,6 +521,7 @@ impl Default for LightingGridHistory {
         Self {
             previous_center: Vec2::ZERO,
             previous_half_extent: GRID_BASE_HALF_EXTENT,
+            previous_clip_from_world: Mat4::IDENTITY,
             initialized: false,
         }
     }
@@ -530,6 +544,8 @@ struct AquariumRaymarch {
     ray10: Vec4,
     ray01: Vec4,
     ray11: Vec4,
+    clip_from_world: Mat4,
+    previous_clip_from_world: Mat4,
     bodies: [Vec4; MAX_RAYMARCH_BODIES],
     colors: [Vec4; MAX_RAYMARCH_BODIES],
     froxel_masks: [UVec4; RAYMARCH_FROXEL_MASK_WORDS],
@@ -553,6 +569,8 @@ impl Default for AquariumRaymarch {
             ray10: Vec4::new(0.5, 0.5, -0.7, 0.0),
             ray01: Vec4::new(-0.5, 0.8, -0.28, 0.0),
             ray11: Vec4::new(0.5, 0.8, -0.28, 0.0),
+            clip_from_world: Mat4::IDENTITY,
+            previous_clip_from_world: Mat4::IDENTITY,
             bodies: [Vec4::ZERO; MAX_RAYMARCH_BODIES],
             colors: [Vec4::ZERO; MAX_RAYMARCH_BODIES],
             froxel_masks: [UVec4::ZERO; RAYMARCH_FROXEL_MASK_WORDS],
@@ -574,6 +592,18 @@ impl Plugin for AquariumRaymarchPlugin {
         };
         render_app.add_systems(RenderStartup, init_aquarium_raymarch_pipeline);
         render_app
+            .add_render_graph_node::<ViewNodeRunner<AquariumDeferredPrepassNode>>(
+                Core3d,
+                AquariumDeferredPrepassLabel,
+            )
+            .add_render_graph_edges(
+                Core3d,
+                (
+                    Node3d::LateDeferredPrepass,
+                    AquariumDeferredPrepassLabel,
+                    Node3d::CopyDeferredLightingId,
+                ),
+            )
             .add_render_graph_node::<ViewNodeRunner<AquariumRaymarchNode>>(
                 Core3d,
                 AquariumRaymarchLabel,
@@ -592,13 +622,18 @@ impl Plugin for AquariumRaymarchPlugin {
 #[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
 struct AquariumRaymarchLabel;
 
+#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
+struct AquariumDeferredPrepassLabel;
+
 #[derive(Resource)]
 struct AquariumRaymarchPipeline {
     render_layout: BindGroupLayoutDescriptor,
     compute_layout: BindGroupLayoutDescriptor,
+    prepass_layout: BindGroupLayoutDescriptor,
     sampler: Sampler,
     render_pipeline_id: CachedRenderPipelineId,
     render_pipeline_id_hdr: CachedRenderPipelineId,
+    deferred_prepass_pipeline_id: CachedRenderPipelineId,
     compute_pipeline_id: CachedComputePipelineId,
     brick_pipeline_id: CachedComputePipelineId,
 }
@@ -664,6 +699,13 @@ fn init_aquarium_raymarch_pipeline(
             ),
         ),
     );
+    let prepass_layout = BindGroupLayoutDescriptor::new(
+        "aquarium_raymarch_deferred_prepass_layout",
+        &BindGroupLayoutEntries::with_indices(
+            ShaderStages::FRAGMENT,
+            ((2, uniform_buffer::<AquariumRaymarch>(true)),),
+        ),
+    );
 
     let sampler = render_device.create_sampler(&SamplerDescriptor::default());
     let shader = asset_server.load("shaders/aquarium_raymarch.wgsl");
@@ -689,6 +731,47 @@ fn init_aquarium_raymarch_pipeline(
         .unwrap()
         .format = ViewTarget::TEXTURE_FORMAT_HDR;
     let render_pipeline_id_hdr = pipeline_cache.queue_render_pipeline(render_desc);
+    let deferred_prepass_pipeline_id =
+        pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
+            label: Some("aquarium_raymarch_deferred_prepass_pipeline".into()),
+            layout: vec![prepass_layout.clone()],
+            vertex: fullscreen_shader.to_vertex_state(),
+            fragment: Some(FragmentState {
+                shader: shader.clone(),
+                entry_point: Some("fs_deferred_prepass".into()),
+                targets: vec![
+                    Some(ColorTargetState {
+                        format: NORMAL_PREPASS_FORMAT,
+                        blend: None,
+                        write_mask: ColorWrites::ALL,
+                    }),
+                    Some(ColorTargetState {
+                        format: MOTION_VECTOR_PREPASS_FORMAT,
+                        blend: None,
+                        write_mask: ColorWrites::ALL,
+                    }),
+                    Some(ColorTargetState {
+                        format: DEFERRED_PREPASS_FORMAT,
+                        blend: None,
+                        write_mask: ColorWrites::ALL,
+                    }),
+                    Some(ColorTargetState {
+                        format: DEFERRED_LIGHTING_PASS_ID_FORMAT,
+                        blend: None,
+                        write_mask: ColorWrites::ALL,
+                    }),
+                ],
+                ..default()
+            }),
+            depth_stencil: Some(DepthStencilState {
+                format: CORE_3D_DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: CompareFunction::Always,
+                stencil: StencilState::default(),
+                bias: DepthBiasState::default(),
+            }),
+            ..default()
+        });
     let compute_pipeline_id = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
         label: Some("aquarium_sh_grid_compute".into()),
         layout: vec![compute_layout.clone()],
@@ -708,9 +791,11 @@ fn init_aquarium_raymarch_pipeline(
     commands.insert_resource(AquariumRaymarchPipeline {
         render_layout,
         compute_layout,
+        prepass_layout,
         sampler,
         render_pipeline_id,
         render_pipeline_id_hdr,
+        deferred_prepass_pipeline_id,
         compute_pipeline_id,
         brick_pipeline_id,
     });
@@ -719,6 +804,96 @@ fn init_aquarium_raymarch_pipeline(
         brick_occupancy,
         frame: AtomicU32::new(0),
     });
+}
+
+#[derive(Default)]
+struct AquariumDeferredPrepassNode;
+
+impl ViewNode for AquariumDeferredPrepassNode {
+    type ViewQuery = (
+        &'static ViewPrepassTextures,
+        &'static ViewDepthTexture,
+        &'static AquariumRaymarch,
+        &'static DynamicUniformIndex<AquariumRaymarch>,
+    );
+
+    fn run(
+        &self,
+        _graph: &mut RenderGraphContext,
+        render_context: &mut RenderContext,
+        (prepass_textures, view_depth, _settings, settings_index): QueryItem<Self::ViewQuery>,
+        world: &World,
+    ) -> Result<(), NodeRunError> {
+        let (
+            Some(normal),
+            Some(motion_vectors),
+            Some(deferred),
+            Some(deferred_lighting_pass_id),
+            Some(depth),
+        ) = (
+            prepass_textures.normal.as_ref(),
+            prepass_textures.motion_vectors.as_ref(),
+            prepass_textures.deferred.as_ref(),
+            prepass_textures.deferred_lighting_pass_id.as_ref(),
+            prepass_textures.depth.as_ref(),
+        )
+        else {
+            return Ok(());
+        };
+
+        let pipeline = world.resource::<AquariumRaymarchPipeline>();
+        let pipeline_cache = world.resource::<PipelineCache>();
+        let Some(render_pipeline) =
+            pipeline_cache.get_render_pipeline(pipeline.deferred_prepass_pipeline_id)
+        else {
+            return Ok(());
+        };
+
+        let uniforms = world.resource::<ComponentUniforms<AquariumRaymarch>>();
+        let Some(settings_binding) = uniforms.uniforms().binding() else {
+            return Ok(());
+        };
+        let bind_group = render_context.render_device().create_bind_group(
+            "aquarium_deferred_prepass_bind_group",
+            &pipeline_cache.get_bind_group_layout(&pipeline.prepass_layout),
+            &BindGroupEntries::with_indices(((2, settings_binding.clone()),)),
+        );
+
+        let color_attachments = [
+            Some(normal.get_attachment()),
+            Some(motion_vectors.get_attachment()),
+            Some(deferred.get_attachment()),
+            Some(deferred_lighting_pass_id.get_attachment()),
+        ];
+        let depth_stencil_attachment = Some(RenderPassDepthStencilAttachment {
+            view: view_depth.view(),
+            depth_ops: Some(Operations {
+                load: bevy::render::render_resource::LoadOp::Load,
+                store: StoreOp::Store,
+            }),
+            stencil_ops: None,
+        });
+        {
+            let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
+                label: Some("aquarium_raymarch_deferred_prepass"),
+                color_attachments: &color_attachments,
+                depth_stencil_attachment,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            render_pass.set_render_pipeline(render_pipeline);
+            render_pass.set_bind_group(0, &bind_group, &[settings_index.index()]);
+            render_pass.draw(0..3, 0..1);
+        }
+
+        render_context.command_encoder().copy_texture_to_texture(
+            view_depth.texture.as_image_copy(),
+            depth.texture.texture.as_image_copy(),
+            prepass_textures.size,
+        );
+
+        Ok(())
+    }
 }
 
 #[derive(Default)]
@@ -918,6 +1093,10 @@ fn setup(mut commands: Commands, bridge: Res<CultRuntimeBridge>, grid_frame: Res
         Transform::default(),
         Msaa::Off,
         Tonemapping::AcesFitted,
+        DepthPrepass,
+        NormalPrepass,
+        MotionVectorPrepass,
+        DeferredPrepass,
         SpatialListener::default(),
         AquariumRaymarch::default(),
         AquariumCamera,
@@ -1257,6 +1436,7 @@ fn update_raymarch_uniforms(
         return;
     };
     let transform = camera_transform.compute_transform();
+    let clip_from_world = projection.get_clip_from_view() * camera_transform.affine().inverse();
     let aspect = match projection {
         Projection::Perspective(perspective) => perspective.aspect_ratio,
         _ => 16.0 / 9.0,
@@ -1282,9 +1462,11 @@ fn update_raymarch_uniforms(
     if lighting_history.initialized {
         raymarch.previous_grid_center = lighting_history.previous_center;
         raymarch.previous_grid_half_extent = lighting_history.previous_half_extent;
+        raymarch.previous_clip_from_world = lighting_history.previous_clip_from_world;
     } else {
         raymarch.previous_grid_center = grid_frame.center;
         raymarch.previous_grid_half_extent = grid_frame.half_extent;
+        raymarch.previous_clip_from_world = clip_from_world;
     }
     raymarch.delta_time = time.delta_secs().clamp(1.0 / 240.0, 1.0 / 15.0);
     raymarch.depth_near = 1.0;
@@ -1295,6 +1477,7 @@ fn update_raymarch_uniforms(
     raymarch.ray10 = ray(1.0, 1.0);
     raymarch.ray01 = ray(-1.0, -1.0);
     raymarch.ray11 = ray(1.0, -1.0);
+    raymarch.clip_from_world = clip_from_world;
 
     raymarch.bodies = [Vec4::ZERO; MAX_RAYMARCH_BODIES];
     raymarch.colors = [Vec4::ZERO; MAX_RAYMARCH_BODIES];
@@ -1339,6 +1522,7 @@ fn update_raymarch_uniforms(
     raymarch.body_count = count as f32;
     lighting_history.previous_center = grid_frame.center;
     lighting_history.previous_half_extent = grid_frame.half_extent;
+    lighting_history.previous_clip_from_world = clip_from_world;
     lighting_history.initialized = true;
 }
 

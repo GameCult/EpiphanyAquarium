@@ -303,3 +303,10 @@ Current slice:
   buffer every frame from current terrain contact, moving body bounds, Self
   influence, and flare bands; `cs_grid_lighting` reads the flags so empty
   bricks decay cheaply while occupied bricks get extra scatter/detail advection.
+- Current deferred integration correction: raymarched Bevy hits now enter
+  Bevy's deferred/prepass surfaces. The camera enables Depth, Normal, Motion
+  Vector, and Deferred prepasses; `AquariumDeferredPrepassNode` runs after
+  Bevy's late deferred prepass and writes raymarched terrain/body depth,
+  normals, motion vectors, packed deferred material data, and lighting-pass ids
+  into `ViewPrepassTextures`. The legacy fullscreen aquarium resolve still
+  draws until the TAA/deferred composite replaces it.
