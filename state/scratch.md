@@ -292,3 +292,9 @@ Current slice:
   reprojects previous lighting by remapping its world XY through the previous
   Grid center and half extent. Terrain, planets, and atmosphere now sample
   lighting by world point, so camera movement is not treated as fluid motion.
+- Current solar-flare correction: flare waves are simulation-carried. The
+  shader no longer paints an analytic expanding shell across the volume; Self
+  injects a short local radiance impulse, and during that window each Grid-space
+  cell samples previous SH coefficients from inward along the radial vector so
+  stored light is pushed outward, scattered, and left to convect through the
+  existing ping-pong field.

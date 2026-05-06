@@ -244,6 +244,12 @@ fn write_sh(index: u32, l0: vec4f, l1x: vec4f, l1y: vec4f, l1z: vec4f) {
     next_sh_volume.values[SH_L1Z_OFFSET + index] = vec4f(clamp(l1z.rgb, vec3f(0.0), vec3f(18.0)), 0.0);
 }
 
+fn flare_impulse(phase: f32) -> f32 {
+    let rise = smoothstep(0.015, 0.08, phase);
+    let fall = 1.0 - smoothstep(0.12, 0.32, phase);
+    return rise * fall;
+}
+
 @compute @workgroup_size(64)
 fn cs_grid_lighting(@builtin(global_invocation_id) id: vec3u) {
     let index = id.x;
@@ -306,13 +312,34 @@ fn cs_grid_lighting(@builtin(global_invocation_id) id: vec3u) {
         let to_sun = sun_position - point;
         let distance = max(length(to_sun), 0.001);
         let direction = to_sun / distance;
+        let outward = -direction;
         let strength = exp(-distance * 0.045) * 8.6 * edge_fade;
-        let radiance = vec3f(4.4, 2.35, 0.72) * min(strength, 9.0);
+        let flare_phase = fract(field.time / 2.15);
+        let impulse = flare_impulse(flare_phase);
+        let push_distance = field.grid_half_extent * (0.11 + 0.045 * sin(distance * 0.72 + height_above_grid * 0.34)) * impulse;
+        let pushed_from_xy = point.xy - outward.xy * push_distance;
+        let pushed_sample = previous_grid_volume_position(pushed_from_xy, height_above_grid);
+        let carried_l0 = previous_coeff_sample(pushed_sample, SH_L0_OFFSET);
+        let carried_l1x = previous_coeff_sample(pushed_sample, SH_L1X_OFFSET);
+        let carried_l1y = previous_coeff_sample(pushed_sample, SH_L1Y_OFFSET);
+        let carried_l1z = previous_coeff_sample(pushed_sample, SH_L1Z_OFFSET);
+        let wave_gain = impulse * edge_fade * smoothstep(0.5, field.grid_half_extent * 0.92, distance);
+        l0 += carried_l0 * wave_gain * 0.42;
+        l1x += carried_l1x * wave_gain * 0.42;
+        l1y += carried_l1y * wave_gain * 0.42;
+        l1z += carried_l1z * wave_gain * 0.42;
+
+        let source_core = exp(-pow(distance / max(field.grid_half_extent * 0.08, 0.75), 2.0));
+        let source_ripple = 0.72 + 0.28 * sin(distance * 2.35 - field.time * 18.0 + height_above_grid * 0.9);
+        let source_flare = impulse * source_core * source_ripple * exp(-height_above_grid / max(top * 0.42, 0.001)) * edge_fade;
+        let radiance = vec3f(4.4, 2.35, 0.72) * min(strength, 9.0)
+            + vec3f(8.6, 2.85, 0.44) * max(source_flare, 0.0) * 8.0;
         let rgb = vec4f(radiance, 0.0);
         l0 += rgb * 0.282095;
-        l1x += rgb * (0.488603 * direction.x);
-        l1y += rgb * (0.488603 * direction.y);
-        l1z += rgb * (0.488603 * direction.z);
+        let flare_direction = normalize(mix(direction, outward, impulse * source_core));
+        l1x += rgb * (0.488603 * flare_direction.x);
+        l1y += rgb * (0.488603 * flare_direction.y);
+        l1z += rgb * (0.488603 * flare_direction.z);
     }
 
     l0 *= edge_fade;
