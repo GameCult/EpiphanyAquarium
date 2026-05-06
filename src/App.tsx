@@ -1813,7 +1813,7 @@ function AgentConstellation({
         ["--focus-x-world", `${projection.focusXPercent ?? projection.xPercent}%`],
         ["--focus-y-world", `${projection.focusYPercent ?? projection.yPercent}%`],
         ["--agent-z", `${projection.z}`],
-        ["--agent-elevation", `${-10 - projection.z * 36}px`],
+        ["--agent-elevation", "-10px"],
         ["--agent-tilt", `${projection.tilt}deg`],
         ["--agent-bubble-tilt", `${projection.tilt * 0.32}deg`],
         ["--agent-glow-pulse", String(projection.glowPulse)],

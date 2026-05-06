@@ -214,6 +214,11 @@ Displacement uses cheap 4D fBm:
 - time is the fourth coordinate;
 - Self gets higher amplitude and ridge-like loop emphasis.
 
+Solid body radius is intentionally uniform across agents in both WebGPU and
+WebGL fallback SDF paths. State changes can affect atmosphere, emission,
+surface motion, glow, grid wells, and labels; they should not make Self a
+different screen-space body class.
+
 The displacement frequencies are intentionally low. The planets should read as
 chrome/gas bodies with slow organic surface motion, not sandpaper covered in
 shader enthusiasm.

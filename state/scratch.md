@@ -234,3 +234,9 @@ Current slice:
   grid volume. Three now projects the grid volume's depth bounds; WebGPU maps
   froxel z slices into that interval, and agent primitive data carries
   projected body depth instead of using a fake Self-vs-other depth class.
+- Current body-size correction: agent solid bodies have one consistent radius
+  in both WebGPU and WebGL fallback SDF paths. Self keeps solar color/emission
+  and atmosphere behavior, but its solid body is no longer scaled up by a
+  special multiplier. DOM captions also stopped applying the old projection.z
+  screen-space elevation offset; the Three camera projection is the sole label
+  anchor, so Self should not bob independently from its body.

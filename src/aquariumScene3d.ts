@@ -740,7 +740,7 @@ class ThreeAquariumScene implements AquariumScene3d {
         varying vec2 vUv;
 
         float sourceRadius(vec4 source) {
-          return 0.16 + source.z * 0.12 + source.w * 0.035;
+          return 0.24;
         }
 
         float primitiveIntersectsFroxel(int index, vec3 p, float t) {
@@ -923,7 +923,7 @@ class ThreeAquariumScene implements AquariumScene3d {
         }
 
         float sourceRadius(vec4 source) {
-          return 0.16 + source.z * 0.12 + source.w * 0.035;
+          return 0.24;
         }
 
         float sourceDisplacement(vec3 local, float radius, float mass, float selfFlag) {
