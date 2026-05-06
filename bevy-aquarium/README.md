@@ -18,9 +18,10 @@ npm run bevy:dev
 npm run bevy:watch
 ```
 
-`bevy:dev` enables Bevy's dynamic-linking and hotpatching features and forces
-asset watching on. `bevy:watch` restarts the Bevy client when Rust, shader, or
-asset files change.
+`bevy:dev` enables Bevy dynamic linking and forces asset watching on.
+`bevy:watch` restarts the Bevy client when Rust, shader, or asset files change.
+The heavier Bevy hotpatch feature is available as the crate feature
+`hotpatch`, but it is not part of the default dev loop.
 
 Or directly:
 

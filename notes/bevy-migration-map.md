@@ -57,10 +57,11 @@ npm run bevy:dev
 npm run bevy:watch
 ```
 
-`bevy:dev` enables Bevy dynamic linking, hotpatching support, and asset
-watching. `bevy:watch` is a local restart loop for code and shader changes.
-True system hotpatching requires Bevy's hotpatch runtime path; until that is
-worth the extra moving parts, restart-on-save is the reliable default.
+`bevy:dev` enables Bevy dynamic linking and asset watching. `bevy:watch` is a
+local restart loop for code and shader changes. True system hotpatching is
+available behind the crate's `hotpatch` feature, but it pulls in Bevy's heavier
+Dioxus/subsecond stack; until that is worth the extra moving parts,
+restart-on-save is the reliable default.
 
 ## Next Renderer Steps
 

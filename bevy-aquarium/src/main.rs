@@ -165,6 +165,7 @@ impl CultRuntimeBridge {
             display_name: Some("Epiphany Aquarium Bevy".to_string()),
             supported_document_types: Some(supported_document_types.clone()),
             supported_message_versions: Some(vec!["cultnet.hello.v0".to_string()]),
+            supports_schema_catalog: Some(true),
         };
         let hello_payload_bytes =
             encode_cultnet_message_to_vec(&hello, CultNetWireContract::CultNetSchemaV0)?.len();
