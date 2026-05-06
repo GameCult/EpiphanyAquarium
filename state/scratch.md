@@ -279,10 +279,16 @@ Current slice:
   cached field. Full compute precomputed textures remain future work.
 - Current sampling cleanup: the visible vertical atmosphere bands came from
   exposing the compact SH froxel lattice. The shader now trilinear-filters SH
-  reads, uses a 12x7x8 light grid, softens the radial fade, and jitters
-  terrain/atmosphere ray steps with stable interleaved noise.
+  reads, uses a 32x32x12 Grid-space light volume, softens the radial fade, and
+  jitters terrain/atmosphere ray steps with stable interleaved noise.
 - Current GPU lighting correction: SH froxel lighting is no longer a CPU
   uniform-cache update. Bevy now has a custom render node that ping-pongs two
-  GPU storage buffers, dispatches `cs_froxel_lighting` to advect/scatter/inject
-  first-order SH coefficients, then binds the generated buffer for the
-  fullscreen raymarch pass.
+  GPU storage buffers, dispatches `cs_grid_lighting` to advect/scatter/inject
+  first-order SH coefficients in Grid space, then binds the generated buffer
+  for the fullscreen raymarch pass.
+- Current Grid-space lighting correction: SH lighting history is no longer
+  projection-space froxels. The compute volume is a 32x32x12 Grid-space lattice
+  over the moving Grid domain; if the Grid moves or zooms, each current cell
+  reprojects previous lighting by remapping its world XY through the previous
+  Grid center and half extent. Terrain, planets, and atmosphere now sample
+  lighting by world point, so camera movement is not treated as fluid motion.

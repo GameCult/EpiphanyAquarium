@@ -60,11 +60,11 @@ const RAYMARCH_FROXEL_DEPTH: usize = 16;
 const RAYMARCH_FROXEL_COUNT: usize =
     RAYMARCH_FROXEL_WIDTH * RAYMARCH_FROXEL_HEIGHT * RAYMARCH_FROXEL_DEPTH;
 const RAYMARCH_FROXEL_MASK_WORDS: usize = RAYMARCH_FROXEL_COUNT / 4;
-const LIGHT_FROXEL_WIDTH: usize = 12;
-const LIGHT_FROXEL_HEIGHT: usize = 7;
-const LIGHT_FROXEL_DEPTH: usize = 8;
-const LIGHT_FROXEL_COUNT: usize = LIGHT_FROXEL_WIDTH * LIGHT_FROXEL_HEIGHT * LIGHT_FROXEL_DEPTH;
-const LIGHT_COEFFICIENT_COUNT: usize = LIGHT_FROXEL_COUNT * 4;
+const LIGHT_GRID_WIDTH: usize = 32;
+const LIGHT_GRID_HEIGHT: usize = 32;
+const LIGHT_GRID_DEPTH: usize = 12;
+const LIGHT_GRID_COUNT: usize = LIGHT_GRID_WIDTH * LIGHT_GRID_HEIGHT * LIGHT_GRID_DEPTH;
+const LIGHT_COEFFICIENT_COUNT: usize = LIGHT_GRID_COUNT * 4;
 
 fn main() {
     let runtime_bridge = CultRuntimeBridge::load().unwrap_or_else(|err| {
@@ -81,6 +81,7 @@ fn main() {
         })
         .insert_resource(CameraRig::from_settings(&settings))
         .insert_resource(GridFrame::from_camera_settings(&settings))
+        .insert_resource(LightingGridHistory::default())
         .insert_resource(PointerWorld::default())
         .insert_resource(GridDirty(true))
         .insert_resource(LiveStateAutosave(Timer::from_seconds(
@@ -491,12 +492,32 @@ impl Default for AquariumAudioState {
     }
 }
 
+#[derive(Resource, Clone, Copy)]
+struct LightingGridHistory {
+    previous_center: Vec2,
+    previous_half_extent: f32,
+    initialized: bool,
+}
+
+impl Default for LightingGridHistory {
+    fn default() -> Self {
+        Self {
+            previous_center: Vec2::ZERO,
+            previous_half_extent: GRID_BASE_HALF_EXTENT,
+            initialized: false,
+        }
+    }
+}
+
 #[derive(Component, ExtractComponent, Clone, Copy, ShaderType)]
 struct AquariumRaymarch {
     time: f32,
     body_count: f32,
     grid_center: Vec2,
     grid_half_extent: f32,
+    previous_grid_center: Vec2,
+    previous_grid_half_extent: f32,
+    delta_time: f32,
     depth_near: f32,
     depth_far: f32,
     depth_span: f32,
@@ -517,6 +538,9 @@ impl Default for AquariumRaymarch {
             body_count: 0.0,
             grid_center: Vec2::ZERO,
             grid_half_extent: GRID_BASE_HALF_EXTENT,
+            previous_grid_center: Vec2::ZERO,
+            previous_grid_half_extent: GRID_BASE_HALF_EXTENT,
+            delta_time: 1.0 / 60.0,
             depth_near: 1.0,
             depth_far: 80.0,
             depth_span: 79.0,
@@ -655,7 +679,7 @@ fn init_aquarium_raymarch_pipeline(
         label: Some("aquarium_sh_froxel_compute".into()),
         layout: vec![compute_layout.clone()],
         shader,
-        entry_point: Some("cs_froxel_lighting".into()),
+        entry_point: Some("cs_grid_lighting".into()),
         ..default()
     });
 
@@ -734,7 +758,7 @@ impl ViewNode for AquariumRaymarchNode {
                     });
             pass.set_pipeline(compute_pipeline);
             pass.set_bind_group(0, &compute_bind_group, &[settings_index.index()]);
-            pass.dispatch_workgroups(LIGHT_FROXEL_COUNT.div_ceil(64) as u32, 1, 1);
+            pass.dispatch_workgroups(LIGHT_GRID_COUNT.div_ceil(64) as u32, 1, 1);
         }
 
         let post_process = view_target.post_process_write();
@@ -1193,6 +1217,7 @@ fn sync_grid_frame(
 fn update_raymarch_uniforms(
     time: Res<Time>,
     grid_frame: Res<GridFrame>,
+    mut lighting_history: ResMut<LightingGridHistory>,
     bodies: Query<(&Transform, &CelestialBody)>,
     mut camera: Query<(&GlobalTransform, &Projection, &mut AquariumRaymarch), With<AquariumCamera>>,
 ) {
@@ -1222,6 +1247,14 @@ fn update_raymarch_uniforms(
     raymarch.time = time.elapsed_secs();
     raymarch.grid_center = grid_frame.center;
     raymarch.grid_half_extent = grid_frame.half_extent;
+    if lighting_history.initialized {
+        raymarch.previous_grid_center = lighting_history.previous_center;
+        raymarch.previous_grid_half_extent = lighting_history.previous_half_extent;
+    } else {
+        raymarch.previous_grid_center = grid_frame.center;
+        raymarch.previous_grid_half_extent = grid_frame.half_extent;
+    }
+    raymarch.delta_time = time.delta_secs().clamp(1.0 / 240.0, 1.0 / 15.0);
     raymarch.depth_near = 1.0;
     raymarch.depth_far = (grid_frame.half_extent * 3.0).clamp(32.0, 260.0);
     raymarch.depth_span = raymarch.depth_far - raymarch.depth_near;
@@ -1272,6 +1305,9 @@ fn update_raymarch_uniforms(
         count += 1;
     }
     raymarch.body_count = count as f32;
+    lighting_history.previous_center = grid_frame.center;
+    lighting_history.previous_half_extent = grid_frame.half_extent;
+    lighting_history.initialized = true;
 }
 
 fn bin_body_into_froxels(
