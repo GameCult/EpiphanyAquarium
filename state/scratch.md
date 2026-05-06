@@ -272,8 +272,8 @@ Current slice:
   into a compact first-order SH froxel cache; the previous frame's coefficients
   decay and propagate through neighbors, then terrain, planets, and the
   exponential Grid atmosphere sample that field.
-- Current atmosphere pass: the raymarcher treats the Grid as an infinite
-  heightfield surface with exponential atmosphere clinging above it. The pass is
-  Bruneton-inspired in contract: transmittance plus in-scatter along the camera
-  ray, lit by the cached field. Full compute precomputed textures remain future
-  work.
+- Current atmosphere pass: the raymarcher treats the Grid as a circular radial
+  domain around the camera target, with exponential atmosphere clinging above
+  the heightfield and fading at the radius. The pass is Bruneton-inspired in
+  contract: transmittance plus in-scatter along the camera ray, lit by the
+  cached field. Full compute precomputed textures remain future work.

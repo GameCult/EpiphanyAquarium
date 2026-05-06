@@ -74,8 +74,8 @@ fn grid_local(xy: vec2f) -> vec2f {
 }
 
 fn grid_edge_fade(xy: vec2f) -> f32 {
-    let edge = max(abs(grid_local(xy)).x, abs(grid_local(xy)).y);
-    return 1.0 - smoothstep(0.82, 1.0, edge);
+    let radius = length(grid_local(xy));
+    return 1.0 - smoothstep(0.82, 1.0, radius);
 }
 
 fn grid_height(xy: vec2f) -> f32 {
@@ -142,9 +142,13 @@ fn sample_sh_lighting(normal: vec3f, uv: vec2f, depth_progress: f32) -> vec3f {
 }
 
 fn atmosphere_sample(point: vec3f) -> f32 {
+    let edge_fade = grid_edge_fade(point.xy);
+    if (edge_fade <= 0.0) {
+        return 0.0;
+    }
     let surface_height = grid_height(point.xy);
     let height_above_grid = max(point.z - surface_height, 0.0);
-    return exp(-height_above_grid * 0.62) * 0.018;
+    return exp(-height_above_grid * 0.62) * 0.018 * edge_fade;
 }
 
 fn aces(color: vec3f) -> vec3f {
