@@ -314,3 +314,10 @@ Current slice:
   the start of `AquariumDeferredPrepassNode`, and the only active surface
   raymarch entry is `fs_deferred_prepass`; final composition must consume the
   stored Bevy prepass/G-buffer data.
+- Current black-screen recovery: user confirmed the view has been black since
+  grid-bound volume sampling. The raymarcher now has a bring-up survival path:
+  if heightfield crossing misses, terrain falls back to the global XY plane
+  inside the radial Grid mask, and terrain/body samples write explicit unlit
+  visibility payloads into Bevy's deferred G-buffer. This is a diagnostic
+  bridge, not the final lighting model; restore PBR/SH authority only after
+  hits are visibly proven.

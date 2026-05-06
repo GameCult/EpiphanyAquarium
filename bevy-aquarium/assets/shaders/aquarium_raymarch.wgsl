@@ -482,6 +482,7 @@ struct SurfaceSample {
     normal: vec3f,
     color: vec3f,
     emissive: vec3f,
+    unlit: bool,
     roughness: f32,
     metallic: f32,
     t: f32,
@@ -507,10 +508,14 @@ fn deferred_flags(unlit: bool) -> u32 {
 fn pack_deferred_gbuffer(sample: SurfaceSample) -> vec4u {
     let base_color_srgb = pow(clamp(sample.color, vec3f(0.0), vec3f(1.0)), vec3f(1.0 / 2.2));
     let base_rough = deferred_types::pack_unorm4x8_(vec4f(base_color_srgb, sample.roughness));
-    let emissive = rgb9e5::vec3_to_rgb9e5_(sample.emissive);
+    var visible_payload = sample.emissive;
+    if (sample.unlit) {
+        visible_payload = max(sample.color, sample.emissive);
+    }
+    let emissive = rgb9e5::vec3_to_rgb9e5_(visible_payload);
     let props = deferred_types::pack_unorm4x8_(vec4f(0.5, sample.metallic, 1.0, 0.0));
     let oct_normal = octahedral_encode(normalize(sample.normal));
-    let normal_flags = deferred_types::pack_24bit_normal_and_flags(oct_normal, deferred_flags(length(sample.emissive) > 0.8));
+    let normal_flags = deferred_types::pack_24bit_normal_and_flags(oct_normal, deferred_flags(sample.unlit));
     return vec4u(base_rough, emissive, props, normal_flags);
 }
 
@@ -522,6 +527,7 @@ fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> 
         vec3f(0.0, 0.0, 1.0),
         vec3f(0.0),
         vec3f(0.0),
+        false,
         0.72,
         0.0,
         field.depth_far + 1.0,
@@ -536,7 +542,8 @@ fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> 
         sample.point = point;
         sample.normal = normalize(vec3f(-hx, -hy, 2.0 * eps));
         sample.color = mix(vec3f(0.015, 0.18, 0.16), vec3f(0.58, 1.0, 0.84), grid_line_factor(point.xy));
-        sample.emissive = terrain.color * 0.12;
+        sample.emissive = max(terrain.color, sample.color * 0.28);
+        sample.unlit = true;
         sample.roughness = 0.82;
         sample.t = terrain.t;
     }
@@ -594,7 +601,8 @@ fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> 
             sample.point = point;
             sample.normal = normal;
             sample.color = color.rgb;
-            sample.emissive = vec3f(4.2, 2.1, 0.55) * self_flag * (0.6 + plasma);
+            sample.emissive = max(color.rgb * 0.9, vec3f(4.2, 2.1, 0.55) * self_flag * (0.6 + plasma));
+            sample.unlit = true;
             sample.roughness = mix(0.18, 0.38, self_flag);
             sample.metallic = 1.0 - self_flag * 0.45;
             sample.t = displaced_t;
@@ -655,6 +663,17 @@ fn terrain_hit(ray_origin: vec3f, ray_dir: vec3f, jitter: f32) -> TerrainHit {
     }
 
     if (hit_high > field.depth_far) {
+        if (ray_dir.z < -0.0001) {
+            let plane_t = (0.0 - ray_origin.z) / ray_dir.z;
+            let plane_point = ray_origin + ray_dir * plane_t;
+            let edge_fade = grid_edge_fade(plane_point.xy) * depth_window_fade(plane_t);
+            if (plane_t > field.depth_near && plane_t < field.depth_far && edge_fade > 0.0) {
+                let lines = grid_line_factor(plane_point.xy);
+                let base = mix(vec3f(0.012, 0.09, 0.085), vec3f(0.50, 0.92, 0.78), lines);
+                let alpha = clamp(edge_fade * (0.18 + lines * 0.58), 0.0, 0.74);
+                return TerrainHit(base * edge_fade, alpha, plane_t);
+            }
+        }
         return TerrainHit(vec3f(0.0), 0.0, field.depth_far + 1.0);
     }
 

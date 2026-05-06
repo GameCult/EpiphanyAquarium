@@ -452,3 +452,23 @@ Three, then overlays a WebGPU compute-built froxel primitive map, propagated SH
 lighting field, and SDF/atmosphere march that turns agents into chrome/solar
 field planets, while DOM billboards are projected from the same camera for crisp
 interaction.
+
+## Current Bevy Visibility Bring-Up
+
+The Bevy renderer currently routes raymarched surfaces through
+`AquariumDeferredPrepassNode`, not a final fullscreen color resolve. The
+black-screen failure first appeared when sampling became grid-bound, so the
+first diagnostic invariant is blunt: terrain and bodies must prove hit coverage
+before lighting is trusted.
+
+The raymarch shader therefore has a temporary survival path:
+
+- heightfield terrain still tries the real signed crossing first;
+- if that crossing misses, the ray falls back to the global `z = 0` Grid plane
+  inside the circular Grid fade mask;
+- terrain and body samples mark their deferred material as Bevy-unlit and pack
+  a visible emissive payload into the deferred G-buffer.
+
+This keeps the froxel/solid/deferred architecture intact while making darkness
+actionable. Once hits are visibly present, remove the unlit survival payload and
+let Self-injected SH/PBR lighting own the final surface response again.
