@@ -149,3 +149,9 @@ Current slice:
   then sample by screen UV + scene depth. Production reality matters: shadow
   filtering, temporal/jitter tricks, low-pass feature discipline, local fog
   volumes, and explicit ugly approximations keep the field stable.
+- Current research meal correction: Dreams needs the talk transcript, not only
+  the PDF notes. The transcript added hard constraints and off-slide lessons:
+  no imported textures/models/meshes, controller-native authoring, QA comfort
+  with edit lists over topology, 40-shader compute doom, atomic point splatting,
+  TAA as a stochastic resolver, imperfect shadow maps, and why point-jitter DOF
+  works where naive point-jitter motion blur fails.
