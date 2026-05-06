@@ -14,10 +14,14 @@ npm run bevy
 Fast iteration:
 
 ```powershell
+.\run-bevy-hot.ps1
 npm run bevy:dev
 npm run bevy:watch
 npm run bevy:hot
 ```
+
+From the repo root, `.\run-bevy-hot.ps1` installs the local prebuilt Dioxus CLI
+if needed and starts the Bevy hotpatch loop.
 
 `bevy:hot` is the real Rust-code hotpatch lane. It uses Bevy's
 `hotpatching` feature through the Dioxus CLI:
