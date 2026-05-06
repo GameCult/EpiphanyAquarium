@@ -19,7 +19,9 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 use std::path::PathBuf;
 use std::time::Duration;
 
-const GRID_HALF_EXTENT: f32 = 42.0;
+const GRID_BASE_HALF_EXTENT: f32 = 42.0;
+const GRID_MIN_HALF_EXTENT: f32 = 12.0;
+const GRID_MAX_HALF_EXTENT: f32 = 180.0;
 const GRID_RESOLUTION: usize = 128;
 const BODY_RADIUS: f32 = 0.9;
 const SELF_RADIUS: f32 = 1.25;
@@ -41,6 +43,7 @@ fn main() {
             affects_lightmapped_meshes: true,
         })
         .insert_resource(CameraRig::from_settings(&settings))
+        .insert_resource(GridFrame::from_camera_settings(&settings))
         .insert_resource(PointerWorld::default())
         .insert_resource(GridDirty(true))
         .insert_resource(LiveStateAutosave(Timer::from_seconds(
@@ -73,6 +76,7 @@ fn main() {
             Update,
             (
                 camera_input,
+                sync_grid_frame,
                 update_camera,
                 project_pointer_to_grid,
                 update_cursor_visual,
@@ -370,12 +374,53 @@ impl Default for CameraRig {
 impl CameraRig {
     fn from_settings(settings: &AquariumClientSettings) -> Self {
         Self {
-            target: Vec3::from_array(settings.camera_target),
+            target: grid_center_from_array(settings.camera_target),
             yaw: settings.camera_yaw,
             pitch: settings.camera_pitch,
             distance: settings.camera_distance,
         }
     }
+
+    fn constrain_to_grid_plane(&mut self) {
+        self.target.z = GRID_Z;
+        self.distance = self.distance.clamp(8.0, 120.0);
+        self.pitch = self.pitch.clamp(0.18, FRAC_PI_2 - 0.04);
+    }
+}
+
+#[derive(Resource, Clone, Copy, Debug)]
+struct GridFrame {
+    center: Vec2,
+    half_extent: f32,
+}
+
+impl GridFrame {
+    fn from_camera_settings(settings: &AquariumClientSettings) -> Self {
+        Self::from_camera(
+            grid_center_from_array(settings.camera_target),
+            settings.camera_distance,
+        )
+    }
+
+    fn from_camera(target: Vec3, distance: f32) -> Self {
+        Self {
+            center: target.truncate(),
+            half_extent: grid_half_extent_for_distance(distance),
+        }
+    }
+
+    fn contains(self, point: Vec2) -> bool {
+        let delta = point - self.center;
+        delta.x.abs() <= self.half_extent && delta.y.abs() <= self.half_extent
+    }
+}
+
+fn grid_center_from_array(value: [f32; 3]) -> Vec3 {
+    Vec3::new(value[0], value[1], GRID_Z)
+}
+
+fn grid_half_extent_for_distance(distance: f32) -> f32 {
+    (GRID_BASE_HALF_EXTENT * (distance / 34.0)).clamp(GRID_MIN_HALF_EXTENT, GRID_MAX_HALF_EXTENT)
 }
 
 #[derive(Resource, Default)]
@@ -479,6 +524,7 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     bridge: Res<CultRuntimeBridge>,
+    grid_frame: Res<GridFrame>,
 ) {
     info!(
         "{} bridge: {} docs, hello {} bytes, settings {}",
@@ -520,6 +566,7 @@ fn setup(
         &mut meshes,
         &mut materials,
         &bridge,
+        *grid_frame,
         bridge.load_body_states().ok(),
     );
 }
@@ -529,6 +576,7 @@ fn spawn_domain(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     bridge: &CultRuntimeBridge,
+    grid_frame: GridFrame,
     cached_bodies: Option<Vec<AquariumBodyState>>,
 ) {
     let domain_root = commands
@@ -540,7 +588,7 @@ fn spawn_domain(
         ))
         .id();
 
-    let grid_mesh = meshes.add(build_heightfield(&[]));
+    let grid_mesh = meshes.add(build_heightfield(grid_frame, &[]));
     let grid_material = materials.add(StandardMaterial {
         base_color: Color::srgba(0.13, 0.34, 0.36, 0.58),
         emissive: LinearRgba::rgb(0.035, 0.14, 0.16),
@@ -759,7 +807,7 @@ fn spawn_body_from_state(
 fn live_settings_from_rig(rig: &CameraRig, active_member_id: &str) -> AquariumClientSettings {
     AquariumClientSettings {
         schema_version: "epiphany.aquarium.client-settings.v0".to_string(),
-        camera_target: rig.target.to_array(),
+        camera_target: Vec3::new(rig.target.x, rig.target.y, GRID_Z).to_array(),
         camera_yaw: rig.yaw,
         camera_pitch: rig.pitch,
         camera_distance: rig.distance,
@@ -842,6 +890,7 @@ fn reload_domain_input(
         &mut meshes,
         &mut materials,
         &bridge,
+        GridFrame::from_camera(rig.target, rig.distance),
         Some(cached_bodies),
     );
     info!(
@@ -857,8 +906,11 @@ fn camera_input(
     motion: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
     mut rig: ResMut<CameraRig>,
+    mut dirty: ResMut<GridDirty>,
     camera: Query<&Transform, With<AquariumCamera>>,
 ) {
+    let previous_target = rig.target;
+    let previous_distance = rig.distance;
     let drag = motion.delta;
 
     if buttons.pressed(MouseButton::Middle) {
@@ -900,6 +952,10 @@ fn camera_input(
         let speed = 11.0 * (rig.distance / 34.0).sqrt();
         rig.target += pan.normalize_or_zero() * speed * time.delta_secs();
     }
+
+    rig.constrain_to_grid_plane();
+    dirty.0 |= rig.target.distance_squared(previous_target) > 0.0001
+        || (rig.distance - previous_distance).abs() > 0.001;
 }
 
 fn update_camera(rig: Res<CameraRig>, mut camera: Query<&mut Transform, With<AquariumCamera>>) {
@@ -916,11 +972,26 @@ fn update_camera(rig: Res<CameraRig>, mut camera: Query<&mut Transform, With<Aqu
     transform.look_at(rig.target, Vec3::Z);
 }
 
+fn sync_grid_frame(
+    rig: Res<CameraRig>,
+    mut frame: ResMut<GridFrame>,
+    mut dirty: ResMut<GridDirty>,
+) {
+    let next = GridFrame::from_camera(rig.target, rig.distance);
+    let changed = frame.center.distance_squared(next.center) > 0.0001
+        || (frame.half_extent - next.half_extent).abs() > 0.001;
+    if changed {
+        *frame = next;
+        dirty.0 = true;
+    }
+}
+
 fn project_pointer_to_grid(
     windows: Query<&Window>,
     camera: Query<(&Camera, &GlobalTransform), With<AquariumCamera>>,
     mut pointer: ResMut<PointerWorld>,
     mut dirty: ResMut<GridDirty>,
+    grid_frame: Res<GridFrame>,
     bodies: Query<(&Transform, &CelestialBody)>,
 ) {
     let Ok(window) = windows.single() else {
@@ -966,6 +1037,14 @@ fn project_pointer_to_grid(
         return;
     };
     let plane_position = ray.get_point(distance);
+    if !grid_frame.contains(plane_position.truncate()) {
+        if pointer.grid_position.is_some() {
+            dirty.0 = true;
+        }
+        pointer.plane_position = Some(plane_position);
+        pointer.grid_position = None;
+        return;
+    }
     let mut wells = body_wells(&bodies);
     wells.push(cursor_well(plane_position.truncate()));
     let grid_z = gravity_height(plane_position.truncate(), &wells);
@@ -1034,6 +1113,7 @@ fn update_cursor_visual(
 fn integrate_bodies(
     time: Res<Time>,
     pointer: Res<PointerWorld>,
+    grid_frame: Res<GridFrame>,
     mut dirty: ResMut<GridDirty>,
     mut bodies: Query<(&mut Transform, &mut CelestialBody)>,
 ) {
@@ -1042,7 +1122,11 @@ fn integrate_bodies(
     for (mut transform, mut body) in &mut bodies {
         let anchor = if body.class == BodyClass::Agent {
             let t = time.elapsed_secs() * 0.07 + body.phase;
-            orbit_anchor(Vec3::ZERO, 7.0 + body.phase.sin() * 0.35, t) + Vec3::Z * 2.6
+            orbit_anchor(
+                Vec3::new(grid_frame.center.x, grid_frame.center.y, GRID_Z),
+                7.0 + body.phase.sin() * 0.35,
+                t,
+            ) + Vec3::Z * 2.6
         } else {
             body.anchor
         };
@@ -1078,13 +1162,17 @@ fn rebuild_grid(
     surface: Query<&Mesh3d, With<GridSurface>>,
     bodies: Query<(&Transform, &CelestialBody)>,
     pointer: Res<PointerWorld>,
+    grid_frame: Res<GridFrame>,
 ) {
     if !dirty.0 {
         return;
     }
     dirty.0 = false;
     let mut wells = body_wells(&bodies);
-    if let Some(plane_position) = pointer.plane_position {
+    if let Some(plane_position) = pointer
+        .plane_position
+        .filter(|position| grid_frame.contains(position.truncate()))
+    {
         wells.push(cursor_well(plane_position.truncate()));
     }
 
@@ -1092,7 +1180,7 @@ fn rebuild_grid(
         return;
     };
     if let Some(mesh) = meshes.get_mut(&mesh_handle.0) {
-        *mesh = build_heightfield(&wells);
+        *mesh = build_heightfield(*grid_frame, &wells);
     }
 }
 
@@ -1290,7 +1378,7 @@ fn cursor_well(center: Vec2) -> GravityWell {
     }
 }
 
-fn build_heightfield(wells: &[GravityWell]) -> Mesh {
+fn build_heightfield(frame: GridFrame, wells: &[GravityWell]) -> Mesh {
     let vertex_count = (GRID_RESOLUTION + 1) * (GRID_RESOLUTION + 1);
     let mut positions = Vec::with_capacity(vertex_count);
     let mut normals = Vec::with_capacity(vertex_count);
@@ -1303,7 +1391,7 @@ fn build_heightfield(wells: &[GravityWell]) -> Mesh {
                 x as f32 / GRID_RESOLUTION as f32,
                 y as f32 / GRID_RESOLUTION as f32,
             );
-            let xy = (uv * 2.0 - Vec2::ONE) * GRID_HALF_EXTENT;
+            let xy = frame.center + (uv * 2.0 - Vec2::ONE) * frame.half_extent;
             let height = gravity_height(xy, wells);
             positions.push([xy.x, xy.y, height]);
             normals.push([0.0, 0.0, 1.0]);

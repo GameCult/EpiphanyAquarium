@@ -59,6 +59,7 @@ interaction_laws:
   - The aquarium camera is near-omniscient: grid coordinates project through a tilted overhead camera, and cursor input unprojects back to the grid before applying force.
   - Three.js camera controls use an orbital rig: the target is a point on the XY grid, yaw/pitch/distance convert to a Cartesian camera offset, +Z is up, middle drag mutates yaw/pitch, wheel zooms exponentially, right drag pans by projected XY mouse-hit deltas, and WASD pans along the projected view basis.
   - Grid scale follows zoom: camera distance drives both the procedural cell size and the actual rendered grid extent, while gravity wells remain in stable world coordinates.
+  - In the Bevy host, the camera target is the Grid center invariant: it is clamped to the global XY plane, the Grid square is centered there, zoom determines the square half-extent, and the heightfield mesh is rebuilt over that moving domain.
   - Epiphany project labels are world-space DOM billboards projected by the Three camera and fade in as the user zooms out.
   - As swarm/workspace labels fade in, sub-agent captions fade away; zoom level chooses the active hierarchy instead of stacking all labels.
   - Each harness/workspace label is a menu root with radial DOM petals for swarm-level navigation.
@@ -112,3 +113,4 @@ landed:
   - Normalized agent body size across WebGPU and WebGL SDF paths as a world-space radius, moved the WebGPU solid path to camera-ray/world-center SDF intersections, and removed the old z-derived DOM label elevation offset that made Self appear to bounce in screen space.
   - Separated swarm registry presence from runtime liveness. Standalone Aquarium now survives a missing status bridge by returning a sleeping snapshot, and the frontend renders dormant Epiphanies as cold project bodies instead of pretending the EpiphanyAgent specialist system is alive.
   - Promoted the WebGPU froxel renderer to the visible stage. It now reconstructs camera rays, renders the grid as a procedural marched heightfield with PowerPulse wells, layers a surface-hugging fog bank over it, and keeps the Three grid hidden as rigging/fallback machinery.
+  - Added a Bevy `GridFrame` invariant. Camera target, Grid center, zoom-scaled Grid extent, pointer-to-grid projection, cursor gravity source clipping, and heightfield mesh generation now share the same moving XY square instead of leaving the Bevy grid nailed to world zero.
