@@ -333,3 +333,15 @@ Current slice:
   noise, stochastic quadratic raymarching, temporal reprojection, and AABB
   history clipping. New research map lives at
   `notes/rust-vfx-research-map.md`.
+- Extended medicine pass: Aetheria's `VolumeCloudRenderer` is now understood as
+  the temporal frame machine around `CloudShader`: first-frame ultra sampling,
+  downsampled current/history buffers, Halton plus blue-noise offsets, previous
+  VP reprojection, local AABB history clipping, and final transmittance
+  composition. Bevy research added prepass texture ownership, ScatteringMedium
+  boundaries, Hanabi as GPU-particle reference, WGPU error scopes/debug
+  groups/timestamp queries, `wgpu-profiler`, RenderDoc, and diagnostic debug
+  surfaces as mandatory renderer organs.
+- Pruning correction: `state/map.yaml` now calls the React/Vite/Tauri surface
+  `legacy_frontend`, and `state/memory.json` marks the old Three/WebGPU field
+  volume section as migration archaeology. The live center is Bevy/WGPU render
+  graph, CultNet, and CultCache.

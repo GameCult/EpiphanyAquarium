@@ -24,8 +24,9 @@ current_model:
       lighting and occupancy, and raymarched surfaces write Bevy deferred
       prepass data. Legacy React/WebGL/Tauri surfaces are migration fallback,
       not the architecture center.
-  frontend:
+  legacy_frontend:
     framework: React + Vite + Tauri v2
+    status: migration fallback and historical interaction prototype
     primary_files:
       - src/App.tsx
       - src/aquariumFluid.ts
@@ -92,6 +93,8 @@ interaction_laws:
   - Bevy volumetric lighting is GPU-owned and Grid-space. A custom render node dispatches a compute shader before the fullscreen raymarch; ping-pong storage buffers carry first-order SH coefficients over the moving Grid volume, reproject history through previous Grid center/scale in XY, scatter through neighbors, and receive Self radiance injection.
   - Self solar flares are field simulation events: inject a short local radiance impulse, then advect previous SH history outward through the Grid-space volume so the flare becomes a carried volumetric wavefront instead of an analytic shell painted into every cell.
   - The Bevy light brick map is dynamic GPU state, not static topology. Rebuild occupancy every frame from current Grid terrain contact, moving body bounds, Self influence, and flare bands before SH lighting decides which cells get detailed flow.
+  - Renderer diagnostics are part of the renderer, not optional developer garnish. Persist a debug mode through CultCache and expose hit coverage, brick occupancy, SH lighting, density, temporal rejection, transmittance, and in-scatter before adding more field complexity.
+  - Aetheria's nebula contract should return as Grid source textures and temporal reconstruction: surface height, patch density/height, tint, flow/noise settings, quadratic stochastic march steps, history reprojection, and AABB clipping.
   - Global sky and aerial-perspective lighting should use Bruneton-style precomputed transport caches; local dynamic fog should not be forced to solve horizon-scale multiple scattering per frame.
   - Visual smoke verifies render presence and layout health, not cursor-driven 3D interaction; billboard/creature clicks need targeted raycast-aware probes.
   - Stardust is currently visible as tiny, faint 3D points inside the Three scene under ACES tone mapping; the old WebGPU overlay is disabled until it can feed the shared compositor instead of screen space.
@@ -109,6 +112,10 @@ next_actions:
   - Consider a debug-only keyboard chord for utilitarian always-on panels.
   - Deepen Face as the chat/aura organism now that backend heartbeatStatus, runHeartbeat, and faceBubble actions exist.
   - Render swarm members as first-class aquarium organisms instead of only selecting them through Self's connection leaf.
+  - Add a CultCache-backed `RendererDebugMode` for the Bevy renderer.
+  - Add debug views for raymarch hit coverage, light brick occupancy, SH luminance, density, temporal rejection, transmittance, and in-scatter.
+  - Port Aetheria nebula source textures/settings into Bevy as explicit Grid-domain resources before rebuilding full fog.
+  - Rebuild stardust as a GPU worker-slot lattice over moving Grid-space cells, using deterministic world hashes for identity.
 
 landed:
   - Face is now an interactible aquarium organism. Its habitat exposes heartbeat status, heartbeat pulse, and bubble leaves over EpiphanyAgent's backend GUI action bridge.
