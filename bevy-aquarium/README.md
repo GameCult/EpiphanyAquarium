@@ -16,12 +16,20 @@ Fast iteration:
 ```powershell
 npm run bevy:dev
 npm run bevy:watch
+npm run bevy:hot
+```
+
+`bevy:hot` is the real Rust-code hotpatch lane. It uses Bevy's
+`hotpatching` feature through the Dioxus CLI:
+
+```powershell
+npm run bevy:hot:install
+npm run bevy:hot
 ```
 
 `bevy:dev` enables Bevy dynamic linking and forces asset watching on.
-`bevy:watch` restarts the Bevy client when Rust, shader, or asset files change.
-The heavier Bevy hotpatch feature is available as the crate feature
-`hotpatch`, but it is not part of the default dev loop.
+`bevy:watch` is only the fallback restart-on-save loop for changes that cannot
+be patched into the running process. It is useful, but it is not hot reload.
 
 Or directly:
 

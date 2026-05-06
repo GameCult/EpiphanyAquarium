@@ -11,8 +11,11 @@
     "bevy": "cargo run --manifest-path bevy-aquarium/Cargo.toml",
     "bevy:dev": "cargo run --manifest-path bevy-aquarium/Cargo.toml --features dev",
     "bevy:watch": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bevy-dev-watch.ps1",
+    "bevy:hot": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bevy-hotpatch.ps1",
+    "bevy:hot:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-dioxus-cli.ps1",
     "bevy:check": "cargo check --manifest-path bevy-aquarium/Cargo.toml",
     "bevy:check:dev": "cargo check --manifest-path bevy-aquarium/Cargo.toml --features dev",
+    "bevy:check:hot": "cargo check --manifest-path bevy-aquarium/Cargo.toml --features hotpatch",
     "tauri": "tauri"
   },
   "dependencies": {
