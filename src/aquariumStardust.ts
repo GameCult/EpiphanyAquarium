@@ -232,6 +232,7 @@ const froxelHeight = 54;
 const froxelDepth = 24;
 const froxelCount = froxelWidth * froxelHeight * froxelDepth;
 const froxelShStrideFloats = 16;
+const heightmapSize = 256;
 const agentBodyScreenCullRadiusPixels = 58;
 const agentBodyWorldRadius = 0.42;
 const studioEnvironmentData = new Float32Array([
@@ -483,6 +484,79 @@ fn propagateLighting(@builtin(global_invocation_id) id: vec3u) {
 }
 `;
 
+const heightmapComputeShader = /* wgsl */ `
+struct SimUniforms {
+  time: f32,
+  width: f32,
+  height: f32,
+  count: f32,
+  froxelWidth: f32,
+  froxelHeight: f32,
+  froxelDepth: f32,
+  pad: f32,
+  depthNear: f32,
+  depthFar: f32,
+  depthSpan: f32,
+  pad2: f32,
+  cameraPosition: vec4f,
+  ray00: vec4f,
+  ray10: vec4f,
+  ray01: vec4f,
+  ray11: vec4f,
+};
+
+@group(0) @binding(0) var heightmapOut: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(1) var<storage, read> worldAgents: array<vec4f>;
+@group(0) @binding(2) var<storage, read> colors: array<vec4f>;
+@group(0) @binding(3) var<uniform> uniforms: SimUniforms;
+
+fn powerPulse(distanceValue: f32, radius: f32, power: f32) -> f32 {
+  let normalized = clamp(distanceValue / max(radius, 0.001), 0.0, 1.0);
+  let shaped = pow(1.0 - normalized, power);
+  return shaped * shaped * (3.0 - 2.0 * shaped);
+}
+
+fn fieldAt(xy: vec2f) -> vec4f {
+  var positive = 0.0;
+  var negative = 0.0;
+  var energy = 0.0;
+  var coverage = 0.0;
+  for (var i = 0u; i < ${maxStardustAgents}u; i = i + 1u) {
+    if (f32(i) >= uniforms.count) {
+      break;
+    }
+    let source = worldAgents[i];
+    let color = colors[i];
+    let selfFlag = color.w;
+    let delta = xy - source.xy;
+    let well = powerPulse(length(delta), mix(1.25, 2.9, selfFlag), mix(2.1, 2.85, selfFlag));
+    let wave = sin(length(delta) * mix(5.6, 3.2, selfFlag) - uniforms.time * mix(1.35, 0.74, selfFlag));
+    let signed = -well * mix(0.34, 1.18, selfFlag) + wave * well * mix(0.018, 0.048, selfFlag);
+    positive += max(signed, 0.0);
+    negative += max(-signed, 0.0);
+    energy += abs(signed);
+    coverage = max(coverage, well);
+  }
+  let slow = sin((xy.x * 0.43 + xy.y * 0.31) + uniforms.time * 0.27)
+    * sin((xy.x * -0.18 + xy.y * 0.36) - uniforms.time * 0.19) * 0.035;
+  positive += max(slow, 0.0);
+  negative += max(-slow, 0.0);
+  energy += abs(slow);
+  return vec4f(positive, negative, energy, coverage);
+}
+
+@compute @workgroup_size(8, 8)
+fn buildHeightmap(@builtin(global_invocation_id) id: vec3u) {
+  let size = textureDimensions(heightmapOut);
+  if (id.x >= size.x || id.y >= size.y) {
+    return;
+  }
+  let uv = (vec2f(id.xy) + vec2f(0.5)) / vec2f(size);
+  let xy = (uv - vec2f(0.5)) * vec2f(15.6, 10.8);
+  textureStore(heightmapOut, vec2i(id.xy), fieldAt(xy));
+}
+`;
+
 const froxelFieldRenderShader = /* wgsl */ `
 struct SimUniforms {
   time: f32,
@@ -511,6 +585,8 @@ struct SimUniforms {
 @group(0) @binding(4) var<storage, read> environment: array<vec4f>;
 @group(0) @binding(5) var<storage, read> shLighting: array<vec4f>;
 @group(0) @binding(6) var<storage, read> worldAgents: array<vec4f>;
+@group(0) @binding(7) var heightmapTex: texture_2d<f32>;
+@group(0) @binding(8) var linearSampler: sampler;
 
 struct VertexOut {
   @builtin(position) position: vec4f,
@@ -579,36 +655,21 @@ fn environmentColor(direction: vec3f) -> vec3f {
   return mix(base, horizon, side * 0.38) + key * keyLobe * 0.22;
 }
 
-fn powerPulse(distanceValue: f32, radius: f32, power: f32) -> f32 {
-  let normalized = clamp(distanceValue / max(radius, 0.001), 0.0, 1.0);
-  let shaped = pow(1.0 - normalized, power);
-  return shaped * shaped * (3.0 - 2.0 * shaped);
-}
-
 fn gridEdgeFade(xy: vec2f) -> f32 {
   let centered = abs(xy / vec2f(7.8, 5.4));
   let edge = max(centered.x, centered.y);
   return 1.0 - smoothstep(0.78, 1.0, edge);
 }
 
+fn sampleHeightmap(xy: vec2f) -> vec4f {
+  let uv = xy / vec2f(15.6, 10.8) + vec2f(0.5);
+  let mask = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
+  return textureSampleLevel(heightmapTex, linearSampler, clamp(uv, vec2f(0.0), vec2f(1.0)), 0.0) * mask;
+}
+
 fn gridHeight(xy: vec2f) -> f32 {
-  var height = 0.0;
-  for (var i = 0u; i < ${maxStardustAgents}u; i = i + 1u) {
-    if (f32(i) >= uniforms.count) {
-      break;
-    }
-    let source = worldAgents[i];
-    let color = colors[i];
-    let selfFlag = color.w;
-    let delta = xy - source.xy;
-    let well = powerPulse(length(delta), mix(1.25, 2.9, selfFlag), mix(2.1, 2.85, selfFlag));
-    height -= well * mix(0.34, 1.18, selfFlag);
-    let wave = sin(length(delta) * mix(5.6, 3.2, selfFlag) - uniforms.time * mix(1.35, 0.74, selfFlag));
-    height += wave * well * mix(0.018, 0.048, selfFlag);
-  }
-  let slow = sin((xy.x * 0.43 + xy.y * 0.31) + uniforms.time * 0.27)
-    * sin((xy.x * -0.18 + xy.y * 0.36) - uniforms.time * 0.19);
-  return height + slow * 0.035;
+  let field = sampleHeightmap(xy);
+  return field.r - field.g;
 }
 
 fn gridLineFactor(xy: vec2f) -> f32 {
@@ -853,6 +914,10 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
   private disposed = false;
   private environmentBuffer: any;
   private format: any;
+  private heightmapBindGroup: any;
+  private heightmapPipeline: any;
+  private heightmapTexture: any;
+  private heightmapView: any;
   private lightingBindGroups: any[] = [];
   private lightingBuffers: any[] = [];
   private lightingPipeline: any;
@@ -861,6 +926,7 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
   private pipeline: any;
   private raf = 0;
   private renderBindGroups: any[] = [];
+  private sampler: any;
   private uniforms = new Float32Array(32);
   private uniformBuffer: any;
   private worldAgentData = new Float32Array(maxStardustAgents * 4);
@@ -875,6 +941,7 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
     this.context.configure({ alphaMode: "premultiplied", device, format: this.format });
     const computeModule = device.createShaderModule({ label: "froxel primitive mask compute", code: froxelMaskComputeShader });
     const lightingModule = device.createShaderModule({ label: "froxel SH lighting compute", code: froxelLightingComputeShader });
+    const heightmapModule = device.createShaderModule({ label: "heightmap compute", code: heightmapComputeShader });
     const renderModule = device.createShaderModule({ label: "froxel field renderer", code: froxelFieldRenderShader });
     this.maskBuffer = device.createBuffer({
       label: "froxel primitive masks",
@@ -901,6 +968,14 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
       size: studioEnvironmentData.byteLength,
       usage: gpuBufferUsage.STORAGE | gpuBufferUsage.COPY_DST,
     });
+    this.heightmapTexture = device.createTexture({
+      label: "aquarium gravity heightmap",
+      size: [heightmapSize, heightmapSize, 1],
+      format: "rgba16float",
+      usage: (globalThis as any).GPUTextureUsage.STORAGE_BINDING | (globalThis as any).GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.heightmapView = this.heightmapTexture.createView();
+    this.sampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
     this.lightingBuffers = [0, 1].map((index) => device.createBuffer({
       label: `froxel spherical harmonics lighting ${index}`,
       size: froxelCount * froxelShStrideFloats * 4,
@@ -920,6 +995,11 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
       label: "propagate froxel SH lighting",
       layout: "auto",
       compute: { module: lightingModule, entryPoint: "propagateLighting" },
+    });
+    this.heightmapPipeline = device.createComputePipeline({
+      label: "build gravity heightmap",
+      layout: "auto",
+      compute: { module: heightmapModule, entryPoint: "buildHeightmap" },
     });
     this.pipeline = device.createRenderPipeline({
       label: "render froxel field",
@@ -955,6 +1035,16 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
         { binding: 6, resource: { buffer: this.uniformBuffer } },
       ],
     }));
+    this.heightmapBindGroup = device.createBindGroup({
+      label: "heightmap compute bindings",
+      layout: this.heightmapPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: this.heightmapView },
+        { binding: 1, resource: { buffer: this.worldAgentsBuffer } },
+        { binding: 2, resource: { buffer: this.colorsBuffer } },
+        { binding: 3, resource: { buffer: this.uniformBuffer } },
+      ],
+    });
     this.renderBindGroups = [0, 1].map((lightingIndex) => device.createBindGroup({
       label: `froxel render bindings ${lightingIndex}`,
       layout: this.pipeline.getBindGroupLayout(0),
@@ -966,6 +1056,8 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
         { binding: 4, resource: { buffer: this.environmentBuffer } },
         { binding: 5, resource: { buffer: this.lightingBuffers[lightingIndex] } },
         { binding: 6, resource: { buffer: this.worldAgentsBuffer } },
+        { binding: 7, resource: this.heightmapView },
+        { binding: 8, resource: this.sampler },
       ],
     }));
     this.device.queue.writeBuffer(this.environmentBuffer, 0, studioEnvironmentData);
@@ -982,6 +1074,7 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
     this.colorsBuffer?.destroy?.();
     this.worldAgentsBuffer?.destroy?.();
     this.environmentBuffer?.destroy?.();
+    this.heightmapTexture?.destroy?.();
     this.lightingBuffers.forEach((buffer) => buffer?.destroy?.());
     this.uniformBuffer?.destroy?.();
   }
@@ -1055,6 +1148,11 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
     this.uniforms.set([...cameraFrame.ray11, 0], 28);
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniforms);
     const encoder = this.device.createCommandEncoder({ label: "froxel field frame" });
+    const heightmapPass = encoder.beginComputePass();
+    heightmapPass.setPipeline(this.heightmapPipeline);
+    heightmapPass.setBindGroup(0, this.heightmapBindGroup);
+    heightmapPass.dispatchWorkgroups(Math.ceil(heightmapSize / 8), Math.ceil(heightmapSize / 8));
+    heightmapPass.end();
     const computePass = encoder.beginComputePass();
     computePass.setPipeline(this.computePipeline);
     computePass.setBindGroup(0, this.computeBindGroup);
