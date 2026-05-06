@@ -281,3 +281,8 @@ Current slice:
   exposing the compact SH froxel lattice. The shader now trilinear-filters SH
   reads, uses a 12x7x8 light grid, softens the radial fade, and jitters
   terrain/atmosphere ray steps with stable interleaved noise.
+- Current GPU lighting correction: SH froxel lighting is no longer a CPU
+  uniform-cache update. Bevy now has a custom render node that ping-pongs two
+  GPU storage buffers, dispatches `cs_froxel_lighting` to advect/scatter/inject
+  first-order SH coefficients, then binds the generated buffer for the
+  fullscreen raymarch pass.

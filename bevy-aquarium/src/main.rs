@@ -1,19 +1,35 @@
 use bevy::asset::AssetPlugin;
 use bevy::audio::{AudioPlayer, PlaybackSettings, SpatialListener, Volume};
 use bevy::core_pipeline::tonemapping::Tonemapping;
-use bevy::core_pipeline::{
-    core_3d::graph::Node3d,
-    fullscreen_material::{FullscreenMaterial, FullscreenMaterialPlugin},
-};
+use bevy::core_pipeline::{FullscreenShader, core_3d::graph::Core3d, core_3d::graph::Node3d};
+use bevy::ecs::query::QueryItem;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::light::GlobalAmbientLight;
 use bevy::prelude::*;
 use bevy::render::{
-    extract_component::ExtractComponent,
-    render_graph::{InternedRenderLabel, RenderLabel},
-    render_resource::ShaderType,
+    RenderApp, RenderStartup,
+    extract_component::{
+        ComponentUniforms, DynamicUniformIndex, ExtractComponent, ExtractComponentPlugin,
+        UniformComponentPlugin,
+    },
+    render_graph::{
+        NodeRunError, RenderGraphContext, RenderGraphExt, RenderLabel, ViewNode, ViewNodeRunner,
+    },
+    render_resource::{
+        BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer,
+        BufferDescriptor, BufferUsages, CachedComputePipelineId, CachedRenderPipelineId,
+        ColorTargetState, ColorWrites, ComputePassDescriptor, ComputePipelineDescriptor,
+        FragmentState, Operations, PipelineCache, RenderPassColorAttachment, RenderPassDescriptor,
+        RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages,
+        ShaderType, TextureFormat, TextureSampleType,
+        binding_types::{
+            sampler, storage_buffer_read_only_sized, storage_buffer_sized, texture_2d,
+            uniform_buffer,
+        },
+    },
+    renderer::{RenderContext, RenderDevice},
+    view::ViewTarget,
 };
-use bevy::shader::ShaderRef;
 use bevy_procedural_audio::prelude::{
     AudioUnit, DspAppExt, DspGraph, DspManager, DspPlugin, DspSource, SourceType, sine_hz,
     triangle_hz,
@@ -24,7 +40,9 @@ use cultnet_rs::{
     encode_cultnet_message_to_vec,
 };
 use std::f32::consts::{FRAC_PI_2, TAU};
+use std::mem::size_of;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 const GRID_BASE_HALF_EXTENT: f32 = 42.0;
@@ -46,6 +64,7 @@ const LIGHT_FROXEL_WIDTH: usize = 12;
 const LIGHT_FROXEL_HEIGHT: usize = 7;
 const LIGHT_FROXEL_DEPTH: usize = 8;
 const LIGHT_FROXEL_COUNT: usize = LIGHT_FROXEL_WIDTH * LIGHT_FROXEL_HEIGHT * LIGHT_FROXEL_DEPTH;
+const LIGHT_COEFFICIENT_COUNT: usize = LIGHT_FROXEL_COUNT * 4;
 
 fn main() {
     let runtime_bridge = CultRuntimeBridge::load().unwrap_or_else(|err| {
@@ -64,13 +83,13 @@ fn main() {
         .insert_resource(GridFrame::from_camera_settings(&settings))
         .insert_resource(PointerWorld::default())
         .insert_resource(GridDirty(true))
-        .insert_resource(FroxelLightingState::default())
         .insert_resource(LiveStateAutosave(Timer::from_seconds(
             1.0,
             TimerMode::Repeating,
         )))
         .insert_resource(AquariumAudioState::default())
         .insert_resource(runtime_bridge)
+        .add_plugins(AquariumRaymarchPlugin)
         .add_plugins(
             DefaultPlugins
                 .set(WindowPlugin {
@@ -88,7 +107,6 @@ fn main() {
                 }),
         )
         .add_plugins(DspPlugin::default())
-        .add_plugins(FullscreenMaterialPlugin::<AquariumRaymarch>::default())
         .add_dsp_source(aquarium_pluck, SourceType::Static { duration: 0.52 })
         .add_dsp_source(aquarium_heartbeat, SourceType::Static { duration: 0.28 })
         .add_systems(Startup, setup)
@@ -462,25 +480,6 @@ struct AquariumAudioState {
     touched_body_id: Option<String>,
 }
 
-#[derive(Resource, Clone, Copy)]
-struct FroxelLightingState {
-    sh_l0: [Vec4; LIGHT_FROXEL_COUNT],
-    sh_l1x: [Vec4; LIGHT_FROXEL_COUNT],
-    sh_l1y: [Vec4; LIGHT_FROXEL_COUNT],
-    sh_l1z: [Vec4; LIGHT_FROXEL_COUNT],
-}
-
-impl Default for FroxelLightingState {
-    fn default() -> Self {
-        Self {
-            sh_l0: [Vec4::ZERO; LIGHT_FROXEL_COUNT],
-            sh_l1x: [Vec4::ZERO; LIGHT_FROXEL_COUNT],
-            sh_l1y: [Vec4::ZERO; LIGHT_FROXEL_COUNT],
-            sh_l1z: [Vec4::ZERO; LIGHT_FROXEL_COUNT],
-        }
-    }
-}
-
 impl Default for AquariumAudioState {
     fn default() -> Self {
         Self {
@@ -509,10 +508,6 @@ struct AquariumRaymarch {
     bodies: [Vec4; MAX_RAYMARCH_BODIES],
     colors: [Vec4; MAX_RAYMARCH_BODIES],
     froxel_masks: [UVec4; RAYMARCH_FROXEL_MASK_WORDS],
-    sh_l0: [Vec4; LIGHT_FROXEL_COUNT],
-    sh_l1x: [Vec4; LIGHT_FROXEL_COUNT],
-    sh_l1y: [Vec4; LIGHT_FROXEL_COUNT],
-    sh_l1z: [Vec4; LIGHT_FROXEL_COUNT],
 }
 
 impl Default for AquariumRaymarch {
@@ -533,25 +528,244 @@ impl Default for AquariumRaymarch {
             bodies: [Vec4::ZERO; MAX_RAYMARCH_BODIES],
             colors: [Vec4::ZERO; MAX_RAYMARCH_BODIES],
             froxel_masks: [UVec4::ZERO; RAYMARCH_FROXEL_MASK_WORDS],
-            sh_l0: [Vec4::ZERO; LIGHT_FROXEL_COUNT],
-            sh_l1x: [Vec4::ZERO; LIGHT_FROXEL_COUNT],
-            sh_l1y: [Vec4::ZERO; LIGHT_FROXEL_COUNT],
-            sh_l1z: [Vec4::ZERO; LIGHT_FROXEL_COUNT],
         }
     }
 }
 
-impl FullscreenMaterial for AquariumRaymarch {
-    fn fragment_shader() -> ShaderRef {
-        "shaders/aquarium_raymarch.wgsl".into()
-    }
+struct AquariumRaymarchPlugin;
 
-    fn node_edges() -> Vec<InternedRenderLabel> {
-        vec![
-            Node3d::Tonemapping.intern(),
-            Self::node_label().intern(),
-            Node3d::EndMainPassPostProcessing.intern(),
-        ]
+impl Plugin for AquariumRaymarchPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins((
+            ExtractComponentPlugin::<AquariumRaymarch>::default(),
+            UniformComponentPlugin::<AquariumRaymarch>::default(),
+        ));
+
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
+            return;
+        };
+        render_app.add_systems(RenderStartup, init_aquarium_raymarch_pipeline);
+        render_app
+            .add_render_graph_node::<ViewNodeRunner<AquariumRaymarchNode>>(
+                Core3d,
+                AquariumRaymarchLabel,
+            )
+            .add_render_graph_edges(
+                Core3d,
+                (
+                    Node3d::Tonemapping,
+                    AquariumRaymarchLabel,
+                    Node3d::EndMainPassPostProcessing,
+                ),
+            );
+    }
+}
+
+#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
+struct AquariumRaymarchLabel;
+
+#[derive(Resource)]
+struct AquariumRaymarchPipeline {
+    render_layout: BindGroupLayoutDescriptor,
+    compute_layout: BindGroupLayoutDescriptor,
+    sampler: Sampler,
+    render_pipeline_id: CachedRenderPipelineId,
+    render_pipeline_id_hdr: CachedRenderPipelineId,
+    compute_pipeline_id: CachedComputePipelineId,
+}
+
+#[derive(Resource)]
+struct AquariumLightBuffers {
+    buffers: [Buffer; 2],
+    frame: AtomicU32,
+}
+
+fn init_aquarium_raymarch_pipeline(
+    mut commands: Commands,
+    render_device: Res<RenderDevice>,
+    asset_server: Res<AssetServer>,
+    fullscreen_shader: Res<FullscreenShader>,
+    pipeline_cache: Res<PipelineCache>,
+) {
+    let storage_size = (LIGHT_COEFFICIENT_COUNT * size_of::<Vec4>()) as u64;
+    let buffers = [
+        render_device.create_buffer(&BufferDescriptor {
+            label: Some("aquarium_sh_volume_a"),
+            size: storage_size,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }),
+        render_device.create_buffer(&BufferDescriptor {
+            label: Some("aquarium_sh_volume_b"),
+            size: storage_size,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }),
+    ];
+
+    let render_layout = BindGroupLayoutDescriptor::new(
+        "aquarium_raymarch_render_layout",
+        &BindGroupLayoutEntries::with_indices(
+            ShaderStages::FRAGMENT,
+            (
+                (0, texture_2d(TextureSampleType::Float { filterable: true })),
+                (1, sampler(SamplerBindingType::Filtering)),
+                (2, uniform_buffer::<AquariumRaymarch>(true)),
+                (3, storage_buffer_read_only_sized(false, None)),
+            ),
+        ),
+    );
+    let compute_layout = BindGroupLayoutDescriptor::new(
+        "aquarium_raymarch_compute_layout",
+        &BindGroupLayoutEntries::with_indices(
+            ShaderStages::COMPUTE,
+            (
+                (2, uniform_buffer::<AquariumRaymarch>(true)),
+                (4, storage_buffer_read_only_sized(false, None)),
+                (5, storage_buffer_sized(false, None)),
+            ),
+        ),
+    );
+
+    let sampler = render_device.create_sampler(&SamplerDescriptor::default());
+    let shader = asset_server.load("shaders/aquarium_raymarch.wgsl");
+    let vertex_state = fullscreen_shader.to_vertex_state();
+    let mut render_desc = RenderPipelineDescriptor {
+        label: Some("aquarium_raymarch_render_pipeline".into()),
+        layout: vec![render_layout.clone()],
+        vertex: vertex_state,
+        fragment: Some(FragmentState {
+            shader: shader.clone(),
+            targets: vec![Some(ColorTargetState {
+                format: TextureFormat::bevy_default(),
+                blend: None,
+                write_mask: ColorWrites::ALL,
+            })],
+            ..default()
+        }),
+        ..default()
+    };
+    let render_pipeline_id = pipeline_cache.queue_render_pipeline(render_desc.clone());
+    render_desc.fragment.as_mut().unwrap().targets[0]
+        .as_mut()
+        .unwrap()
+        .format = ViewTarget::TEXTURE_FORMAT_HDR;
+    let render_pipeline_id_hdr = pipeline_cache.queue_render_pipeline(render_desc);
+    let compute_pipeline_id = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+        label: Some("aquarium_sh_froxel_compute".into()),
+        layout: vec![compute_layout.clone()],
+        shader,
+        entry_point: Some("cs_froxel_lighting".into()),
+        ..default()
+    });
+
+    commands.insert_resource(AquariumRaymarchPipeline {
+        render_layout,
+        compute_layout,
+        sampler,
+        render_pipeline_id,
+        render_pipeline_id_hdr,
+        compute_pipeline_id,
+    });
+    commands.insert_resource(AquariumLightBuffers {
+        buffers,
+        frame: AtomicU32::new(0),
+    });
+}
+
+#[derive(Default)]
+struct AquariumRaymarchNode;
+
+impl ViewNode for AquariumRaymarchNode {
+    type ViewQuery = (
+        &'static ViewTarget,
+        &'static AquariumRaymarch,
+        &'static DynamicUniformIndex<AquariumRaymarch>,
+    );
+
+    fn run(
+        &self,
+        _graph: &mut RenderGraphContext,
+        render_context: &mut RenderContext,
+        (view_target, _settings, settings_index): QueryItem<Self::ViewQuery>,
+        world: &World,
+    ) -> Result<(), NodeRunError> {
+        let pipeline = world.resource::<AquariumRaymarchPipeline>();
+        let pipeline_cache = world.resource::<PipelineCache>();
+        let Some(render_pipeline) = pipeline_cache.get_render_pipeline(if view_target.is_hdr() {
+            pipeline.render_pipeline_id_hdr
+        } else {
+            pipeline.render_pipeline_id
+        }) else {
+            return Ok(());
+        };
+        let Some(compute_pipeline) =
+            pipeline_cache.get_compute_pipeline(pipeline.compute_pipeline_id)
+        else {
+            return Ok(());
+        };
+
+        let uniforms = world.resource::<ComponentUniforms<AquariumRaymarch>>();
+        let Some(settings_binding) = uniforms.uniforms().binding() else {
+            return Ok(());
+        };
+
+        let buffers = world.resource::<AquariumLightBuffers>();
+        let frame = buffers.frame.fetch_add(1, Ordering::Relaxed);
+        let read_index = (frame & 1) as usize;
+        let write_index = 1usize - read_index;
+
+        let compute_bind_group = render_context.render_device().create_bind_group(
+            "aquarium_sh_compute_bind_group",
+            &pipeline_cache.get_bind_group_layout(&pipeline.compute_layout),
+            &BindGroupEntries::with_indices((
+                (2, settings_binding.clone()),
+                (4, buffers.buffers[read_index].as_entire_binding()),
+                (5, buffers.buffers[write_index].as_entire_binding()),
+            )),
+        );
+        {
+            let mut pass =
+                render_context
+                    .command_encoder()
+                    .begin_compute_pass(&ComputePassDescriptor {
+                        label: Some("aquarium_sh_froxel_compute"),
+                        ..default()
+                    });
+            pass.set_pipeline(compute_pipeline);
+            pass.set_bind_group(0, &compute_bind_group, &[settings_index.index()]);
+            pass.dispatch_workgroups(LIGHT_FROXEL_COUNT.div_ceil(64) as u32, 1, 1);
+        }
+
+        let post_process = view_target.post_process_write();
+        let render_bind_group = render_context.render_device().create_bind_group(
+            "aquarium_raymarch_render_bind_group",
+            &pipeline_cache.get_bind_group_layout(&pipeline.render_layout),
+            &BindGroupEntries::with_indices((
+                (0, post_process.source),
+                (1, &pipeline.sampler),
+                (2, settings_binding.clone()),
+                (3, buffers.buffers[write_index].as_entire_binding()),
+            )),
+        );
+
+        let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
+            label: Some("aquarium_raymarch_pass"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: post_process.destination,
+                depth_slice: None,
+                resolve_target: None,
+                ops: Operations::default(),
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        render_pass.set_render_pipeline(render_pipeline);
+        render_pass.set_bind_group(0, &render_bind_group, &[settings_index.index()]);
+        render_pass.draw(0..3, 0..1);
+
+        Ok(())
     }
 }
 
@@ -979,7 +1193,6 @@ fn sync_grid_frame(
 fn update_raymarch_uniforms(
     time: Res<Time>,
     grid_frame: Res<GridFrame>,
-    mut lighting: ResMut<FroxelLightingState>,
     bodies: Query<(&Transform, &CelestialBody)>,
     mut camera: Query<(&GlobalTransform, &Projection, &mut AquariumRaymarch), With<AquariumCamera>>,
 ) {
@@ -1059,29 +1272,6 @@ fn update_raymarch_uniforms(
         count += 1;
     }
     raymarch.body_count = count as f32;
-
-    let sun = bodies
-        .iter()
-        .filter(|(_, body)| body.class == BodyClass::LivingSelf)
-        .max_by(|(_, a), (_, b)| a.mass.total_cmp(&b.mass))
-        .map(|(transform, body)| (transform.translation, body.mass));
-    update_froxel_lighting(
-        &mut lighting,
-        sun,
-        camera_position,
-        [
-            raymarch.ray00,
-            raymarch.ray10,
-            raymarch.ray01,
-            raymarch.ray11,
-        ],
-        depth_near,
-        depth_span,
-    );
-    raymarch.sh_l0 = lighting.sh_l0;
-    raymarch.sh_l1x = lighting.sh_l1x;
-    raymarch.sh_l1y = lighting.sh_l1y;
-    raymarch.sh_l1z = lighting.sh_l1z;
 }
 
 fn bin_body_into_froxels(
@@ -1146,116 +1336,6 @@ fn bin_body_into_froxels(
             }
         }
     }
-}
-
-fn update_froxel_lighting(
-    lighting: &mut FroxelLightingState,
-    sun: Option<(Vec3, f32)>,
-    camera_position: Vec3,
-    rays: [Vec4; 4],
-    depth_near: f32,
-    depth_span: f32,
-) {
-    let previous = *lighting;
-    let mut next = FroxelLightingState::default();
-    for z in 0..LIGHT_FROXEL_DEPTH {
-        for y in 0..LIGHT_FROXEL_HEIGHT {
-            for x in 0..LIGHT_FROXEL_WIDTH {
-                let index = light_froxel_index(x, y, z);
-                let mut l0 = previous.sh_l0[index] * 0.58;
-                let mut l1x = previous.sh_l1x[index] * 0.58;
-                let mut l1y = previous.sh_l1y[index] * 0.58;
-                let mut l1z = previous.sh_l1z[index] * 0.58;
-
-                let neighbors = [
-                    (x as isize - 1, y as isize, z as isize),
-                    (x as isize + 1, y as isize, z as isize),
-                    (x as isize, y as isize - 1, z as isize),
-                    (x as isize, y as isize + 1, z as isize),
-                    (x as isize, y as isize, z as isize - 1),
-                    (x as isize, y as isize, z as isize + 1),
-                ];
-                for (nx, ny, nz) in neighbors {
-                    let Some(neighbor) = light_froxel_index_checked(nx, ny, nz) else {
-                        continue;
-                    };
-                    l0 += previous.sh_l0[neighbor] * 0.045;
-                    l1x += previous.sh_l1x[neighbor] * 0.045;
-                    l1y += previous.sh_l1y[neighbor] * 0.045;
-                    l1z += previous.sh_l1z[neighbor] * 0.045;
-                }
-
-                if let Some((sun_position, sun_mass)) = sun {
-                    let uv = Vec2::new(
-                        (x as f32 + 0.5) / LIGHT_FROXEL_WIDTH as f32,
-                        (y as f32 + 0.5) / LIGHT_FROXEL_HEIGHT as f32,
-                    );
-                    let progress = (z as f32 + 0.5) / LIGHT_FROXEL_DEPTH as f32;
-                    let ray = camera_ray_from_corners(rays, uv);
-                    let point = camera_position + ray * (depth_near + progress * depth_span);
-                    let to_sun = sun_position - point;
-                    let distance = to_sun.length().max(0.001);
-                    let direction = to_sun / distance;
-                    let strength = (sun_mass * 1.55 + 5.0) * (-distance * 0.055).exp();
-                    let radiance = Vec3::new(4.4, 2.35, 0.72) * strength.min(9.0);
-                    inject_sh(&mut l0, &mut l1x, &mut l1y, &mut l1z, radiance, direction);
-                }
-
-                next.sh_l0[index] = clamp_vec4(l0, 18.0);
-                next.sh_l1x[index] = clamp_vec4(l1x, 18.0);
-                next.sh_l1y[index] = clamp_vec4(l1y, 18.0);
-                next.sh_l1z[index] = clamp_vec4(l1z, 18.0);
-            }
-        }
-    }
-    *lighting = next;
-}
-
-fn light_froxel_index(x: usize, y: usize, z: usize) -> usize {
-    z * LIGHT_FROXEL_WIDTH * LIGHT_FROXEL_HEIGHT + y * LIGHT_FROXEL_WIDTH + x
-}
-
-fn light_froxel_index_checked(x: isize, y: isize, z: isize) -> Option<usize> {
-    if x < 0
-        || y < 0
-        || z < 0
-        || x >= LIGHT_FROXEL_WIDTH as isize
-        || y >= LIGHT_FROXEL_HEIGHT as isize
-        || z >= LIGHT_FROXEL_DEPTH as isize
-    {
-        return None;
-    }
-    Some(light_froxel_index(x as usize, y as usize, z as usize))
-}
-
-fn camera_ray_from_corners(rays: [Vec4; 4], uv: Vec2) -> Vec3 {
-    let top = rays[0].truncate().lerp(rays[1].truncate(), uv.x);
-    let bottom = rays[2].truncate().lerp(rays[3].truncate(), uv.x);
-    top.lerp(bottom, uv.y).normalize()
-}
-
-fn inject_sh(
-    l0: &mut Vec4,
-    l1x: &mut Vec4,
-    l1y: &mut Vec4,
-    l1z: &mut Vec4,
-    radiance: Vec3,
-    dir: Vec3,
-) {
-    let rgb = radiance.extend(0.0);
-    *l0 += rgb * 0.282095;
-    *l1x += rgb * (0.488603 * dir.x);
-    *l1y += rgb * (0.488603 * dir.y);
-    *l1z += rgb * (0.488603 * dir.z);
-}
-
-fn clamp_vec4(value: Vec4, max_component: f32) -> Vec4 {
-    Vec4::new(
-        value.x.clamp(0.0, max_component),
-        value.y.clamp(0.0, max_component),
-        value.z.clamp(0.0, max_component),
-        0.0,
-    )
 }
 
 fn project_pointer_to_grid(

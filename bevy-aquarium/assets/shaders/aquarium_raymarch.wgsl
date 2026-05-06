@@ -16,15 +16,18 @@ struct AquariumRaymarch {
     bodies: array<vec4f, 8>,
     colors: array<vec4f, 8>,
     froxel_masks: array<vec4u, 576>,
-    sh_l0: array<vec4f, 672>,
-    sh_l1x: array<vec4f, 672>,
-    sh_l1y: array<vec4f, 672>,
-    sh_l1z: array<vec4f, 672>,
+};
+
+struct ShVolume {
+    values: array<vec4f>,
 };
 
 @group(0) @binding(0) var in_texture: texture_2d<f32>;
 @group(0) @binding(1) var in_sampler: sampler;
 @group(0) @binding(2) var<uniform> field: AquariumRaymarch;
+@group(0) @binding(3) var<storage, read> sh_volume: ShVolume;
+@group(0) @binding(4) var<storage, read> previous_sh_volume: ShVolume;
+@group(0) @binding(5) var<storage, read_write> next_sh_volume: ShVolume;
 
 const FROXEL_WIDTH: u32 = 16u;
 const FROXEL_HEIGHT: u32 = 9u;
@@ -32,6 +35,11 @@ const FROXEL_DEPTH: u32 = 16u;
 const LIGHT_FROXEL_WIDTH: u32 = 12u;
 const LIGHT_FROXEL_HEIGHT: u32 = 7u;
 const LIGHT_FROXEL_DEPTH: u32 = 8u;
+const LIGHT_FROXEL_COUNT: u32 = LIGHT_FROXEL_WIDTH * LIGHT_FROXEL_HEIGHT * LIGHT_FROXEL_DEPTH;
+const SH_L0_OFFSET: u32 = 0u;
+const SH_L1X_OFFSET: u32 = LIGHT_FROXEL_COUNT;
+const SH_L1Y_OFFSET: u32 = LIGHT_FROXEL_COUNT * 2u;
+const SH_L1Z_OFFSET: u32 = LIGHT_FROXEL_COUNT * 3u;
 
 struct TerrainHit {
     color: vec3f,
@@ -127,13 +135,17 @@ fn light_froxel_index_xyz(x: u32, y: u32, z: u32) -> u32 {
     return z * LIGHT_FROXEL_WIDTH * LIGHT_FROXEL_HEIGHT + y * LIGHT_FROXEL_WIDTH + x;
 }
 
+fn sh_read(volume_index: u32, offset: u32) -> vec3f {
+    return sh_volume.values[offset + volume_index].rgb;
+}
+
 fn sh_lighting_at(index: u32, normal: vec3f) -> vec3f {
     let y0 = 0.282095;
     let y1 = 0.488603;
-    return field.sh_l0[index].rgb * y0
-        + field.sh_l1x[index].rgb * (y1 * normal.x)
-        + field.sh_l1y[index].rgb * (y1 * normal.y)
-        + field.sh_l1z[index].rgb * (y1 * normal.z);
+    return sh_read(index, SH_L0_OFFSET) * y0
+        + sh_read(index, SH_L1X_OFFSET) * (y1 * normal.x)
+        + sh_read(index, SH_L1Y_OFFSET) * (y1 * normal.y)
+        + sh_read(index, SH_L1Z_OFFSET) * (y1 * normal.z);
 }
 
 fn sample_sh_lighting(normal: vec3f, uv: vec2f, depth_progress: f32) -> vec3f {
@@ -166,6 +178,108 @@ fn sample_sh_lighting(normal: vec3f, uv: vec2f, depth_progress: f32) -> vec3f {
 
 fn interleaved_noise(pixel: vec2f) -> f32 {
     return fract(52.9829189 * fract(dot(floor(pixel), vec2f(0.06711056, 0.00583715))));
+}
+
+fn previous_coeff_at(index: u32, offset: u32) -> vec4f {
+    return previous_sh_volume.values[offset + index];
+}
+
+fn previous_coeff_sample(position: vec3f, offset: u32) -> vec4f {
+    let p = clamp(
+        position,
+        vec3f(0.0),
+        vec3f(f32(LIGHT_FROXEL_WIDTH - 1u), f32(LIGHT_FROXEL_HEIGHT - 1u), f32(LIGHT_FROXEL_DEPTH - 1u)),
+    );
+    let base = vec3u(floor(p));
+    let next = min(base + vec3u(1u), vec3u(LIGHT_FROXEL_WIDTH - 1u, LIGHT_FROXEL_HEIGHT - 1u, LIGHT_FROXEL_DEPTH - 1u));
+    let f = fract(p);
+    let c000 = previous_coeff_at(light_froxel_index_xyz(base.x, base.y, base.z), offset);
+    let c100 = previous_coeff_at(light_froxel_index_xyz(next.x, base.y, base.z), offset);
+    let c010 = previous_coeff_at(light_froxel_index_xyz(base.x, next.y, base.z), offset);
+    let c110 = previous_coeff_at(light_froxel_index_xyz(next.x, next.y, base.z), offset);
+    let c001 = previous_coeff_at(light_froxel_index_xyz(base.x, base.y, next.z), offset);
+    let c101 = previous_coeff_at(light_froxel_index_xyz(next.x, base.y, next.z), offset);
+    let c011 = previous_coeff_at(light_froxel_index_xyz(base.x, next.y, next.z), offset);
+    let c111 = previous_coeff_at(light_froxel_index_xyz(next.x, next.y, next.z), offset);
+    let xy0 = mix(mix(c000, c100, f.x), mix(c010, c110, f.x), f.y);
+    let xy1 = mix(mix(c001, c101, f.x), mix(c011, c111, f.x), f.y);
+    return mix(xy0, xy1, f.z);
+}
+
+fn write_sh(index: u32, l0: vec4f, l1x: vec4f, l1y: vec4f, l1z: vec4f) {
+    next_sh_volume.values[SH_L0_OFFSET + index] = vec4f(clamp(l0.rgb, vec3f(0.0), vec3f(18.0)), 0.0);
+    next_sh_volume.values[SH_L1X_OFFSET + index] = vec4f(clamp(l1x.rgb, vec3f(0.0), vec3f(18.0)), 0.0);
+    next_sh_volume.values[SH_L1Y_OFFSET + index] = vec4f(clamp(l1y.rgb, vec3f(0.0), vec3f(18.0)), 0.0);
+    next_sh_volume.values[SH_L1Z_OFFSET + index] = vec4f(clamp(l1z.rgb, vec3f(0.0), vec3f(18.0)), 0.0);
+}
+
+@compute @workgroup_size(64)
+fn cs_froxel_lighting(@builtin(global_invocation_id) id: vec3u) {
+    let index = id.x;
+    if (index >= LIGHT_FROXEL_COUNT) {
+        return;
+    }
+    let z = index / (LIGHT_FROXEL_WIDTH * LIGHT_FROXEL_HEIGHT);
+    let rem = index - z * LIGHT_FROXEL_WIDTH * LIGHT_FROXEL_HEIGHT;
+    let y = rem / LIGHT_FROXEL_WIDTH;
+    let x = rem - y * LIGHT_FROXEL_WIDTH;
+    let lattice = vec3f(f32(x), f32(y), f32(z));
+    let uv = vec2f((f32(x) + 0.5) / f32(LIGHT_FROXEL_WIDTH), (f32(y) + 0.5) / f32(LIGHT_FROXEL_HEIGHT));
+    let depth_progress = (f32(z) + 0.5) / f32(LIGHT_FROXEL_DEPTH);
+    let ray = camera_ray(uv);
+    let point = field.camera_position.xyz + ray * (field.depth_near + depth_progress * field.depth_span);
+    let local = grid_local(point.xy);
+    let swirl = vec2f(-local.y, local.x) * (0.18 + 0.05 * sin(field.time * 0.21 + point.z * 0.17));
+    let drift = vec2f(
+        sin(point.y * 0.08 + point.z * 0.13 + field.time * 0.31),
+        cos(point.x * 0.07 - point.z * 0.11 - field.time * 0.27),
+    ) * 0.16;
+    let flow_xy = (swirl + drift) * vec2f(f32(LIGHT_FROXEL_WIDTH), f32(LIGHT_FROXEL_HEIGHT)) * 0.5;
+    let flow_z = sin(dot(local, vec2f(2.1, -1.7)) + field.time * 0.24) * 0.24;
+    let sample_position = lattice - vec3f(flow_xy, flow_z);
+
+    var l0 = previous_coeff_sample(sample_position, SH_L0_OFFSET) * 0.70;
+    var l1x = previous_coeff_sample(sample_position, SH_L1X_OFFSET) * 0.70;
+    var l1y = previous_coeff_sample(sample_position, SH_L1Y_OFFSET) * 0.70;
+    var l1z = previous_coeff_sample(sample_position, SH_L1Z_OFFSET) * 0.70;
+
+    let neighbors = array<vec3i, 6>(
+        vec3i(-1, 0, 0),
+        vec3i(1, 0, 0),
+        vec3i(0, -1, 0),
+        vec3i(0, 1, 0),
+        vec3i(0, 0, -1),
+        vec3i(0, 0, 1),
+    );
+    for (var i = 0u; i < 6u; i = i + 1u) {
+        let n = vec3i(i32(x), i32(y), i32(z)) + neighbors[i];
+        if (all(n >= vec3i(0)) && n.x < i32(LIGHT_FROXEL_WIDTH) && n.y < i32(LIGHT_FROXEL_HEIGHT) && n.z < i32(LIGHT_FROXEL_DEPTH)) {
+            let ni = light_froxel_index_xyz(u32(n.x), u32(n.y), u32(n.z));
+            l0 += previous_coeff_at(ni, SH_L0_OFFSET) * 0.025;
+            l1x += previous_coeff_at(ni, SH_L1X_OFFSET) * 0.025;
+            l1y += previous_coeff_at(ni, SH_L1Y_OFFSET) * 0.025;
+            l1z += previous_coeff_at(ni, SH_L1Z_OFFSET) * 0.025;
+        }
+    }
+
+    for (var body_index = 0u; body_index < 8u; body_index = body_index + 1u) {
+        if (f32(body_index) >= field.body_count || field.colors[body_index].w < 0.5) {
+            continue;
+        }
+        let sun_position = field.bodies[body_index].xyz;
+        let to_sun = sun_position - point;
+        let distance = max(length(to_sun), 0.001);
+        let direction = to_sun / distance;
+        let strength = exp(-distance * 0.055) * 8.6;
+        let radiance = vec3f(4.4, 2.35, 0.72) * min(strength, 9.0);
+        let rgb = vec4f(radiance, 0.0);
+        l0 += rgb * 0.282095;
+        l1x += rgb * (0.488603 * direction.x);
+        l1y += rgb * (0.488603 * direction.y);
+        l1z += rgb * (0.488603 * direction.z);
+    }
+
+    write_sh(index, l0, l1x, l1y, l1z);
 }
 
 fn atmosphere_sample(point: vec3f) -> f32 {
