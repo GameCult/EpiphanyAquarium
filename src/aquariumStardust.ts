@@ -557,6 +557,79 @@ fn buildHeightmap(@builtin(global_invocation_id) id: vec3u) {
 }
 `;
 
+const heightfieldMaskComputeShader = /* wgsl */ `
+struct SimUniforms {
+  time: f32,
+  width: f32,
+  height: f32,
+  count: f32,
+  froxelWidth: f32,
+  froxelHeight: f32,
+  froxelDepth: f32,
+  pad: f32,
+  depthNear: f32,
+  depthFar: f32,
+  depthSpan: f32,
+  pad2: f32,
+  cameraPosition: vec4f,
+  ray00: vec4f,
+  ray10: vec4f,
+  ray01: vec4f,
+  ray11: vec4f,
+};
+
+@group(0) @binding(0) var<storage, read_write> heightfieldMasks: array<u32>;
+@group(0) @binding(1) var heightmapTex: texture_2d<f32>;
+@group(0) @binding(2) var linearSampler: sampler;
+@group(0) @binding(3) var<uniform> uniforms: SimUniforms;
+
+fn cameraRay(uv: vec2f) -> vec3f {
+  let top = mix(uniforms.ray00.xyz, uniforms.ray10.xyz, uv.x);
+  let bottom = mix(uniforms.ray01.xyz, uniforms.ray11.xyz, uv.x);
+  return normalize(mix(top, bottom, uv.y));
+}
+
+fn sampleHeightmap(xy: vec2f) -> vec4f {
+  let uv = xy / vec2f(15.6, 10.8) + vec2f(0.5);
+  let mask = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
+  return textureSampleLevel(heightmapTex, linearSampler, clamp(uv, vec2f(0.0), vec2f(1.0)), 0.0) * mask;
+}
+
+@compute @workgroup_size(128)
+fn buildHeightfieldMasks(@builtin(global_invocation_id) id: vec3u) {
+  let index = id.x;
+  let total = u32(uniforms.froxelWidth * uniforms.froxelHeight * uniforms.froxelDepth);
+  if (index >= total) {
+    return;
+  }
+
+  let fw = u32(uniforms.froxelWidth);
+  let fh = u32(uniforms.froxelHeight);
+  let sliceSize = fw * fh;
+  let z = index / sliceSize;
+  let rem = index - z * sliceSize;
+  let y = rem / fw;
+  let x = rem - y * fw;
+  let uv = vec2f((f32(x) + 0.5) / uniforms.froxelWidth, (f32(y) + 0.5) / uniforms.froxelHeight);
+  let rayDir = cameraRay(uv);
+  let rayDistance = uniforms.depthNear + (f32(z) + 0.5) / uniforms.froxelDepth * uniforms.depthSpan;
+  let halfDepth = 0.5 * uniforms.depthSpan / max(uniforms.froxelDepth, 1.0);
+  let samplePoint = uniforms.cameraPosition.xyz + rayDir * rayDistance;
+  let gridUv = samplePoint.xy / vec2f(15.6, 10.8) + vec2f(0.5);
+  let insideGrid = gridUv.x >= 0.0 && gridUv.x <= 1.0 && gridUv.y >= 0.0 && gridUv.y <= 1.0;
+  var active = 0u;
+  if (insideGrid) {
+    let field = sampleHeightmap(samplePoint.xy);
+    let surfaceHeight = field.r - field.g;
+    let zSpan = abs(rayDir.z) * halfDepth + 0.18;
+    if (samplePoint.z <= surfaceHeight + zSpan) {
+      active = 1u;
+    }
+  }
+  heightfieldMasks[index] = active;
+}
+`;
+
 const froxelFieldRenderShader = /* wgsl */ `
 struct SimUniforms {
   time: f32,
@@ -587,6 +660,7 @@ struct SimUniforms {
 @group(0) @binding(6) var<storage, read> worldAgents: array<vec4f>;
 @group(0) @binding(7) var heightmapTex: texture_2d<f32>;
 @group(0) @binding(8) var linearSampler: sampler;
+@group(0) @binding(9) var<storage, read> heightfieldMasks: array<u32>;
 
 struct VertexOut {
   @builtin(position) position: vec4f,
@@ -641,6 +715,10 @@ fn froxelIndex(pixel: vec2f, progress: f32) -> u32 {
   let y = clamp(u32(pixel.y / max(uniforms.height, 1.0) * uniforms.froxelHeight), 0u, u32(uniforms.froxelHeight) - 1u);
   let z = clamp(u32(progress * uniforms.froxelDepth), 0u, u32(uniforms.froxelDepth) - 1u);
   return z * u32(uniforms.froxelWidth) * u32(uniforms.froxelHeight) + y * u32(uniforms.froxelWidth) + x;
+}
+
+fn heightfieldMask(pixel: vec2f, progress: f32) -> bool {
+  return heightfieldMasks[froxelIndex(pixel, progress)] != 0u;
 }
 
 fn environmentColor(direction: vec3f) -> vec3f {
@@ -737,24 +815,28 @@ fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
   if (abs(rayDir.z) > 0.001) {
     let baseT = (0.0 - rayOrigin.z) / rayDir.z;
     let basePoint = rayOrigin + rayDir * baseT;
-    let height = gridHeight(basePoint.xy);
-    let surfaceT = (height - rayOrigin.z) / rayDir.z;
-    let surfacePoint = rayOrigin + rayDir * surfaceT;
-    let edgeFade = gridEdgeFade(surfacePoint.xy) * depthWindowFade(surfaceT);
-    if (surfaceT > 0.0 && edgeFade > 0.0) {
-      let eps = 0.05;
-      let hx = gridHeight(surfacePoint.xy + vec2f(eps, 0.0)) - gridHeight(surfacePoint.xy - vec2f(eps, 0.0));
-      let hy = gridHeight(surfacePoint.xy + vec2f(0.0, eps)) - gridHeight(surfacePoint.xy - vec2f(0.0, eps));
-      let normal = normalize(vec3f(-hx, -hy, 2.0 * eps));
-      let viewDir = normalize(rayOrigin - surfacePoint);
-      let fresnel = pow(1.0 - clamp(dot(normal, viewDir), 0.0, 1.0), 2.6);
-      let lines = gridLineFactor(surfacePoint.xy);
-      let fieldEnergy = clamp(abs(height) * 1.15, 0.0, 1.0);
-      let glow = max(lines, fieldEnergy * 0.55);
-      let base = mix(vec3f(0.015, 0.18, 0.16), vec3f(0.58, 1.0, 0.84), lines);
-      let hot = mix(base, vec3f(1.0, 0.58, 0.24), fieldEnergy * 0.62);
-      surface = hot * edgeFade * (0.18 + glow * 1.15 + fresnel * 0.38);
-      surfaceAlpha = clamp(edgeFade * (0.16 + lines * 0.54 + fieldEnergy * 0.18 + fresnel * 0.16), 0.0, 0.82);
+    let baseUv = basePoint.xy / vec2f(15.6, 10.8) + vec2f(0.5);
+    let baseInsideGrid = baseUv.x >= 0.0 && baseUv.x <= 1.0 && baseUv.y >= 0.0 && baseUv.y <= 1.0;
+    if (baseT > 0.0 && baseInsideGrid) {
+      let height = gridHeight(basePoint.xy);
+      let surfaceT = (height - rayOrigin.z) / rayDir.z;
+      let surfacePoint = rayOrigin + rayDir * surfaceT;
+      let edgeFade = gridEdgeFade(surfacePoint.xy) * depthWindowFade(surfaceT);
+      if (surfaceT > 0.0 && edgeFade > 0.0) {
+        let eps = 0.05;
+        let hx = gridHeight(surfacePoint.xy + vec2f(eps, 0.0)) - gridHeight(surfacePoint.xy - vec2f(eps, 0.0));
+        let hy = gridHeight(surfacePoint.xy + vec2f(0.0, eps)) - gridHeight(surfacePoint.xy - vec2f(0.0, eps));
+        let normal = normalize(vec3f(-hx, -hy, 2.0 * eps));
+        let viewDir = normalize(rayOrigin - surfacePoint);
+        let fresnel = pow(1.0 - clamp(dot(normal, viewDir), 0.0, 1.0), 2.6);
+        let lines = gridLineFactor(surfacePoint.xy);
+        let fieldEnergy = clamp(abs(height) * 1.15, 0.0, 1.0);
+        let glow = max(lines, fieldEnergy * 0.55);
+        let base = mix(vec3f(0.015, 0.18, 0.16), vec3f(0.58, 1.0, 0.84), lines);
+        let hot = mix(base, vec3f(1.0, 0.58, 0.24), fieldEnergy * 0.62);
+        surface = hot * edgeFade * (0.18 + glow * 1.15 + fresnel * 0.38);
+        surfaceAlpha = clamp(edgeFade * (0.16 + lines * 0.54 + fieldEnergy * 0.18 + fresnel * 0.16), 0.0, 0.82);
+      }
     }
   }
 
@@ -775,9 +857,15 @@ fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
     let rayDistance = uniforms.depthNear + progress01 * uniforms.depthSpan;
     let boundsFade = depthWindowFade(rayDistance);
     let samplePoint = rayOrigin + rayDir * rayDistance;
-    let height = gridHeight(samplePoint.xy);
-    let edgeFade = gridEdgeFade(samplePoint.xy) * boundsFade;
-    let surfaceDistance = abs(samplePoint.z - height);
+    var height = 0.0;
+    var edgeFade = 0.0;
+    var surfaceDistance = 999.0;
+    let heightfieldActive = heightfieldMask(pixel, progress01);
+    if (heightfieldActive) {
+      height = gridHeight(samplePoint.xy);
+      edgeFade = gridEdgeFade(samplePoint.xy) * boundsFade;
+      surfaceDistance = abs(samplePoint.z - height);
+    }
     let mask = primitiveMask(pixel, progress01);
     var density = 0.0;
     var tint = vec3f(0.0);
@@ -804,7 +892,7 @@ fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
       break;
     }
 
-    if (surfaceAlpha < 0.5 && edgeFade > 0.0) {
+    if (heightfieldActive && surfaceAlpha < 0.5 && edgeFade > 0.0) {
       let surfaceBand = exp(-surfaceDistance * 26.0) * edgeFade;
       if (surfaceBand > 0.18) {
         let eps = 0.05;
@@ -823,9 +911,11 @@ fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
       }
     }
 
-    let fogBank = exp(-abs(samplePoint.z - height - 0.22) * 1.55) * edgeFade;
-    density += fogBank * (0.055 + max(-height, 0.0) * 0.075);
-    tint += fogBank * mix(vec3f(0.18, 0.48, 0.62), vec3f(0.72, 1.0, 0.86), clamp(max(-height, 0.0), 0.0, 1.0)) * 0.095;
+    if (heightfieldActive) {
+      let fogBank = exp(-abs(samplePoint.z - height - 0.22) * 1.55) * edgeFade;
+      density += fogBank * (0.055 + max(-height, 0.0) * 0.075);
+      tint += fogBank * mix(vec3f(0.18, 0.48, 0.62), vec3f(0.72, 1.0, 0.86), clamp(max(-height, 0.0), 0.0, 1.0)) * 0.095;
+    }
 
     for (var i = 0u; i < ${maxStardustAgents}u; i = i + 1u) {
       if (f32(i) >= uniforms.count) {
@@ -918,6 +1008,9 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
   private heightmapPipeline: any;
   private heightmapTexture: any;
   private heightmapView: any;
+  private heightfieldMaskBindGroup: any;
+  private heightfieldMaskBuffer: any;
+  private heightfieldMaskPipeline: any;
   private lightingBindGroups: any[] = [];
   private lightingBuffers: any[] = [];
   private lightingPipeline: any;
@@ -942,9 +1035,15 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
     const computeModule = device.createShaderModule({ label: "froxel primitive mask compute", code: froxelMaskComputeShader });
     const lightingModule = device.createShaderModule({ label: "froxel SH lighting compute", code: froxelLightingComputeShader });
     const heightmapModule = device.createShaderModule({ label: "heightmap compute", code: heightmapComputeShader });
+    const heightfieldMaskModule = device.createShaderModule({ label: "heightfield froxel mask compute", code: heightfieldMaskComputeShader });
     const renderModule = device.createShaderModule({ label: "froxel field renderer", code: froxelFieldRenderShader });
     this.maskBuffer = device.createBuffer({
       label: "froxel primitive masks",
+      size: froxelCount * 4,
+      usage: gpuBufferUsage.STORAGE,
+    });
+    this.heightfieldMaskBuffer = device.createBuffer({
+      label: "heightfield froxel masks",
       size: froxelCount * 4,
       usage: gpuBufferUsage.STORAGE,
     });
@@ -1001,6 +1100,11 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
       layout: "auto",
       compute: { module: heightmapModule, entryPoint: "buildHeightmap" },
     });
+    this.heightfieldMaskPipeline = device.createComputePipeline({
+      label: "build heightfield froxel masks",
+      layout: "auto",
+      compute: { module: heightfieldMaskModule, entryPoint: "buildHeightfieldMasks" },
+    });
     this.pipeline = device.createRenderPipeline({
       label: "render froxel field",
       layout: "auto",
@@ -1045,6 +1149,16 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
         { binding: 3, resource: { buffer: this.uniformBuffer } },
       ],
     });
+    this.heightfieldMaskBindGroup = device.createBindGroup({
+      label: "heightfield froxel mask bindings",
+      layout: this.heightfieldMaskPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: this.heightfieldMaskBuffer } },
+        { binding: 1, resource: this.heightmapView },
+        { binding: 2, resource: this.sampler },
+        { binding: 3, resource: { buffer: this.uniformBuffer } },
+      ],
+    });
     this.renderBindGroups = [0, 1].map((lightingIndex) => device.createBindGroup({
       label: `froxel render bindings ${lightingIndex}`,
       layout: this.pipeline.getBindGroupLayout(0),
@@ -1058,11 +1172,13 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
         { binding: 6, resource: { buffer: this.worldAgentsBuffer } },
         { binding: 7, resource: this.heightmapView },
         { binding: 8, resource: this.sampler },
+        { binding: 9, resource: { buffer: this.heightfieldMaskBuffer } },
       ],
     }));
     this.device.queue.writeBuffer(this.environmentBuffer, 0, studioEnvironmentData);
     this.canvas.dataset.stardustMode = "webgpu-froxel-sh-primitive-map";
     this.canvas.dataset.stardustParticles = String(froxelCount);
+    this.canvas.dataset.stardustHeightfieldMask = "grid-xy-surface-or-below";
     this.raf = requestAnimationFrame(this.render);
   }
 
@@ -1070,6 +1186,7 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
     this.disposed = true;
     cancelAnimationFrame(this.raf);
     this.maskBuffer?.destroy?.();
+    this.heightfieldMaskBuffer?.destroy?.();
     this.agentsBuffer?.destroy?.();
     this.colorsBuffer?.destroy?.();
     this.worldAgentsBuffer?.destroy?.();
@@ -1153,6 +1270,11 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
     heightmapPass.setBindGroup(0, this.heightmapBindGroup);
     heightmapPass.dispatchWorkgroups(Math.ceil(heightmapSize / 8), Math.ceil(heightmapSize / 8));
     heightmapPass.end();
+    const heightfieldMaskPass = encoder.beginComputePass();
+    heightfieldMaskPass.setPipeline(this.heightfieldMaskPipeline);
+    heightfieldMaskPass.setBindGroup(0, this.heightfieldMaskBindGroup);
+    heightfieldMaskPass.dispatchWorkgroups(Math.ceil(froxelCount / 128));
+    heightfieldMaskPass.end();
     const computePass = encoder.beginComputePass();
     computePass.setPipeline(this.computePipeline);
     computePass.setBindGroup(0, this.computeBindGroup);
