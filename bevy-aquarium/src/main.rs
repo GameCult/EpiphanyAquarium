@@ -2,7 +2,7 @@ use bevy::asset::{AssetPlugin, RenderAssetUsages};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::light::GlobalAmbientLight;
-use bevy::math::primitives::Sphere;
+use bevy::math::primitives::{Cuboid, Sphere};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use cultcache_rs::{CultCache, DatabaseEntry, SingleFileMessagePackBackingStore};
@@ -18,6 +18,8 @@ const GRID_RESOLUTION: usize = 128;
 const BODY_RADIUS: f32 = 0.9;
 const SELF_RADIUS: f32 = 1.25;
 const GRID_Z: f32 = 0.0;
+const CURSOR_WELL_RADIUS: f32 = 4.6;
+const CURSOR_WELL_MASS: f32 = 2.1;
 
 fn main() {
     let runtime_bridge = CultRuntimeBridge::load().unwrap_or_else(|err| {
@@ -59,6 +61,7 @@ fn main() {
                 camera_input,
                 update_camera,
                 project_pointer_to_grid,
+                update_cursor_visual,
                 integrate_bodies,
                 rebuild_grid,
                 billboard_labels,
@@ -222,7 +225,8 @@ impl CameraRig {
 
 #[derive(Resource, Default)]
 struct PointerWorld {
-    position: Option<Vec3>,
+    plane_position: Option<Vec3>,
+    grid_position: Option<Vec3>,
 }
 
 #[derive(Resource)]
@@ -236,6 +240,15 @@ struct GridSurface;
 
 #[derive(Component)]
 struct BodyLabel;
+
+#[derive(Component)]
+struct CursorPlaneMarker;
+
+#[derive(Component)]
+struct CursorProbe;
+
+#[derive(Component)]
+struct CursorTip;
 
 #[derive(Component)]
 #[allow(dead_code)]
@@ -312,6 +325,36 @@ fn setup(
         MeshMaterial3d(grid_material),
         Transform::default(),
         GridSurface,
+    ));
+
+    let cursor_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.88, 0.98, 1.0, 0.72),
+        emissive: LinearRgba::rgb(0.38, 0.88, 1.25),
+        perceptual_roughness: 0.18,
+        metallic: 0.16,
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
+    commands.spawn((
+        Mesh3d(meshes.add(Sphere::new(0.23).mesh().ico(2).expect("valid cursor sphere"))),
+        MeshMaterial3d(cursor_material.clone()),
+        Transform::from_xyz(0.0, 0.0, GRID_Z),
+        Visibility::Hidden,
+        CursorPlaneMarker,
+    ));
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(0.055, 0.055, 1.0))),
+        MeshMaterial3d(cursor_material.clone()),
+        Transform::default(),
+        Visibility::Hidden,
+        CursorProbe,
+    ));
+    commands.spawn((
+        Mesh3d(meshes.add(Sphere::new(0.16).mesh().ico(2).expect("valid cursor tip sphere"))),
+        MeshMaterial3d(cursor_material),
+        Transform::from_xyz(0.0, 0.0, GRID_Z),
+        Visibility::Hidden,
+        CursorTip,
     ));
 
     spawn_body(
@@ -509,28 +552,97 @@ fn project_pointer_to_grid(
     windows: Query<&Window>,
     camera: Query<(&Camera, &GlobalTransform), With<AquariumCamera>>,
     mut pointer: ResMut<PointerWorld>,
+    mut dirty: ResMut<GridDirty>,
+    bodies: Query<(&Transform, &CelestialBody)>,
 ) {
     let Ok(window) = windows.single() else {
-        pointer.position = None;
+        if pointer.plane_position.is_some() {
+            dirty.0 = true;
+        }
+        pointer.plane_position = None;
+        pointer.grid_position = None;
         return;
     };
     let Some(cursor) = window.cursor_position() else {
-        pointer.position = None;
+        if pointer.plane_position.is_some() {
+            dirty.0 = true;
+        }
+        pointer.plane_position = None;
+        pointer.grid_position = None;
         return;
     };
     let Ok((camera, camera_transform)) = camera.single() else {
-        pointer.position = None;
+        if pointer.plane_position.is_some() {
+            dirty.0 = true;
+        }
+        pointer.plane_position = None;
+        pointer.grid_position = None;
         return;
     };
     let Ok(ray) = camera.viewport_to_world(camera_transform, cursor) else {
-        pointer.position = None;
+        if pointer.plane_position.is_some() {
+            dirty.0 = true;
+        }
+        pointer.plane_position = None;
+        pointer.grid_position = None;
         return;
     };
     let Some(distance) = ray.intersect_plane(Vec3::new(0.0, 0.0, GRID_Z), InfinitePlane3d::new(Vec3::Z)) else {
-        pointer.position = None;
+        if pointer.plane_position.is_some() {
+            dirty.0 = true;
+        }
+        pointer.plane_position = None;
+        pointer.grid_position = None;
         return;
     };
-    pointer.position = Some(ray.get_point(distance));
+    let plane_position = ray.get_point(distance);
+    let mut wells = body_wells(&bodies);
+    wells.push(cursor_well(plane_position.truncate()));
+    let grid_z = gravity_height(plane_position.truncate(), &wells);
+    let grid_position = Vec3::new(plane_position.x, plane_position.y, grid_z);
+    let moved = pointer
+        .plane_position
+        .map(|previous| previous.distance_squared(plane_position) > 0.0004)
+        .unwrap_or(true);
+    pointer.plane_position = Some(plane_position);
+    pointer.grid_position = Some(grid_position);
+    dirty.0 |= moved;
+}
+
+fn update_cursor_visual(
+    pointer: Res<PointerWorld>,
+    mut plane_marker: Query<(&mut Transform, &mut Visibility), With<CursorPlaneMarker>>,
+    mut probe: Query<(&mut Transform, &mut Visibility), (With<CursorProbe>, Without<CursorPlaneMarker>, Without<CursorTip>)>,
+    mut tip: Query<(&mut Transform, &mut Visibility), (With<CursorTip>, Without<CursorPlaneMarker>, Without<CursorProbe>)>,
+) {
+    let (Some(plane_position), Some(grid_position)) = (pointer.plane_position, pointer.grid_position) else {
+        if let Ok((_, mut visibility)) = plane_marker.single_mut() {
+            *visibility = Visibility::Hidden;
+        }
+        if let Ok((_, mut visibility)) = probe.single_mut() {
+            *visibility = Visibility::Hidden;
+        }
+        if let Ok((_, mut visibility)) = tip.single_mut() {
+            *visibility = Visibility::Hidden;
+        }
+        return;
+    };
+
+    if let Ok((mut transform, mut visibility)) = plane_marker.single_mut() {
+        transform.translation = plane_position;
+        *visibility = Visibility::Visible;
+    }
+    if let Ok((mut transform, mut visibility)) = tip.single_mut() {
+        transform.translation = grid_position;
+        *visibility = Visibility::Visible;
+    }
+    if let Ok((mut transform, mut visibility)) = probe.single_mut() {
+        let delta = plane_position - grid_position;
+        let length = delta.length().max(0.001);
+        transform.translation = grid_position + delta * 0.5;
+        transform.scale = Vec3::new(1.0, 1.0, length);
+        *visibility = Visibility::Visible;
+    }
 }
 
 fn integrate_bodies(
@@ -552,7 +664,7 @@ fn integrate_bodies(
         let mut acceleration = (anchor - transform.translation) * 3.4;
         acceleration -= body.velocity * 1.45;
 
-        if let Some(pointer_position) = pointer.position {
+        if let Some(pointer_position) = pointer.plane_position {
             let to_pointer = pointer_position + Vec3::Z * transform.translation.z - transform.translation;
             let distance = to_pointer.length().max(0.001);
             let near_attraction = 7.5 * smooth_well(distance, 0.0, 5.0);
@@ -578,19 +690,16 @@ fn rebuild_grid(
     mut meshes: ResMut<Assets<Mesh>>,
     surface: Query<&Mesh3d, With<GridSurface>>,
     bodies: Query<(&Transform, &CelestialBody)>,
+    pointer: Res<PointerWorld>,
 ) {
     if !dirty.0 {
         return;
     }
     dirty.0 = false;
-    let wells: Vec<_> = bodies
-        .iter()
-        .map(|(transform, body)| GravityWell {
-            center: transform.translation.truncate(),
-            mass: body.mass,
-            radius: if body.class == BodyClass::LivingSelf { 8.5 } else { 3.8 },
-        })
-        .collect();
+    let mut wells = body_wells(&bodies);
+    if let Some(plane_position) = pointer.plane_position {
+        wells.push(cursor_well(plane_position.truncate()));
+    }
 
     let Ok(mesh_handle) = surface.single() else {
         return;
@@ -626,6 +735,25 @@ struct GravityWell {
     center: Vec2,
     mass: f32,
     radius: f32,
+}
+
+fn body_wells(bodies: &Query<(&Transform, &CelestialBody)>) -> Vec<GravityWell> {
+    bodies
+        .iter()
+        .map(|(transform, body)| GravityWell {
+            center: transform.translation.truncate(),
+            mass: body.mass,
+            radius: if body.class == BodyClass::LivingSelf { 8.5 } else { 3.8 },
+        })
+        .collect()
+}
+
+fn cursor_well(center: Vec2) -> GravityWell {
+    GravityWell {
+        center,
+        mass: CURSOR_WELL_MASS,
+        radius: CURSOR_WELL_RADIUS,
+    }
 }
 
 fn build_heightfield(wells: &[GravityWell]) -> Mesh {
