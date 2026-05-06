@@ -1,11 +1,21 @@
 use bevy::asset::{AssetPlugin, RenderAssetUsages};
 use bevy::audio::{AudioPlayer, PlaybackSettings, SpatialListener, Volume};
 use bevy::core_pipeline::tonemapping::Tonemapping;
+use bevy::core_pipeline::{
+    core_3d::graph::Node3d,
+    fullscreen_material::{FullscreenMaterial, FullscreenMaterialPlugin},
+};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::light::GlobalAmbientLight;
 use bevy::math::primitives::{Cuboid, Sphere};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
+use bevy::render::{
+    extract_component::ExtractComponent,
+    render_graph::{InternedRenderLabel, RenderLabel},
+    render_resource::ShaderType,
+};
+use bevy::shader::ShaderRef;
 use bevy_procedural_audio::prelude::{
     AudioUnit, DspAppExt, DspGraph, DspManager, DspPlugin, DspSource, SourceType, sine_hz,
     triangle_hz,
@@ -28,6 +38,7 @@ const SELF_RADIUS: f32 = 1.25;
 const GRID_Z: f32 = 0.0;
 const CURSOR_WELL_RADIUS: f32 = 4.6;
 const CURSOR_WELL_MASS: f32 = 2.1;
+const MAX_RAYMARCH_BODIES: usize = 8;
 
 fn main() {
     let runtime_bridge = CultRuntimeBridge::load().unwrap_or_else(|err| {
@@ -69,6 +80,7 @@ fn main() {
                 }),
         )
         .add_plugins(DspPlugin::default())
+        .add_plugins(FullscreenMaterialPlugin::<AquariumRaymarch>::default())
         .add_dsp_source(aquarium_pluck, SourceType::Static { duration: 0.52 })
         .add_dsp_source(aquarium_heartbeat, SourceType::Static { duration: 0.28 })
         .add_systems(Startup, setup)
@@ -78,6 +90,7 @@ fn main() {
                 camera_input,
                 sync_grid_frame,
                 update_camera,
+                update_raymarch_uniforms,
                 project_pointer_to_grid,
                 update_cursor_visual,
                 integrate_bodies,
@@ -454,6 +467,59 @@ impl Default for AquariumAudioState {
     }
 }
 
+#[derive(Component, ExtractComponent, Clone, Copy, ShaderType)]
+struct AquariumRaymarch {
+    time: f32,
+    body_count: f32,
+    grid_center: Vec2,
+    grid_half_extent: f32,
+    depth_near: f32,
+    depth_far: f32,
+    depth_span: f32,
+    camera_position: Vec4,
+    ray00: Vec4,
+    ray10: Vec4,
+    ray01: Vec4,
+    ray11: Vec4,
+    bodies: [Vec4; MAX_RAYMARCH_BODIES],
+    colors: [Vec4; MAX_RAYMARCH_BODIES],
+}
+
+impl Default for AquariumRaymarch {
+    fn default() -> Self {
+        Self {
+            time: 0.0,
+            body_count: 0.0,
+            grid_center: Vec2::ZERO,
+            grid_half_extent: GRID_BASE_HALF_EXTENT,
+            depth_near: 1.0,
+            depth_far: 80.0,
+            depth_span: 79.0,
+            camera_position: Vec4::ZERO,
+            ray00: Vec4::new(-0.5, 0.5, -0.7, 0.0),
+            ray10: Vec4::new(0.5, 0.5, -0.7, 0.0),
+            ray01: Vec4::new(-0.5, 0.8, -0.28, 0.0),
+            ray11: Vec4::new(0.5, 0.8, -0.28, 0.0),
+            bodies: [Vec4::ZERO; MAX_RAYMARCH_BODIES],
+            colors: [Vec4::ZERO; MAX_RAYMARCH_BODIES],
+        }
+    }
+}
+
+impl FullscreenMaterial for AquariumRaymarch {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/aquarium_raymarch.wgsl".into()
+    }
+
+    fn node_edges() -> Vec<InternedRenderLabel> {
+        vec![
+            Node3d::Tonemapping.intern(),
+            Self::node_label().intern(),
+            Node3d::EndMainPassPostProcessing.intern(),
+        ]
+    }
+}
+
 #[derive(Component)]
 struct AquariumCamera;
 
@@ -519,6 +585,14 @@ impl BodyClass {
     }
 }
 
+fn body_color(class: BodyClass) -> Vec3 {
+    match class {
+        BodyClass::LivingSelf => Vec3::new(4.2, 2.1, 0.55),
+        BodyClass::SleepingEpiphany => Vec3::new(0.68, 0.82, 1.0),
+        BodyClass::Agent => Vec3::new(0.48, 0.86, 0.78),
+    }
+}
+
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -558,6 +632,7 @@ fn setup(
         Msaa::Off,
         Tonemapping::AcesFitted,
         SpatialListener::default(),
+        AquariumRaymarch::default(),
         AquariumCamera,
     ));
 
@@ -984,6 +1059,73 @@ fn sync_grid_frame(
         *frame = next;
         dirty.0 = true;
     }
+}
+
+fn update_raymarch_uniforms(
+    time: Res<Time>,
+    grid_frame: Res<GridFrame>,
+    bodies: Query<(&Transform, &CelestialBody)>,
+    mut camera: Query<(&GlobalTransform, &Projection, &mut AquariumRaymarch), With<AquariumCamera>>,
+) {
+    let Ok((camera_transform, projection, mut raymarch)) = camera.single_mut() else {
+        return;
+    };
+    let transform = camera_transform.compute_transform();
+    let aspect = match projection {
+        Projection::Perspective(perspective) => perspective.aspect_ratio,
+        _ => 16.0 / 9.0,
+    };
+    let fov = match projection {
+        Projection::Perspective(perspective) => perspective.fov,
+        _ => 46.0_f32.to_radians(),
+    };
+    let half_y = (fov * 0.5).tan();
+    let half_x = half_y * aspect;
+    let forward = *transform.forward();
+    let right = *transform.right();
+    let up = *transform.up();
+    let ray = |x: f32, y: f32| -> Vec4 {
+        (forward + right * (x * half_x) + up * (y * half_y))
+            .normalize()
+            .extend(0.0)
+    };
+
+    raymarch.time = time.elapsed_secs();
+    raymarch.grid_center = grid_frame.center;
+    raymarch.grid_half_extent = grid_frame.half_extent;
+    raymarch.depth_near = 1.0;
+    raymarch.depth_far = (grid_frame.half_extent * 3.0).clamp(32.0, 260.0);
+    raymarch.depth_span = raymarch.depth_far - raymarch.depth_near;
+    raymarch.camera_position = transform.translation.extend(1.0);
+    raymarch.ray00 = ray(-1.0, 1.0);
+    raymarch.ray10 = ray(1.0, 1.0);
+    raymarch.ray01 = ray(-1.0, -1.0);
+    raymarch.ray11 = ray(1.0, -1.0);
+
+    raymarch.bodies = [Vec4::ZERO; MAX_RAYMARCH_BODIES];
+    raymarch.colors = [Vec4::ZERO; MAX_RAYMARCH_BODIES];
+    let mut count = 0usize;
+    for (transform, body) in bodies.iter().take(MAX_RAYMARCH_BODIES) {
+        let self_flag = if body.class == BodyClass::LivingSelf {
+            1.0
+        } else {
+            0.0
+        };
+        let radius = if body.class == BodyClass::LivingSelf {
+            SELF_RADIUS
+        } else {
+            BODY_RADIUS
+        };
+        raymarch.bodies[count] = Vec4::new(
+            transform.translation.x,
+            transform.translation.y,
+            transform.translation.z,
+            radius,
+        );
+        raymarch.colors[count] = body_color(body.class).extend(self_flag);
+        count += 1;
+    }
+    raymarch.body_count = count as f32;
 }
 
 fn project_pointer_to_grid(
