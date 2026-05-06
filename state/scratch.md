@@ -267,3 +267,13 @@ Current slice:
   mesh-backed Grid terrain, body spheres, or cursor probe meshes. Body entities
   remain as source transforms for simulation/cache/audio/raymarch uniforms, and
   only temporary `Text2d` labels still render outside the raymarch pass.
+- Current lighting correction: the Bevy shader no longer uses fake procedural
+  environment light for chrome/fullbright surfaces. Self injects warm radiance
+  into a compact first-order SH froxel cache; the previous frame's coefficients
+  decay and propagate through neighbors, then terrain, planets, and the
+  exponential Grid atmosphere sample that field.
+- Current atmosphere pass: the raymarcher treats the Grid as an infinite
+  heightfield surface with exponential atmosphere clinging above it. The pass is
+  Bruneton-inspired in contract: transmittance plus in-scatter along the camera
+  ray, lit by the cached field. Full compute precomputed textures remain future
+  work.

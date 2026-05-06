@@ -42,6 +42,10 @@ const RAYMARCH_FROXEL_DEPTH: usize = 16;
 const RAYMARCH_FROXEL_COUNT: usize =
     RAYMARCH_FROXEL_WIDTH * RAYMARCH_FROXEL_HEIGHT * RAYMARCH_FROXEL_DEPTH;
 const RAYMARCH_FROXEL_MASK_WORDS: usize = RAYMARCH_FROXEL_COUNT / 4;
+const LIGHT_FROXEL_WIDTH: usize = 8;
+const LIGHT_FROXEL_HEIGHT: usize = 5;
+const LIGHT_FROXEL_DEPTH: usize = 8;
+const LIGHT_FROXEL_COUNT: usize = LIGHT_FROXEL_WIDTH * LIGHT_FROXEL_HEIGHT * LIGHT_FROXEL_DEPTH;
 
 fn main() {
     let runtime_bridge = CultRuntimeBridge::load().unwrap_or_else(|err| {
@@ -60,6 +64,7 @@ fn main() {
         .insert_resource(GridFrame::from_camera_settings(&settings))
         .insert_resource(PointerWorld::default())
         .insert_resource(GridDirty(true))
+        .insert_resource(FroxelLightingState::default())
         .insert_resource(LiveStateAutosave(Timer::from_seconds(
             1.0,
             TimerMode::Repeating,
@@ -457,6 +462,25 @@ struct AquariumAudioState {
     touched_body_id: Option<String>,
 }
 
+#[derive(Resource, Clone, Copy)]
+struct FroxelLightingState {
+    sh_l0: [Vec4; LIGHT_FROXEL_COUNT],
+    sh_l1x: [Vec4; LIGHT_FROXEL_COUNT],
+    sh_l1y: [Vec4; LIGHT_FROXEL_COUNT],
+    sh_l1z: [Vec4; LIGHT_FROXEL_COUNT],
+}
+
+impl Default for FroxelLightingState {
+    fn default() -> Self {
+        Self {
+            sh_l0: [Vec4::ZERO; LIGHT_FROXEL_COUNT],
+            sh_l1x: [Vec4::ZERO; LIGHT_FROXEL_COUNT],
+            sh_l1y: [Vec4::ZERO; LIGHT_FROXEL_COUNT],
+            sh_l1z: [Vec4::ZERO; LIGHT_FROXEL_COUNT],
+        }
+    }
+}
+
 impl Default for AquariumAudioState {
     fn default() -> Self {
         Self {
@@ -485,6 +509,10 @@ struct AquariumRaymarch {
     bodies: [Vec4; MAX_RAYMARCH_BODIES],
     colors: [Vec4; MAX_RAYMARCH_BODIES],
     froxel_masks: [UVec4; RAYMARCH_FROXEL_MASK_WORDS],
+    sh_l0: [Vec4; LIGHT_FROXEL_COUNT],
+    sh_l1x: [Vec4; LIGHT_FROXEL_COUNT],
+    sh_l1y: [Vec4; LIGHT_FROXEL_COUNT],
+    sh_l1z: [Vec4; LIGHT_FROXEL_COUNT],
 }
 
 impl Default for AquariumRaymarch {
@@ -505,6 +533,10 @@ impl Default for AquariumRaymarch {
             bodies: [Vec4::ZERO; MAX_RAYMARCH_BODIES],
             colors: [Vec4::ZERO; MAX_RAYMARCH_BODIES],
             froxel_masks: [UVec4::ZERO; RAYMARCH_FROXEL_MASK_WORDS],
+            sh_l0: [Vec4::ZERO; LIGHT_FROXEL_COUNT],
+            sh_l1x: [Vec4::ZERO; LIGHT_FROXEL_COUNT],
+            sh_l1y: [Vec4::ZERO; LIGHT_FROXEL_COUNT],
+            sh_l1z: [Vec4::ZERO; LIGHT_FROXEL_COUNT],
         }
     }
 }
@@ -947,6 +979,7 @@ fn sync_grid_frame(
 fn update_raymarch_uniforms(
     time: Res<Time>,
     grid_frame: Res<GridFrame>,
+    mut lighting: ResMut<FroxelLightingState>,
     bodies: Query<(&Transform, &CelestialBody)>,
     mut camera: Query<(&GlobalTransform, &Projection, &mut AquariumRaymarch), With<AquariumCamera>>,
 ) {
@@ -1026,6 +1059,29 @@ fn update_raymarch_uniforms(
         count += 1;
     }
     raymarch.body_count = count as f32;
+
+    let sun = bodies
+        .iter()
+        .filter(|(_, body)| body.class == BodyClass::LivingSelf)
+        .max_by(|(_, a), (_, b)| a.mass.total_cmp(&b.mass))
+        .map(|(transform, body)| (transform.translation, body.mass));
+    update_froxel_lighting(
+        &mut lighting,
+        sun,
+        camera_position,
+        [
+            raymarch.ray00,
+            raymarch.ray10,
+            raymarch.ray01,
+            raymarch.ray11,
+        ],
+        depth_near,
+        depth_span,
+    );
+    raymarch.sh_l0 = lighting.sh_l0;
+    raymarch.sh_l1x = lighting.sh_l1x;
+    raymarch.sh_l1y = lighting.sh_l1y;
+    raymarch.sh_l1z = lighting.sh_l1z;
 }
 
 fn bin_body_into_froxels(
@@ -1090,6 +1146,116 @@ fn bin_body_into_froxels(
             }
         }
     }
+}
+
+fn update_froxel_lighting(
+    lighting: &mut FroxelLightingState,
+    sun: Option<(Vec3, f32)>,
+    camera_position: Vec3,
+    rays: [Vec4; 4],
+    depth_near: f32,
+    depth_span: f32,
+) {
+    let previous = *lighting;
+    let mut next = FroxelLightingState::default();
+    for z in 0..LIGHT_FROXEL_DEPTH {
+        for y in 0..LIGHT_FROXEL_HEIGHT {
+            for x in 0..LIGHT_FROXEL_WIDTH {
+                let index = light_froxel_index(x, y, z);
+                let mut l0 = previous.sh_l0[index] * 0.58;
+                let mut l1x = previous.sh_l1x[index] * 0.58;
+                let mut l1y = previous.sh_l1y[index] * 0.58;
+                let mut l1z = previous.sh_l1z[index] * 0.58;
+
+                let neighbors = [
+                    (x as isize - 1, y as isize, z as isize),
+                    (x as isize + 1, y as isize, z as isize),
+                    (x as isize, y as isize - 1, z as isize),
+                    (x as isize, y as isize + 1, z as isize),
+                    (x as isize, y as isize, z as isize - 1),
+                    (x as isize, y as isize, z as isize + 1),
+                ];
+                for (nx, ny, nz) in neighbors {
+                    let Some(neighbor) = light_froxel_index_checked(nx, ny, nz) else {
+                        continue;
+                    };
+                    l0 += previous.sh_l0[neighbor] * 0.045;
+                    l1x += previous.sh_l1x[neighbor] * 0.045;
+                    l1y += previous.sh_l1y[neighbor] * 0.045;
+                    l1z += previous.sh_l1z[neighbor] * 0.045;
+                }
+
+                if let Some((sun_position, sun_mass)) = sun {
+                    let uv = Vec2::new(
+                        (x as f32 + 0.5) / LIGHT_FROXEL_WIDTH as f32,
+                        (y as f32 + 0.5) / LIGHT_FROXEL_HEIGHT as f32,
+                    );
+                    let progress = (z as f32 + 0.5) / LIGHT_FROXEL_DEPTH as f32;
+                    let ray = camera_ray_from_corners(rays, uv);
+                    let point = camera_position + ray * (depth_near + progress * depth_span);
+                    let to_sun = sun_position - point;
+                    let distance = to_sun.length().max(0.001);
+                    let direction = to_sun / distance;
+                    let strength = (sun_mass * 1.55 + 5.0) * (-distance * 0.055).exp();
+                    let radiance = Vec3::new(4.4, 2.35, 0.72) * strength.min(9.0);
+                    inject_sh(&mut l0, &mut l1x, &mut l1y, &mut l1z, radiance, direction);
+                }
+
+                next.sh_l0[index] = clamp_vec4(l0, 18.0);
+                next.sh_l1x[index] = clamp_vec4(l1x, 18.0);
+                next.sh_l1y[index] = clamp_vec4(l1y, 18.0);
+                next.sh_l1z[index] = clamp_vec4(l1z, 18.0);
+            }
+        }
+    }
+    *lighting = next;
+}
+
+fn light_froxel_index(x: usize, y: usize, z: usize) -> usize {
+    z * LIGHT_FROXEL_WIDTH * LIGHT_FROXEL_HEIGHT + y * LIGHT_FROXEL_WIDTH + x
+}
+
+fn light_froxel_index_checked(x: isize, y: isize, z: isize) -> Option<usize> {
+    if x < 0
+        || y < 0
+        || z < 0
+        || x >= LIGHT_FROXEL_WIDTH as isize
+        || y >= LIGHT_FROXEL_HEIGHT as isize
+        || z >= LIGHT_FROXEL_DEPTH as isize
+    {
+        return None;
+    }
+    Some(light_froxel_index(x as usize, y as usize, z as usize))
+}
+
+fn camera_ray_from_corners(rays: [Vec4; 4], uv: Vec2) -> Vec3 {
+    let top = rays[0].truncate().lerp(rays[1].truncate(), uv.x);
+    let bottom = rays[2].truncate().lerp(rays[3].truncate(), uv.x);
+    top.lerp(bottom, uv.y).normalize()
+}
+
+fn inject_sh(
+    l0: &mut Vec4,
+    l1x: &mut Vec4,
+    l1y: &mut Vec4,
+    l1z: &mut Vec4,
+    radiance: Vec3,
+    dir: Vec3,
+) {
+    let rgb = radiance.extend(0.0);
+    *l0 += rgb * 0.282095;
+    *l1x += rgb * (0.488603 * dir.x);
+    *l1y += rgb * (0.488603 * dir.y);
+    *l1z += rgb * (0.488603 * dir.z);
+}
+
+fn clamp_vec4(value: Vec4, max_component: f32) -> Vec4 {
+    Vec4::new(
+        value.x.clamp(0.0, max_component),
+        value.y.clamp(0.0, max_component),
+        value.z.clamp(0.0, max_component),
+        0.0,
+    )
 }
 
 fn project_pointer_to_grid(

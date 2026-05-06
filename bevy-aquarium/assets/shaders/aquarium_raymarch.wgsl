@@ -16,6 +16,10 @@ struct AquariumRaymarch {
     bodies: array<vec4f, 8>,
     colors: array<vec4f, 8>,
     froxel_masks: array<vec4u, 576>,
+    sh_l0: array<vec4f, 320>,
+    sh_l1x: array<vec4f, 320>,
+    sh_l1y: array<vec4f, 320>,
+    sh_l1z: array<vec4f, 320>,
 };
 
 @group(0) @binding(0) var in_texture: texture_2d<f32>;
@@ -25,6 +29,9 @@ struct AquariumRaymarch {
 const FROXEL_WIDTH: u32 = 16u;
 const FROXEL_HEIGHT: u32 = 9u;
 const FROXEL_DEPTH: u32 = 16u;
+const LIGHT_FROXEL_WIDTH: u32 = 8u;
+const LIGHT_FROXEL_HEIGHT: u32 = 5u;
+const LIGHT_FROXEL_DEPTH: u32 = 8u;
 
 struct TerrainHit {
     color: vec3f,
@@ -101,18 +108,6 @@ fn grid_line_factor(xy: vec2f) -> f32 {
     return line * grid_edge_fade(xy);
 }
 
-fn environment_color(direction: vec3f) -> vec3f {
-    let up = vec3f(0.506, 0.516, 0.533);
-    let horizon = vec3f(0.152, 0.178, 0.194);
-    let down = vec3f(0.411, 0.531, 0.694);
-    let key = vec3f(6.0, 7.625, 9.875);
-    let vertical = clamp(direction.z * 0.5 + 0.5, 0.0, 1.0);
-    let base = mix(down, up, vertical);
-    let side = smoothstep(0.1, 0.82, abs(direction.x) + abs(direction.y) * 0.55);
-    let key_lobe = pow(max(dot(normalize(direction), normalize(vec3f(0.36, -0.28, 0.89))), 0.0), 18.0);
-    return mix(base, horizon, side * 0.38) + key * key_lobe * 0.22;
-}
-
 fn depth_window_fade(distance_value: f32) -> f32 {
     let edge = max(field.depth_span * 0.08, 0.08);
     let near_fade = smoothstep(field.depth_near, field.depth_near + edge, distance_value);
@@ -128,6 +123,30 @@ fn froxel_mask(uv: vec2f, depth_progress: f32) -> u32 {
     return field.froxel_masks[index / 4u][index % 4u];
 }
 
+fn light_froxel_index(uv: vec2f, depth_progress: f32) -> u32 {
+    let x = clamp(u32(uv.x * f32(LIGHT_FROXEL_WIDTH)), 0u, LIGHT_FROXEL_WIDTH - 1u);
+    let y = clamp(u32(uv.y * f32(LIGHT_FROXEL_HEIGHT)), 0u, LIGHT_FROXEL_HEIGHT - 1u);
+    let z = clamp(u32(depth_progress * f32(LIGHT_FROXEL_DEPTH)), 0u, LIGHT_FROXEL_DEPTH - 1u);
+    return z * LIGHT_FROXEL_WIDTH * LIGHT_FROXEL_HEIGHT + y * LIGHT_FROXEL_WIDTH + x;
+}
+
+fn sample_sh_lighting(normal: vec3f, uv: vec2f, depth_progress: f32) -> vec3f {
+    let index = light_froxel_index(uv, depth_progress);
+    let y0 = 0.282095;
+    let y1 = 0.488603;
+    let lit = field.sh_l0[index].rgb * y0
+        + field.sh_l1x[index].rgb * (y1 * normal.x)
+        + field.sh_l1y[index].rgb * (y1 * normal.y)
+        + field.sh_l1z[index].rgb * (y1 * normal.z);
+    return max(lit, vec3f(0.0));
+}
+
+fn atmosphere_sample(point: vec3f) -> f32 {
+    let surface_height = grid_height(point.xy);
+    let height_above_grid = max(point.z - surface_height, 0.0);
+    return exp(-height_above_grid * 0.62) * 0.018;
+}
+
 fn aces(color: vec3f) -> vec3f {
     let a = 2.51;
     let b = 0.03;
@@ -137,7 +156,7 @@ fn aces(color: vec3f) -> vec3f {
     return clamp((color * (a * color + b)) / (color * (c * color + d) + e), vec3f(0.0), vec3f(1.0));
 }
 
-fn terrain_hit(ray_origin: vec3f, ray_dir: vec3f) -> TerrainHit {
+fn terrain_hit(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f) -> TerrainHit {
     var previous_t = field.depth_near;
     var previous_point = ray_origin + ray_dir * previous_t;
     var previous_sdf = previous_point.z - grid_height(previous_point.xy);
@@ -190,9 +209,11 @@ fn terrain_hit(ray_origin: vec3f, ray_dir: vec3f) -> TerrainHit {
     let fresnel = pow(1.0 - clamp(dot(normal, view_dir), 0.0, 1.0), 2.6);
     let lines = grid_line_factor(surface_point.xy);
     let field_energy = clamp(abs(height) * 1.15, 0.0, 1.0);
+    let depth_progress = clamp((surface_t - field.depth_near) / max(field.depth_span, 0.001), 0.0, 1.0);
+    let light = sample_sh_lighting(normal, uv, depth_progress);
     let grid_base = mix(vec3f(0.015, 0.18, 0.16), vec3f(0.58, 1.0, 0.84), lines);
     let hot = mix(grid_base, vec3f(1.0, 0.58, 0.24), field_energy * 0.62);
-    let lit = hot * edge_fade * (0.22 + lines * 1.15 + fresnel * 0.38 + field_energy * 0.52);
+    let lit = hot * edge_fade * (light * (0.34 + fresnel * 0.35) + lines * 0.035);
     let alpha = clamp(edge_fade * (0.22 + lines * 0.58 + field_energy * 0.22 + fresnel * 0.12), 0.0, 0.88);
     return TerrainHit(lit, alpha, surface_t);
 }
@@ -202,7 +223,7 @@ fn fs_main(input: FullscreenVertexOutput) -> @location(0) vec4f {
     let base = textureSample(in_texture, in_sampler, input.uv);
     let ray_origin = field.camera_position.xyz;
     let ray_dir = camera_ray(input.uv);
-    let terrain = terrain_hit(ray_origin, ray_dir);
+    let terrain = terrain_hit(ray_origin, ray_dir, input.uv);
 
     var best_t = field.depth_far;
     var best_color = vec3f(0.0);
@@ -257,12 +278,11 @@ fn fs_main(input: FullscreenVertexOutput) -> @location(0) vec4f {
             let displaced_hit = ray_origin + ray_dir * displaced_t;
             let normal = normalize((displaced_hit - body.xyz) / max(displaced_radius, 0.001));
             let view_dir = normalize(ray_origin - displaced_hit);
-            let reflected = reflect(-view_dir, normal);
             let fresnel = pow(1.0 - clamp(dot(normal, view_dir), 0.0, 1.0), 4.0);
             let plasma = pow(max(fbm4(vec4f(local * mix(1.35, 2.15, self_flag), field.time * 0.24)) * 0.5 + 0.5, 0.0), mix(2.4, 5.4, self_flag));
-            let studio_reflection = environment_color(reflected);
-            let diffuse_wrap = environment_color(normal) * (0.08 + 0.18 * color.rgb);
-            let chrome = diffuse_wrap + mix(color.rgb * 0.18, studio_reflection, 0.82 + fresnel * 0.16);
+            let depth_progress = clamp((displaced_t - field.depth_near) / max(field.depth_span, 0.001), 0.0, 1.0);
+            let light = sample_sh_lighting(normal, input.uv, depth_progress);
+            let chrome = color.rgb * (0.025 + light * (0.36 + fresnel * 0.42)) + light * fresnel * 0.45;
             let solar = vec3f(4.2, 2.1, 0.55) * (0.8 + plasma * 1.5);
             best_color = mix(chrome, solar, self_flag) * depth_window_fade(displaced_t);
             best_alpha = 0.96 * depth_window_fade(displaced_t);
@@ -276,6 +296,26 @@ fn fs_main(input: FullscreenVertexOutput) -> @location(0) vec4f {
         field_color = best_color * best_alpha;
         field_alpha = best_alpha;
     }
+    var atmosphere = vec3f(0.0);
+    var transmittance = 1.0;
+    var previous_t = field.depth_near;
+    let atmosphere_end = min(min(terrain.t, best_t), field.depth_far);
+    for (var i = 1u; i <= 24u; i = i + 1u) {
+        let progress = f32(i) / 24.0;
+        let t = field.depth_near + progress * progress * max(atmosphere_end - field.depth_near, 0.0);
+        let step_size = max(t - previous_t, 0.0001);
+        previous_t = t;
+        let point = ray_origin + ray_dir * t;
+        let depth_progress = clamp((t - field.depth_near) / max(field.depth_span, 0.001), 0.0, 1.0);
+        let density = atmosphere_sample(point) * depth_window_fade(t);
+        let light = sample_sh_lighting(vec3f(0.0, 0.0, 1.0), input.uv, depth_progress);
+        let extinction = density * 2.8;
+        let step_transmittance = exp(-extinction * step_size);
+        atmosphere += transmittance * light * density * step_size * vec3f(0.48, 0.62, 0.78);
+        transmittance *= step_transmittance;
+    }
+    field_color = field_color * transmittance + atmosphere;
+    field_alpha = max(field_alpha, clamp(1.0 - transmittance, 0.0, 0.62));
     let mapped = aces(field_color);
     return vec4f(mix(base.rgb, mapped, clamp(field_alpha, 0.0, 0.96)), 1.0);
 }
