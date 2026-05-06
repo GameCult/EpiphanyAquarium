@@ -107,7 +107,8 @@ It uses:
 - one storage buffer of projected primitive data;
 - one storage buffer of primitive colors / Self flags;
 - one storage buffer containing a tiny sampled summary of `studio3.hdr`;
-- one uniform buffer for screen size, time, primitive count, and froxel size.
+- one uniform buffer for screen size, time, primitive count, froxel size, and
+  the near/far depth interval fitted to the projected grid volume.
 
 The compute pass dispatches one invocation per froxel:
 
@@ -127,6 +128,14 @@ It stores which fields are worth sampling in that region. The pixel pass then
 evaluates those fields while marching through the froxel. This is the machine
 we actually wanted; the earlier cached-density variant was the wrong little
 office job.
+
+The froxel `x/y` dimensions remain canvas-local and screen-shaped. They are not
+scissored to the visible grid rectangle because the screen projection is the
+right sampling domain for stable full-frame fog. The fitted part is the `z`
+interval: Three projects the moving grid-volume bounds through the camera, and
+WebGPU maps froxel depth slices into that near/far range. Agent primitives carry
+their projected body depth, so primitive masks, SH propagation, and the field
+march stop spending depth samples outside the grid volume.
 
 ### 6. WebGPU Froxel SH Lighting
 
@@ -159,8 +168,6 @@ screen-depth haze was removed because it did not move with the camera or scene.
 
 The WebGPU render pass draws a fullscreen triangle over the stardust/field
 canvas. For each pixel:
-
-For each pixel:
 
 1. March a small fixed number of frustum-depth samples.
 2. Map the sample to a froxel cell.

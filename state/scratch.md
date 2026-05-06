@@ -228,3 +228,9 @@ Current slice:
   screen. The old baseline screen-depth haze was removed, and planet
   displacement/noise frequencies were lowered so chrome bodies read as smooth
   gaseous planets rather than glittery shader rash.
+- Current froxel fitting correction: do not fit the canvas-local x/y froxel
+  dimensions to the projected grid rectangle. Keep x/y screen-shaped for stable
+  sampling, and fit only the near/far depth interval to the projected moving
+  grid volume. Three now projects the grid volume's depth bounds; WebGPU maps
+  froxel z slices into that interval, and agent primitive data carries
+  projected body depth instead of using a fake Self-vs-other depth class.

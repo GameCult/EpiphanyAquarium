@@ -1841,6 +1841,7 @@ function AgentConstellation({
       applyProjectLabelProjection(projectLabelNodeRefs.current.get(label.id), label);
       applyProjectLabelProjection(projectHaloNodeRefs.current.get(label.id), label);
     }
+    stardustRef.current?.setDepthBounds(scene3dRef.current?.projectGridDepthBounds() ?? null);
     stardustRef.current?.setProjections(visualProjections);
   }, [aquariumAgents, hoveredAgentId, selectedAgentId, visibleHarnessMembers]);
 

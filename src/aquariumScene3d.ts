@@ -27,6 +27,7 @@ export type ProjectLabelProjection = {
 
 export interface AquariumScene3d {
   dispose(): void;
+  projectGridDepthBounds(): { far: number; near: number };
   projectProjectLabels(labels: Array<{ id: string; label: string; subLabel?: string }>): ProjectLabelProjection[];
   projectPointerToGrid(pointer: PointerState): { xPercent: number; yPercent: number } | null;
   projectProjections(projections: SceneProjection[]): SceneProjection[];
@@ -294,8 +295,31 @@ class ThreeAquariumScene implements AquariumScene3d {
         xPercent: screen.xPercent,
         yPercent: screen.yPercent,
         screenScale: screen.scale,
+        screenDepth: screen.depth,
       };
     });
+  }
+
+  projectGridDepthBounds() {
+    const halfSize = this.gravityUniforms.uFieldHalfSize.value as THREE.Vector2;
+    const origin = this.gravityUniforms.uGravityOrigin.value as THREE.Vector2;
+    const margin = 0.045;
+    const corners = [
+      new THREE.Vector3(origin.x - halfSize.x, origin.y - halfSize.y, -0.1),
+      new THREE.Vector3(origin.x + halfSize.x, origin.y - halfSize.y, -0.1),
+      new THREE.Vector3(origin.x + halfSize.x, origin.y + halfSize.y, -0.1),
+      new THREE.Vector3(origin.x - halfSize.x, origin.y + halfSize.y, -0.1),
+      new THREE.Vector3(origin.x - halfSize.x, origin.y - halfSize.y, 1.7),
+      new THREE.Vector3(origin.x + halfSize.x, origin.y - halfSize.y, 1.7),
+      new THREE.Vector3(origin.x + halfSize.x, origin.y + halfSize.y, 1.7),
+      new THREE.Vector3(origin.x - halfSize.x, origin.y + halfSize.y, 1.7),
+    ].map((point) => point.project(this.camera).z * 0.5 + 0.5);
+    const near = clamp(Math.min(...corners) - margin, 0, 0.98);
+    const far = clamp(Math.max(...corners) + margin, near + 0.02, 1);
+    return {
+      far,
+      near,
+    };
   }
 
   wheel(deltaY: number) {
@@ -1215,6 +1239,7 @@ class ThreeAquariumScene implements AquariumScene3d {
     const projected = point.clone().project(this.camera);
     const distance = this.camera.position.distanceTo(point);
     return {
+      depth: clamp(projected.z * 0.5 + 0.5, 0, 1),
       scale: clamp((this.cameraDistance / Math.max(distance, 0.001)) * 0.96, 0.62, 1.72),
       xPercent: (projected.x * 0.5 + 0.5) * 100,
       yPercent: (0.5 - projected.y * 0.5) * 100,
