@@ -155,3 +155,13 @@ Current slice:
   with edit lists over topology, 40-shader compute doom, atomic point splatting,
   TAA as a stochastic resolver, imperfect shadow maps, and why point-jitter DOF
   works where naive point-jitter motion blur fails.
+- Current Aetheria fog rehydration: read the live volumetric renderer path with
+  the GPU/froxel/stochastic doctrines in mind. Aetheria's fog is a grid-owned
+  world volume sampled by a downsampled camera post raymarch: surface height,
+  patch density/height, tint, and flow are shared fields; the raymarch uses
+  quadratic distance spacing, Halton plus blue-noise offsets, Beer-Lambert
+  integration, and temporal reprojection/history clipping. The irreplaceable
+  trick is phase-paired scrolling triangle noise through global/slope flow,
+  which fakes continuous horizon-scale volumetric motion without storing a huge
+  3D volume. Captured as `notes/aetheria-volumetric-fog-map.md` and
+  `aetheria_volumetric_fog` memory.

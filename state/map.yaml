@@ -30,6 +30,7 @@ current_model:
     backend_gui: E:\Projects\EpiphanyAgent\.epiphany-gui
   behavior_map: notes/aquarium-behavior-map.md
   backend_api_tree_map: notes/epiphany-agent-api-tree-map.md
+  aetheria_volumetric_fog_map: notes/aetheria-volumetric-fog-map.md
 
 interaction_laws:
   - The default screen shows only the aquarium, agents, fluid, and ambient state.
