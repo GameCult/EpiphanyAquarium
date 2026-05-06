@@ -9,6 +9,8 @@ Right now the live renderer is a hybrid:
 
 - a Three.js scene renders the displaced gravity grid, cursor, and stardust;
 - a moving 2D gravity render target stores Aetheria-style height/energy fields;
+- `public/textures/studio3.hdr` is loaded through Three `RGBELoader`, filtered
+  through PMREM, and assigned to `scene.environment` for PBR lighting;
 - a WebGPU field layer builds a froxel primitive mask in a storage buffer;
 - the WebGPU field renderer marches screen/frustum samples and evaluates only
   the primitives named by the current froxel;
@@ -141,6 +143,12 @@ For each pixel:
 The WebGL field-volume shader still exists as fallback, but Three marks it as
 `webgpu-external-field` and skips that expensive path when WebGPU is available.
 No CPU readback or WebGPU-to-WebGL texture shuttle is used.
+
+The current WebGPU chrome shader does not yet sample the HDR texture directly;
+it uses a matching warm-key/cool-fill studio response. Direct HDR sampling in
+WebGPU needs a parsed Radiance HDR texture or a prefiltered GPU-side environment
+resource owned by the WebGPU graph, not a WebGL PMREM texture borrowed across
+APIs.
 
 The solid and volumetric paths intentionally share the same primitive map. A
 froxel says "these primitives may matter here"; the pixel ray then asks those

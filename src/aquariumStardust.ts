@@ -371,7 +371,10 @@ fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
       let plasma = pow(max(fbm4(vec4f(local * 4.8, uniforms.time * 0.55)) * 0.5 + 0.5, 0.0), mix(2.8, 7.0, selfFlag));
       if (sdf < 0.016) {
         let fresnel = pow(clamp(length(local.xy) * 0.75, 0.0, 1.0), 3.0);
-        let chrome = mix(color.rgb * 0.45, vec3f(0.75, 1.0, 0.88), 0.72 + fresnel * 0.22);
+        let studioKey = vec3f(1.0, 0.92, 0.76);
+        let studioFill = vec3f(0.36, 0.72, 1.0);
+        let studioReflection = mix(studioFill, studioKey, clamp(local.y * 0.42 + local.z * 0.22 + 0.58, 0.0, 1.0));
+        let chrome = mix(color.rgb * 0.35, studioReflection, 0.76 + fresnel * 0.2);
         let solar = vec3f(4.2, 2.1, 0.55) * (0.8 + plasma * 1.5);
         solid = mix(chrome, solar, selfFlag);
         solidAlpha = 0.92;

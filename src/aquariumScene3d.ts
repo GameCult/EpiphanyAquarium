@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
 import type { AquariumAgentProjection } from "./aquariumFluid";
 
 type SceneProjection = AquariumAgentProjection & {
@@ -51,6 +52,7 @@ const froxelDepth = 24;
 const froxelAtlasColumns = 6;
 const froxelAtlasRows = 4;
 const froxelMaxDistance = 28;
+const studioHdrUrl = "/textures/studio3.hdr";
 
 export function createAquariumScene3d(canvas: HTMLCanvasElement): AquariumScene3d {
   return new ThreeAquariumScene(canvas);
@@ -162,6 +164,7 @@ class ThreeAquariumScene implements AquariumScene3d {
     this.fieldVolumeMaterial = this.createFieldVolumeMaterial();
     this.fieldVolumeScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.fieldVolumeMaterial));
     this.scene.add(this.createCursor());
+    this.loadStudioEnvironment();
     window.addEventListener("keydown", this.handleKeyDown);
     this.raf = requestAnimationFrame(this.render);
   }
@@ -186,6 +189,7 @@ class ThreeAquariumScene implements AquariumScene3d {
     this.gravityRenderTarget.dispose();
     this.froxelPrimitiveTargetA.dispose();
     this.froxelPrimitiveTargetB.dispose();
+    this.scene.environment?.dispose();
     this.renderer.dispose();
   }
 
@@ -378,6 +382,32 @@ class ThreeAquariumScene implements AquariumScene3d {
     wire.position.z = 0.018;
     group.add(field, wire);
     return group;
+  }
+
+  private loadStudioEnvironment() {
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    pmrem.compileEquirectangularShader();
+    new RGBELoader().load(
+      studioHdrUrl,
+      (texture) => {
+        if (this.disposed) {
+          texture.dispose();
+          pmrem.dispose();
+          return;
+        }
+        texture.mapping = THREE.EquirectangularReflectionMapping;
+        const environment = pmrem.fromEquirectangular(texture).texture;
+        this.scene.environment = environment;
+        this.canvas.dataset.threeEnvironment = "studio3.hdr";
+        texture.dispose();
+        pmrem.dispose();
+      },
+      undefined,
+      () => {
+        this.canvas.dataset.threeEnvironment = "missing";
+        pmrem.dispose();
+      },
+    );
   }
 
   private createGravityGridMaterial(opacity: number, wireframe: boolean) {

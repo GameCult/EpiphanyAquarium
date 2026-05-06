@@ -215,3 +215,8 @@ Current slice:
   reads the current froxel's bitset, evaluates only those primitives, and now
   early-exits when a solid SDF is touched, shading the solid with accumulated
   fog/transmittance up to the hit instead of continuing the march.
+- Current HDR lighting pass: copied Aetheria's `studio3.hdr` into
+  `public/textures/studio3.hdr`, loaded it with Three `RGBELoader`, PMREM-
+  filtered it, and assigned it to `scene.environment` for PBR lighting. WebGPU
+  field chrome now uses a matching warm-key/cool-fill studio response until HDR
+  parsing/prefiltering is owned by the WebGPU graph.
