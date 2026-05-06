@@ -177,3 +177,11 @@ Current slice:
   Aetheria-style phase-paired triangle noise, source/pointer density, and
   Beer-Lambert accumulation; solid hits use stochastic coverage so the
   transparency/depth doctrine is represented in the live renderer.
+- Current research meal: Bruneton atmospheric scattering adds precomputed
+  transport-cache doctrine. Global sky/aerial-perspective lighting should come
+  from named textures for transmittance, scattering, optional single Mie, and
+  irradiance, built by an explicit delta/accumulation pass graph. Dynamic gassy
+  SDF fog stays local and stochastic, but should be lit/composited against those
+  global transport fields. Captured as
+  `notes/bruneton-atmospheric-scattering-map.md` and `bruneton_atmosphere`
+  memory.
