@@ -69,6 +69,13 @@
       "For a rebuild, keep Aetheria's effect contract but make the ownership cleaner: one moving grid domain, deferred 2D source fields, explicit WebGPU passes for density/source update, optional froxel injection, temporal integration, reprojection, and HDR composition.",
       "Do not 'fix' the old hack by deleting the hack that makes it special. Preserve phase-paired scrolling triangle noise, stochastic offsets, exponential/quadratic sample distribution, and domain-locked tint/surface sampling; improve resource ownership, history validity, and pass structure around them."
     ],
+    "aquarium_field_volume": [
+      "Aquarium now has a first field-first rendering brick in `src/aquariumScene3d.ts`: a fullscreen world-space raymarch pass that samples the same moving gravity texture/domain as the grid and stardust.",
+      "The pass treats SDF solids, agent-proxy SDF solids, gassy SDF density, pointer density, and grid-hugging surface fog as readings of one shared field rather than separate decorative layers.",
+      "Gassy SDF fog should preserve the Aetheria trick: phase-paired scrolling triangle noise through procedural flow, Beer-Lambert transmittance, stochastic ray offsets, and density/tint tied to the grid field.",
+      "Solid SDF hits in the fog pass use stochastic coverage rather than ordinary alpha blending so the renderer keeps the Aetheria transparency/depth contract alive while it grows toward a WebGPU/TAA path.",
+      "Next architectural step is to move hard-coded SDF source definitions into a small typed field-source list, then split the monolithic shader into source-field, fog integration, and composition ownership when WebGPU takes over."
+    ],
     "dreams_doctrine": [
       "Separate authoring, evaluation, and rendering representations. Dreams kept user-authored sculpt intent as lists of simple SDF edits, evaluated that into surface samples/caches, then rendered painterly splats/flecks; the editable source and visible output did not need to be the same data structure.",
       "Prototype renderers can fail while preserving machinery. Dreams abandoned marching-cubes blobs, polygonalized SDFs, gigavoxel hybrids, fuzzy brick compositing, and refinement renderers, but carried forward useful pieces: SDF edit lists, hierarchical culling, point-cloud surfaces, stochastic LOD, TAA reliance, and artist-friendly gesture flow.",

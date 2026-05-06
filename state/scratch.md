@@ -170,3 +170,10 @@ Current slice:
   be depth participants by using blue-noise alpha test/cutout plus TAA resolve.
   `Aetheria/Dithered Particles` tags AlphaTest/TransparentCutout, clips coverage
   via `Dither Functions.cginc`, and includes a matching shadow caster pass.
+- Current field-first implementation pass: `src/aquariumScene3d.ts` now has a
+  first-class field-volume shader pass. It raymarches camera rays through
+  SDF-defined solid forms, agent-proxy SDF solids, and gassy SDF density tied to
+  the same moving gravity/grid texture as the mesh and stardust. The gas uses
+  Aetheria-style phase-paired triangle noise, source/pointer density, and
+  Beer-Lambert accumulation; solid hits use stochastic coverage so the
+  transparency/depth doctrine is represented in the live renderer.

@@ -55,8 +55,10 @@ interaction_laws:
   - The 3D body is the agent body. The centered DOM caption is its ID tag, hit target, and interaction-graph root; glyph icons are hidden because they duplicate the body.
   - When the pointer is inside a creature billboard, the creature's orbit integration holds position so menus do not drift away from the user's hand.
   - Visible non-DOM aquarium elements belong in the Three/HDR compositor. Legacy smoke, crisp, and stardust canvases may remain for compatibility, but they must not be visible screen-space layers.
+  - Fog is now a first-class field-volume pass in the Three layer: camera rays sample SDF solids, gassy SDF density, pointer/agent density sources, and the shared moving gravity texture instead of rendering fog as detached screen tint.
   - Visual smoke verifies render presence and layout health, not cursor-driven 3D interaction; billboard/creature clicks need targeted raycast-aware probes.
   - Stardust is currently visible as tiny, faint 3D points inside the Three scene under ACES tone mapping; the old WebGPU overlay is disabled until it can feed the shared compositor instead of screen space.
+  - Transparent-looking depth-sensitive VFX should use stochastic blue-noise cutout coverage and temporal resolve assumptions, not ordinary alpha blending, when they need to coexist with fog/depth.
   - Every creature carries the shared heartbeat; the latest awakened role gets the stronger plucked-string oscillation.
   - WebGL fluid emission must correspond to visible objects.
   - Audio must respond once per deliberate input gesture.
@@ -82,3 +84,4 @@ landed:
   - Added a Three.js field layer with an Aetheria-style orthographic gravity render target: additive PowerPulse and radial-wave splat quads feed a sampled grid mesh instead of forcing every grid vertex to evaluate every source.
   - Mapped the low-frequency agent chirp bank into radial grid vibration channels, preserving the Aetheria split between static wells and gas-giant-like wave breathing.
   - Added a swarm registry seam. `.epiphany-aquarium/swarm.json` registers EpiphanyAgent and AetheriaLore, and the Tauri backend scopes status, actions, codex-home, workspace root, and artifact roots to the selected member.
+  - Added the first field-first SDF/fog renderer brick: `src/aquariumScene3d.ts` now raymarches SDF solids and gassy SDF fog against the shared gravity/grid domain with phase-paired triangle noise and stochastic solid coverage.

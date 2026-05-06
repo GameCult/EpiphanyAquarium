@@ -44,6 +44,7 @@ const stardustParticleCount = new URLSearchParams(globalThis.location?.search ??
 const stardustSpan = Math.ceil(Math.sqrt(stardustParticleCount));
 const stardustSpacing = (worldWidth * 3.4) / stardustSpan;
 const maxStardustSources = 8;
+const maxFieldSources = 8;
 
 export function createAquariumScene3d(canvas: HTMLCanvasElement): AquariumScene3d {
   return new ThreeAquariumScene(canvas);
@@ -83,6 +84,9 @@ class ThreeAquariumScene implements AquariumScene3d {
     uTime: { value: 0 },
   };
   private gridGroup!: THREE.Group;
+  private fieldVolumeMaterial!: THREE.ShaderMaterial;
+  private fieldVolumeScene = new THREE.Scene();
+  private fieldVolumeCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   private pointer: PointerState = { active: false, xPercent: 50, yPercent: 50 };
   private pointerWorld = new THREE.Vector3(0, 0, 0);
   private raf = 0;
@@ -125,6 +129,8 @@ class ThreeAquariumScene implements AquariumScene3d {
     this.scene.add(this.gridGroup);
     this.stardustMaterial = this.createStardustMaterial();
     this.gridGroup.add(this.createStardust());
+    this.fieldVolumeMaterial = this.createFieldVolumeMaterial();
+    this.fieldVolumeScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.fieldVolumeMaterial));
     this.scene.add(this.createCursor());
     window.addEventListener("keydown", this.handleKeyDown);
     this.raf = requestAnimationFrame(this.render);
@@ -265,6 +271,7 @@ class ThreeAquariumScene implements AquariumScene3d {
     const live = new Set<string>();
     let splatIndex = 0;
     let sourceIndex = 0;
+    let fieldSourceIndex = 0;
     const selfProjection = projections.find((projection) => projection.id === "coordinator") ?? projections[0];
     if (selfProjection && splatIndex < this.splatMeshes.length) {
       const selfTarget = gridToWorld(selfProjection.gridXPercent, selfProjection.gridYPercent);
@@ -286,6 +293,10 @@ class ThreeAquariumScene implements AquariumScene3d {
       if (sourceIndex < maxStardustSources) {
         this.updateStardustSource(sourceIndex, target.x, target.y, projection);
         sourceIndex += 1;
+      }
+      if (fieldSourceIndex < maxFieldSources) {
+        this.updateFieldSource(fieldSourceIndex, target.x, target.y, projection);
+        fieldSourceIndex += 1;
       }
       if (splatIndex < this.splatMeshes.length) {
         const strength = 0.46 + projection.z * 0.74 + projection.expression * 0.16;
@@ -319,6 +330,9 @@ class ThreeAquariumScene implements AquariumScene3d {
     }
     for (let index = sourceIndex; index < maxStardustSources; index += 1) {
       this.updateStardustSource(index, 999, 999, { expression: 0, acknowledgement: 0, hover: 0 } as SceneProjection);
+    }
+    for (let index = fieldSourceIndex; index < maxFieldSources; index += 1) {
+      this.updateFieldSource(index, 999, 999, { expression: 0, acknowledgement: 0, hover: 0, z: 0 } as SceneProjection);
     }
     for (const [id, group] of this.agentGroups) {
       if (!live.has(id)) {
@@ -596,10 +610,251 @@ class ThreeAquariumScene implements AquariumScene3d {
     });
   }
 
+  private createFieldVolumeMaterial() {
+    const sourceData = Array.from({ length: maxFieldSources }, () => new THREE.Vector4(999, 999, 0, 0));
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        uCameraMatrixWorld: { value: new THREE.Matrix4() },
+        uCameraPosition: { value: new THREE.Vector3() },
+        uCameraTarget: { value: this.cameraTarget },
+        uFieldSources: { value: sourceData },
+        uFogSteps: { value: new URLSearchParams(globalThis.location?.search ?? "").has("smoke") ? 28 : 64 },
+        uGravityOrigin: this.gravityUniforms.uGravityOrigin,
+        uGravitySize: this.gravityUniforms.uGravitySize,
+        uGravityTex: this.gravityUniforms.uGravityTex,
+        uInvProjectionMatrix: { value: new THREE.Matrix4() },
+        uPointer: { value: new THREE.Vector4(999, 999, 0, 0) },
+        uResolution: { value: new THREE.Vector2(1, 1) },
+        uTime: this.gravityUniforms.uTime,
+      },
+      vertexShader: `
+        varying vec2 vUv;
+
+        void main() {
+          vUv = uv;
+          gl_Position = vec4(position.xy, 0.0, 1.0);
+        }
+      `,
+      fragmentShader: `
+        precision highp float;
+
+        uniform mat4 uCameraMatrixWorld;
+        uniform vec3 uCameraPosition;
+        uniform vec3 uCameraTarget;
+        uniform vec4 uFieldSources[${maxFieldSources}];
+        uniform int uFogSteps;
+        uniform vec2 uGravityOrigin;
+        uniform vec2 uGravitySize;
+        uniform sampler2D uGravityTex;
+        uniform mat4 uInvProjectionMatrix;
+        uniform vec4 uPointer;
+        uniform vec2 uResolution;
+        uniform float uTime;
+        varying vec2 vUv;
+
+        float hash(vec2 p) {
+          return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+        }
+
+        float tri(float x) {
+          return abs(fract(x) - 0.5);
+        }
+
+        vec3 tri3(vec3 p) {
+          return vec3(
+            tri(p.z + tri(p.y)),
+            tri(p.z + tri(p.x)),
+            tri(p.y + tri(p.x))
+          );
+        }
+
+        float triNoise3d(vec3 p) {
+          float z = 1.4;
+          float rz = 0.001;
+          vec3 bp = p;
+          for (int i = 0; i < 3; i += 1) {
+            vec3 dg = tri3(bp * 2.0);
+            p += dg + uTime * 0.018;
+            bp *= 1.8;
+            z *= 1.5;
+            p *= 1.2;
+            rz += tri(p.z + tri(p.x + tri(p.y))) / z;
+            bp += 0.14;
+          }
+          return rz;
+        }
+
+        vec3 triFlow(vec3 p) {
+          vec3 t1 = normalize(tri3(p * 0.52) - 0.5);
+          vec3 t2 = normalize(tri3(p * 0.841 + 11.7) - 0.5);
+          return normalize(cross(t1, t2) + vec3(0.001, 0.0, 0.0));
+        }
+
+        float sdSphere(vec3 p, float radius) {
+          return length(p) - radius;
+        }
+
+        float sdRoundBox(vec3 p, vec3 b, float r) {
+          vec3 q = abs(p) - b;
+          return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0) - r;
+        }
+
+        vec4 sampleGravity(vec2 xy) {
+          vec2 uv = (xy - uGravityOrigin) / uGravitySize + 0.5;
+          float mask = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
+          return texture2D(uGravityTex, clamp(uv, vec2(0.0), vec2(1.0))) * mask;
+        }
+
+        float gravityHeight(vec2 xy) {
+          vec4 field = sampleGravity(xy);
+          return -(field.r - field.g);
+        }
+
+        float solidSdf(vec3 p, out vec3 color) {
+          vec3 anchor = uCameraTarget;
+          float sphere = sdSphere(p - (anchor + vec3(-1.45, 0.72, 0.72)), 0.34);
+          float box = sdRoundBox(p - (anchor + vec3(1.55, -0.88, 0.58)), vec3(0.34, 0.22, 0.28), 0.12);
+          float agentSolid = 999.0;
+          vec3 agentColor = vec3(0.55, 1.0, 0.78);
+          for (int i = 0; i < ${maxFieldSources}; i += 1) {
+            vec4 source = uFieldSources[i];
+            vec3 center = vec3(source.xy, 0.54 + source.w * 0.55);
+            float d = sdSphere(p - center, 0.12 + source.z * 0.06);
+            if (d < agentSolid) {
+              agentSolid = d;
+              agentColor = mix(vec3(0.42, 0.96, 0.82), vec3(1.0, 0.82, 0.42), clamp(source.z, 0.0, 1.0));
+            }
+          }
+          float d = sphere;
+          color = vec3(0.72, 1.0, 0.88);
+          if (box < d) {
+            d = box;
+            color = vec3(1.0, 0.72, 0.48);
+          }
+          if (agentSolid < d) {
+            d = agentSolid;
+            color = agentColor;
+          }
+          return d;
+        }
+
+        float gasDensity(vec3 p, vec3 rayDir) {
+          vec3 anchor = uCameraTarget;
+          vec3 gasP = p - (anchor + vec3(0.0, 0.0, 0.24));
+          vec3 flow = triFlow(gasP * 0.42 - vec3(0.0, uTime * 0.035, 0.0));
+          float phaseA = fract(uTime / 9.0);
+          float phaseB = fract(uTime / 9.0 + 0.5);
+          float windowA = 1.0 - 2.0 * abs(phaseA - 0.5);
+          float windowB = 1.0 - 2.0 * abs(phaseB - 0.5);
+          float low = (
+            pow(max(triNoise3d((gasP + flow * (phaseA - 0.5) * 9.0) / 2.6), 0.0001), 0.78) * windowA +
+            pow(max(triNoise3d((gasP + flow * (phaseB - 0.5) * 9.0) / 2.6), 0.0001), 0.78) * windowB
+          );
+          float high = pow(max(triNoise3d((gasP + flow * phaseA * 2.6) * 3.1), 0.0001), 1.7) * 0.35;
+          vec3 ellipsoid = gasP / vec3(4.8, 3.1, 1.16);
+          float gasShape = exp(-dot(ellipsoid, ellipsoid) * 1.35);
+          float h = gravityHeight(p.xy);
+          float surfaceFog = exp(-abs(p.z - h - 0.16) * 1.9) * 0.28;
+          float sourceFog = 0.0;
+          for (int i = 0; i < ${maxFieldSources}; i += 1) {
+            vec4 source = uFieldSources[i];
+            vec2 delta = p.xy - source.xy;
+            sourceFog += exp(-dot(delta, delta) * 0.72 - abs(p.z - 0.62) * 1.8) * (0.05 + source.z * 0.11);
+          }
+          vec2 pointerDelta = p.xy - uPointer.xy;
+          float pointerFog = exp(-dot(pointerDelta, pointerDelta) * 1.1 - abs(p.z - 0.28) * 2.2) * uPointer.z * 0.18;
+          float horizonBias = smoothstep(0.1, 0.9, dot(rayDir, normalize(vec3(rayDir.xy, -0.18))) * 0.5 + 0.5);
+          return max(0.0, gasShape * (0.018 + low * 0.04 - high * 0.018) + surfaceFog + sourceFog + pointerFog) * (0.7 + horizonBias * 0.55);
+        }
+
+        vec3 fogTint(vec3 p, float density) {
+          vec4 field = sampleGravity(p.xy);
+          vec3 base = mix(vec3(0.18, 0.92, 0.72), vec3(1.0, 0.72, 0.42), clamp(field.b * 2.5, 0.0, 1.0));
+          vec3 cool = vec3(0.22, 0.46, 0.72);
+          return mix(cool, base, clamp(density * 8.0, 0.0, 1.0));
+        }
+
+        vec3 estimateNormal(vec3 p) {
+          vec3 c;
+          vec2 e = vec2(0.015, 0.0);
+          float dx = solidSdf(p + e.xyy, c) - solidSdf(p - e.xyy, c);
+          float dy = solidSdf(p + e.yxy, c) - solidSdf(p - e.yxy, c);
+          float dz = solidSdf(p + e.yyx, c) - solidSdf(p - e.yyx, c);
+          return normalize(vec3(dx, dy, dz));
+        }
+
+        void main() {
+          vec2 ndc = vUv * 2.0 - 1.0;
+          vec4 nearView = uInvProjectionMatrix * vec4(ndc, -1.0, 1.0);
+          nearView /= nearView.w;
+          vec4 farView = uInvProjectionMatrix * vec4(ndc, 1.0, 1.0);
+          farView /= farView.w;
+          vec3 rayOrigin = uCameraPosition;
+          vec3 rayFar = (uCameraMatrixWorld * farView).xyz;
+          vec3 rayDir = normalize(rayFar - rayOrigin);
+          float jitter = hash(gl_FragCoord.xy + uTime * 23.17);
+          float maxT = 28.0;
+          float transmittance = 1.0;
+          vec3 scattering = vec3(0.0);
+          vec3 solidColor = vec3(0.0);
+          float solidHit = 0.0;
+          float solidT = maxT;
+          float t = 0.16 + jitter * 0.08;
+          for (int i = 0; i < 72; i += 1) {
+            if (i >= uFogSteps) break;
+            float progress = (float(i) + jitter) / max(float(uFogSteps), 1.0);
+            t = mix(0.12, maxT, progress * progress);
+            vec3 p = rayOrigin + rayDir * t;
+            vec3 localSolidColor;
+            float sd = solidSdf(p, localSolidColor);
+            if (sd < 0.012 && solidHit < 0.5) {
+              solidHit = 1.0;
+              solidT = t;
+              vec3 normal = estimateNormal(p);
+              float light = clamp(dot(normal, normalize(vec3(-0.32, 0.44, 0.84))) * 0.5 + 0.5, 0.0, 1.0);
+              solidColor = localSolidColor * (0.36 + light * 0.9) + localSolidColor * 0.35;
+              break;
+            }
+            float stepSize = maxT / max(float(uFogSteps), 1.0) * (0.45 + progress * 1.45);
+            float d = gasDensity(p, rayDir);
+            float extinction = d * 0.82;
+            float stepTransmittance = exp(-extinction * stepSize);
+            vec3 luminance = fogTint(p, d) * d * 1.35;
+            scattering += transmittance * (luminance - luminance * stepTransmittance) / max(extinction, 0.0001);
+            transmittance *= stepTransmittance;
+            if (transmittance < 0.015) break;
+          }
+          float fogAlpha = clamp(1.0 - transmittance, 0.0, 0.82);
+          vec3 color = scattering;
+          float alpha = fogAlpha;
+          if (solidHit > 0.5) {
+            color = solidColor * transmittance + scattering;
+            alpha = 0.96;
+            float coverage = 0.92;
+            float noise = hash(gl_FragCoord.xy + floor(uTime * 60.0) * 1.61803398875);
+            if (noise > coverage) discard;
+          }
+          gl_FragColor = vec4(color, alpha);
+        }
+      `,
+      blending: THREE.NormalBlending,
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+    });
+  }
+
   private updateStardustSource(index: number, x: number, y: number, projection: SceneProjection) {
     const sources = this.stardustMaterial.uniforms.uSources.value as THREE.Vector4[];
     if (!sources[index]) return;
     sources[index].set(x, y, 0.3 + projection.expression * 0.26 + projection.acknowledgement * 0.7, projection.hover);
+  }
+
+  private updateFieldSource(index: number, x: number, y: number, projection: SceneProjection) {
+    if (index < 0 || index >= maxFieldSources) return;
+    const sources = this.fieldVolumeMaterial.uniforms.uFieldSources.value as THREE.Vector4[];
+    if (!sources[index]) return;
+    sources[index].set(x, y, clamp(0.22 + projection.expression * 0.34 + projection.acknowledgement * 0.9, 0, 1.4), projection.z ?? 0);
   }
 
   private createAgent(projection: SceneProjection) {
@@ -751,6 +1006,15 @@ class ThreeAquariumScene implements AquariumScene3d {
     this.renderer.setRenderTarget(previousTarget);
     this.renderer.setClearColor(0x000000, 0);
     this.renderer.render(this.scene, this.camera);
+    this.fieldVolumeMaterial.uniforms.uCameraMatrixWorld.value.copy(this.camera.matrixWorld);
+    this.fieldVolumeMaterial.uniforms.uCameraPosition.value.copy(this.camera.position);
+    this.fieldVolumeMaterial.uniforms.uCameraTarget.value.copy(this.cameraTarget);
+    this.fieldVolumeMaterial.uniforms.uInvProjectionMatrix.value.copy(this.camera.projectionMatrixInverse);
+    this.fieldVolumeMaterial.uniforms.uPointer.value.set(this.pointerWorld.x, this.pointerWorld.y, this.pointer.active ? 1 : 0, 0);
+    this.fieldVolumeMaterial.uniforms.uResolution.value.set(width, height);
+    this.renderer.autoClear = false;
+    this.renderer.render(this.fieldVolumeScene, this.fieldVolumeCamera);
+    this.renderer.autoClear = true;
     this.canvas.dataset.threeReady = "true";
     this.canvas.dataset.threeAgents = String(this.agentGroups.size);
     this.canvas.dataset.threeCamera = [
@@ -771,6 +1035,7 @@ class ThreeAquariumScene implements AquariumScene3d {
       this.gravityUniforms.uGravityOrigin.value.y.toFixed(3),
     ].join(",");
     this.canvas.dataset.threeStardust = String(stardustParticleCount);
+    this.canvas.dataset.threeFieldVolume = "sdf-solid+gas-fog";
     this.raf = requestAnimationFrame(this.render);
   };
 
