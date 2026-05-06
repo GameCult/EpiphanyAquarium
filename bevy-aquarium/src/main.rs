@@ -1,4 +1,4 @@
-use bevy::asset::{AssetPlugin, RenderAssetUsages};
+use bevy::asset::AssetPlugin;
 use bevy::audio::{AudioPlayer, PlaybackSettings, SpatialListener, Volume};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::core_pipeline::{
@@ -7,8 +7,6 @@ use bevy::core_pipeline::{
 };
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::light::GlobalAmbientLight;
-use bevy::math::primitives::{Cuboid, Sphere};
-use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy::render::{
     extract_component::ExtractComponent,
@@ -32,7 +30,6 @@ use std::time::Duration;
 const GRID_BASE_HALF_EXTENT: f32 = 42.0;
 const GRID_MIN_HALF_EXTENT: f32 = 12.0;
 const GRID_MAX_HALF_EXTENT: f32 = 180.0;
-const GRID_RESOLUTION: usize = 128;
 const BODY_RADIUS: f32 = 0.9;
 const SELF_RADIUS: f32 = 1.25;
 const GRID_Z: f32 = 0.0;
@@ -98,10 +95,8 @@ fn main() {
                 update_camera,
                 update_raymarch_uniforms,
                 project_pointer_to_grid,
-                update_cursor_visual,
                 integrate_bodies,
                 autosave_live_state,
-                rebuild_grid,
                 billboard_labels,
                 aquarium_audio,
                 reload_domain_input,
@@ -532,22 +527,10 @@ impl FullscreenMaterial for AquariumRaymarch {
 struct AquariumCamera;
 
 #[derive(Component)]
-struct GridSurface;
-
-#[derive(Component)]
 struct AquariumDomainRoot;
 
 #[derive(Component)]
 struct BodyLabel;
-
-#[derive(Component)]
-struct CursorPlaneMarker;
-
-#[derive(Component)]
-struct CursorProbe;
-
-#[derive(Component)]
-struct CursorTip;
 
 #[derive(Component)]
 #[allow(dead_code)]
@@ -601,13 +584,7 @@ fn body_color(class: BodyClass) -> Vec3 {
     }
 }
 
-fn setup(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    bridge: Res<CultRuntimeBridge>,
-    grid_frame: Res<GridFrame>,
-) {
+fn setup(mut commands: Commands, bridge: Res<CultRuntimeBridge>, grid_frame: Res<GridFrame>) {
     info!(
         "{} bridge: {} docs, hello {} bytes, settings {}",
         bridge.runtime_id,
@@ -646,8 +623,6 @@ fn setup(
 
     spawn_domain(
         &mut commands,
-        &mut meshes,
-        &mut materials,
         &bridge,
         *grid_frame,
         bridge.load_body_states().ok(),
@@ -656,10 +631,8 @@ fn setup(
 
 fn spawn_domain(
     commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
     bridge: &CultRuntimeBridge,
-    grid_frame: GridFrame,
+    _grid_frame: GridFrame,
     cached_bodies: Option<Vec<AquariumBodyState>>,
 ) {
     let domain_root = commands
@@ -671,70 +644,6 @@ fn spawn_domain(
         ))
         .id();
 
-    let grid_mesh = meshes.add(build_heightfield(grid_frame, &[]));
-    let grid_material = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.13, 0.34, 0.36, 0.58),
-        emissive: LinearRgba::rgb(0.035, 0.14, 0.16),
-        perceptual_roughness: 0.66,
-        metallic: 0.0,
-        alpha_mode: AlphaMode::Blend,
-        ..default()
-    });
-    commands.spawn((
-        Mesh3d(grid_mesh),
-        MeshMaterial3d(grid_material),
-        Transform::default(),
-        GridSurface,
-        ChildOf(domain_root),
-    ));
-
-    let cursor_material = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.88, 0.98, 1.0, 0.72),
-        emissive: LinearRgba::rgb(0.38, 0.88, 1.25),
-        perceptual_roughness: 0.18,
-        metallic: 0.16,
-        alpha_mode: AlphaMode::Blend,
-        ..default()
-    });
-    commands.spawn((
-        Mesh3d(
-            meshes.add(
-                Sphere::new(0.23)
-                    .mesh()
-                    .ico(2)
-                    .expect("valid cursor sphere"),
-            ),
-        ),
-        MeshMaterial3d(cursor_material.clone()),
-        Transform::from_xyz(0.0, 0.0, GRID_Z),
-        Visibility::Hidden,
-        CursorPlaneMarker,
-        ChildOf(domain_root),
-    ));
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.055, 0.055, 1.0))),
-        MeshMaterial3d(cursor_material.clone()),
-        Transform::default(),
-        Visibility::Hidden,
-        CursorProbe,
-        ChildOf(domain_root),
-    ));
-    commands.spawn((
-        Mesh3d(
-            meshes.add(
-                Sphere::new(0.16)
-                    .mesh()
-                    .ico(2)
-                    .expect("valid cursor tip sphere"),
-            ),
-        ),
-        MeshMaterial3d(cursor_material),
-        Transform::from_xyz(0.0, 0.0, GRID_Z),
-        Visibility::Hidden,
-        CursorTip,
-        ChildOf(domain_root),
-    ));
-
     let body_states = cached_bodies.unwrap_or_else(default_body_states);
     let body_states = if body_states.is_empty() {
         default_body_states()
@@ -742,7 +651,7 @@ fn spawn_domain(
         body_states
     };
     for state in body_states {
-        spawn_body_from_state(commands, meshes, materials, domain_root, state);
+        spawn_body_from_state(commands, domain_root, state);
     }
 
     info!(
@@ -800,13 +709,7 @@ fn default_body_states() -> Vec<AquariumBodyState> {
     states
 }
 
-fn spawn_body_from_state(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    domain_root: Entity,
-    state: AquariumBodyState,
-) {
+fn spawn_body_from_state(commands: &mut Commands, domain_root: Entity, state: AquariumBodyState) {
     let label = state.label.clone();
     let label_for_body = label.clone();
     let class = state.class();
@@ -820,35 +723,11 @@ fn spawn_body_from_state(
     } else {
         BODY_RADIUS
     };
-    let body_material = match class {
-        BodyClass::LivingSelf => StandardMaterial {
-            base_color: Color::srgb(1.0, 0.93, 0.36),
-            emissive: LinearRgba::rgb(2.4, 1.9, 0.42),
-            metallic: 0.42,
-            perceptual_roughness: 0.24,
-            ..default()
-        },
-        BodyClass::SleepingEpiphany => StandardMaterial {
-            base_color: Color::srgb(0.82, 0.9, 0.98),
-            emissive: LinearRgba::rgb(0.10, 0.16, 0.22),
-            metallic: 0.78,
-            perceptual_roughness: 0.18,
-            ..default()
-        },
-        BodyClass::Agent => StandardMaterial {
-            base_color: Color::srgb(0.57, 0.75, 0.79),
-            emissive: LinearRgba::rgb(0.04, 0.11, 0.12),
-            metallic: 0.64,
-            perceptual_roughness: 0.21,
-            ..default()
-        },
-    };
 
     let body = commands
         .spawn((
-            Mesh3d(meshes.add(Sphere::new(radius).mesh().ico(4).expect("valid ico sphere"))),
-            MeshMaterial3d(materials.add(body_material)),
             Transform::from_translation(position),
+            Visibility::default(),
             CelestialBody {
                 body_id: state.body_id,
                 label: label_for_body,
@@ -939,8 +818,6 @@ fn autosave_live_state(
 fn reload_domain_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     mut bridge: ResMut<CultRuntimeBridge>,
     rig: Res<CameraRig>,
     mut pointer: ResMut<PointerWorld>,
@@ -970,8 +847,6 @@ fn reload_domain_input(
     dirty.0 = true;
     spawn_domain(
         &mut commands,
-        &mut meshes,
-        &mut materials,
         &bridge,
         GridFrame::from_camera(rig.target, rig.distance),
         Some(cached_bodies),
@@ -1289,58 +1164,6 @@ fn project_pointer_to_grid(
     dirty.0 |= moved;
 }
 
-fn update_cursor_visual(
-    pointer: Res<PointerWorld>,
-    mut plane_marker: Query<(&mut Transform, &mut Visibility), With<CursorPlaneMarker>>,
-    mut probe: Query<
-        (&mut Transform, &mut Visibility),
-        (
-            With<CursorProbe>,
-            Without<CursorPlaneMarker>,
-            Without<CursorTip>,
-        ),
-    >,
-    mut tip: Query<
-        (&mut Transform, &mut Visibility),
-        (
-            With<CursorTip>,
-            Without<CursorPlaneMarker>,
-            Without<CursorProbe>,
-        ),
-    >,
-) {
-    let (Some(plane_position), Some(grid_position)) =
-        (pointer.plane_position, pointer.grid_position)
-    else {
-        if let Ok((_, mut visibility)) = plane_marker.single_mut() {
-            *visibility = Visibility::Hidden;
-        }
-        if let Ok((_, mut visibility)) = probe.single_mut() {
-            *visibility = Visibility::Hidden;
-        }
-        if let Ok((_, mut visibility)) = tip.single_mut() {
-            *visibility = Visibility::Hidden;
-        }
-        return;
-    };
-
-    if let Ok((mut transform, mut visibility)) = plane_marker.single_mut() {
-        transform.translation = plane_position;
-        *visibility = Visibility::Visible;
-    }
-    if let Ok((mut transform, mut visibility)) = tip.single_mut() {
-        transform.translation = grid_position;
-        *visibility = Visibility::Visible;
-    }
-    if let Ok((mut transform, mut visibility)) = probe.single_mut() {
-        let delta = plane_position - grid_position;
-        let length = delta.length().max(0.001);
-        transform.translation = grid_position + delta * 0.5;
-        transform.scale = Vec3::new(1.0, 1.0, length);
-        *visibility = Visibility::Visible;
-    }
-}
-
 fn integrate_bodies(
     time: Res<Time>,
     pointer: Res<PointerWorld>,
@@ -1380,34 +1203,6 @@ fn integrate_bodies(
         moved = true;
     }
     dirty.0 |= moved;
-}
-
-fn rebuild_grid(
-    mut dirty: ResMut<GridDirty>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    surface: Query<&Mesh3d, With<GridSurface>>,
-    bodies: Query<(&Transform, &CelestialBody)>,
-    pointer: Res<PointerWorld>,
-    grid_frame: Res<GridFrame>,
-) {
-    if !dirty.0 {
-        return;
-    }
-    dirty.0 = false;
-    let mut wells = body_wells(&bodies);
-    if let Some(plane_position) = pointer
-        .plane_position
-        .filter(|position| grid_frame.contains(position.truncate()))
-    {
-        wells.push(cursor_well(plane_position.truncate()));
-    }
-
-    let Ok(mesh_handle) = surface.single() else {
-        return;
-    };
-    if let Some(mesh) = meshes.get_mut(&mesh_handle.0) {
-        *mesh = build_heightfield(*grid_frame, &wells);
-    }
 }
 
 fn billboard_labels(
@@ -1602,70 +1397,6 @@ fn cursor_well(center: Vec2) -> GravityWell {
         mass: CURSOR_WELL_MASS,
         radius: CURSOR_WELL_RADIUS,
     }
-}
-
-fn build_heightfield(frame: GridFrame, wells: &[GravityWell]) -> Mesh {
-    let vertex_count = (GRID_RESOLUTION + 1) * (GRID_RESOLUTION + 1);
-    let mut positions = Vec::with_capacity(vertex_count);
-    let mut normals = Vec::with_capacity(vertex_count);
-    let mut uvs = Vec::with_capacity(vertex_count);
-    let mut heights = Vec::with_capacity(vertex_count);
-
-    for y in 0..=GRID_RESOLUTION {
-        for x in 0..=GRID_RESOLUTION {
-            let uv = Vec2::new(
-                x as f32 / GRID_RESOLUTION as f32,
-                y as f32 / GRID_RESOLUTION as f32,
-            );
-            let xy = frame.center + (uv * 2.0 - Vec2::ONE) * frame.half_extent;
-            let height = gravity_height(xy, wells);
-            positions.push([xy.x, xy.y, height]);
-            normals.push([0.0, 0.0, 1.0]);
-            uvs.push([uv.x, uv.y]);
-            heights.push(height);
-        }
-    }
-
-    for y in 1..GRID_RESOLUTION {
-        for x in 1..GRID_RESOLUTION {
-            let left = sample_height(&heights, x - 1, y);
-            let right = sample_height(&heights, x + 1, y);
-            let down = sample_height(&heights, x, y - 1);
-            let up = sample_height(&heights, x, y + 1);
-            let normal = Vec3::new(left - right, down - up, 2.0).normalize();
-            normals[y * (GRID_RESOLUTION + 1) + x] = normal.to_array();
-        }
-    }
-
-    let mut indices = Vec::with_capacity(GRID_RESOLUTION * GRID_RESOLUTION * 6);
-    let stride = GRID_RESOLUTION + 1;
-    for y in 0..GRID_RESOLUTION {
-        for x in 0..GRID_RESOLUTION {
-            let i = (y * stride + x) as u32;
-            indices.extend_from_slice(&[
-                i,
-                i + 1,
-                i + stride as u32,
-                i + 1,
-                i + stride as u32 + 1,
-                i + stride as u32,
-            ]);
-        }
-    }
-
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
-    );
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-    mesh.insert_indices(Indices::U32(indices));
-    mesh
-}
-
-fn sample_height(heights: &[f32], x: usize, y: usize) -> f32 {
-    heights[y * (GRID_RESOLUTION + 1) + x]
 }
 
 fn gravity_height(point: Vec2, wells: &[GravityWell]) -> f32 {

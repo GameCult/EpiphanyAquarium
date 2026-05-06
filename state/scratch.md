@@ -263,3 +263,7 @@ Current slice:
   Fog/atmosphere density accumulation is gone; the Grid remains in the march as
   solid heightfield terrain, and agent SDF planets are skipped through a
   conservative packed froxel membership mask before analytic solid intersection.
+- Current visible-geometry correction: the Bevy aquarium world no longer spawns
+  mesh-backed Grid terrain, body spheres, or cursor probe meshes. Body entities
+  remain as source transforms for simulation/cache/audio/raymarch uniforms, and
+  only temporary `Text2d` labels still render outside the raymarch pass.
