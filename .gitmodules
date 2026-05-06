@@ -1,0 +1,3 @@
+[submodule "vendor/bevy_procedural_audio"]
+	path = vendor/bevy_procedural_audio
+	url = https://github.com/metacratic/bevy_procedural_audio.git

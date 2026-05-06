@@ -1,10 +1,15 @@
 use bevy::asset::{AssetPlugin, RenderAssetUsages};
+use bevy::audio::{AudioPlayer, PlaybackSettings, SpatialListener, Volume};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::light::GlobalAmbientLight;
 use bevy::math::primitives::{Cuboid, Sphere};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
+use bevy_procedural_audio::prelude::{
+    AudioUnit, DspAppExt, DspGraph, DspManager, DspPlugin, DspSource, SourceType, sine_hz,
+    triangle_hz,
+};
 use cultcache_rs::{CultCache, DatabaseEntry, SingleFileMessagePackBackingStore};
 use cultnet_rs::{
     CultNetDocumentBinding, CultNetDocumentRegistry, CultNetMessage, CultNetWireContract,
@@ -12,6 +17,7 @@ use cultnet_rs::{
 };
 use std::f32::consts::{FRAC_PI_2, TAU};
 use std::path::PathBuf;
+use std::time::Duration;
 
 const GRID_HALF_EXTENT: f32 = 42.0;
 const GRID_RESOLUTION: usize = 128;
@@ -41,6 +47,7 @@ fn main() {
             1.0,
             TimerMode::Repeating,
         )))
+        .insert_resource(AquariumAudioState::default())
         .insert_resource(runtime_bridge)
         .add_plugins(
             DefaultPlugins
@@ -58,6 +65,9 @@ fn main() {
                     ..default()
                 }),
         )
+        .add_plugins(DspPlugin::default())
+        .add_dsp_source(aquarium_pluck, SourceType::Static { duration: 0.52 })
+        .add_dsp_source(aquarium_heartbeat, SourceType::Static { duration: 0.28 })
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -70,6 +80,7 @@ fn main() {
                 autosave_live_state,
                 rebuild_grid,
                 billboard_labels,
+                aquarium_audio,
                 reload_domain_input,
             ),
         )
@@ -379,6 +390,25 @@ struct GridDirty(bool);
 #[derive(Resource)]
 struct LiveStateAutosave(Timer);
 
+#[derive(Resource)]
+struct AquariumAudioState {
+    next_heartbeat: f32,
+    next_chirp: f32,
+    next_touch: f32,
+    touched_body_id: Option<String>,
+}
+
+impl Default for AquariumAudioState {
+    fn default() -> Self {
+        Self {
+            next_heartbeat: 0.45,
+            next_chirp: 1.2,
+            next_touch: 0.0,
+            touched_body_id: None,
+        }
+    }
+}
+
 #[derive(Component)]
 struct AquariumCamera;
 
@@ -481,6 +511,7 @@ fn setup(
         Transform::default(),
         Msaa::Off,
         Tonemapping::AcesFitted,
+        SpatialListener::default(),
         AquariumCamera,
     ));
 
@@ -1076,6 +1107,149 @@ fn billboard_labels(
     for mut label in &mut labels {
         label.rotation = rotation;
     }
+}
+
+fn aquarium_audio(
+    time: Res<Time>,
+    pointer: Res<PointerWorld>,
+    mut audio_state: ResMut<AquariumAudioState>,
+    mut commands: Commands,
+    mut clips: ResMut<Assets<DspSource>>,
+    dsp_manager: Res<DspManager>,
+    bodies: Query<(&Transform, &CelestialBody)>,
+) {
+    let now = time.elapsed_secs();
+
+    if now >= audio_state.next_heartbeat {
+        if let Some((transform, body)) = bodies
+            .iter()
+            .filter(|(_, body)| body.class == BodyClass::LivingSelf)
+            .max_by(|(_, a), (_, b)| a.mass.total_cmp(&b.mass))
+        {
+            spawn_sound(
+                &mut commands,
+                &mut clips,
+                &dsp_manager,
+                aquarium_heartbeat,
+                0.85 + body.mass * 0.04,
+                0.42,
+                0.18,
+                transform.translation,
+            );
+        }
+        audio_state.next_heartbeat = now + 2.15;
+    }
+
+    if now >= audio_state.next_chirp {
+        let agent = bodies
+            .iter()
+            .filter(|(_, body)| body.class == BodyClass::Agent)
+            .min_by(|(_, a), (_, b)| {
+                let da = (now * 0.41 + a.phase).sin().abs();
+                let db = (now * 0.41 + b.phase).sin().abs();
+                da.total_cmp(&db)
+            });
+        if let Some((transform, body)) = agent {
+            spawn_sound(
+                &mut commands,
+                &mut clips,
+                &dsp_manager,
+                aquarium_pluck,
+                0.82 + body.phase.sin().abs() * 0.95,
+                0.24,
+                0.24,
+                transform.translation,
+            );
+        }
+        audio_state.next_chirp = now + 3.4;
+    }
+
+    let Some(pointer_position) = pointer.plane_position else {
+        audio_state.touched_body_id = None;
+        return;
+    };
+
+    let nearest = bodies
+        .iter()
+        .map(|(transform, body)| {
+            (
+                transform,
+                body,
+                transform
+                    .translation
+                    .truncate()
+                    .distance(pointer_position.truncate()),
+            )
+        })
+        .filter(|(_, _, distance)| *distance < 1.8)
+        .min_by(|(_, _, a), (_, _, b)| a.total_cmp(b));
+
+    let Some((transform, body, _)) = nearest else {
+        audio_state.touched_body_id = None;
+        return;
+    };
+
+    let already_touching = audio_state
+        .touched_body_id
+        .as_ref()
+        .is_some_and(|id| id == &body.body_id);
+    if !already_touching && now >= audio_state.next_touch {
+        let frequency = match body.class {
+            BodyClass::LivingSelf => 185.0,
+            BodyClass::SleepingEpiphany => 240.0,
+            BodyClass::Agent => 420.0 + body.phase.cos().abs() * 220.0,
+        };
+        let amplitude = match body.class {
+            BodyClass::LivingSelf => 0.09,
+            BodyClass::SleepingEpiphany => 0.04,
+            BodyClass::Agent => 0.055,
+        };
+        spawn_sound(
+            &mut commands,
+            &mut clips,
+            &dsp_manager,
+            aquarium_pluck,
+            frequency / 440.0,
+            amplitude * 4.8,
+            0.2,
+            transform.translation,
+        );
+        audio_state.next_touch = now + 0.22;
+    }
+    audio_state.touched_body_id = Some(body.body_id.clone());
+}
+
+fn spawn_sound<D: DspGraph>(
+    commands: &mut Commands,
+    clips: &mut Assets<DspSource>,
+    dsp_manager: &DspManager,
+    graph: D,
+    speed: f32,
+    volume: f32,
+    duration_secs: f32,
+    position: Vec3,
+) {
+    let Some(source) = dsp_manager.get_graph(graph) else {
+        return;
+    };
+    let handle = clips.add(source);
+    commands.spawn((
+        AudioPlayer::<DspSource>(handle),
+        PlaybackSettings::DESPAWN
+            .with_volume(Volume::Linear(volume.clamp(0.0, 1.0)))
+            .with_speed(speed.clamp(0.35, 2.6))
+            .with_duration(Duration::from_secs_f32(duration_secs.max(0.03)))
+            .with_spatial(true),
+        Transform::from_translation(position),
+    ));
+}
+
+fn aquarium_pluck() -> impl AudioUnit {
+    (sine_hz(440.0) + triangle_hz(880.0) * 0.28 + sine_hz(1760.0) * 0.08) * 0.18
+}
+
+fn aquarium_heartbeat() -> impl AudioUnit {
+    (sine_hz(72.0) + sine_hz(116.0) * 0.42) * 0.22
 }
 
 fn orbit_anchor(center: Vec3, radius: f32, phase: f32) -> Vec3 {
