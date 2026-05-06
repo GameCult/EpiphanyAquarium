@@ -194,3 +194,10 @@ Current slice:
   noise. Build passed, and `EPIPHANY_SMOKE_PORT=14920 npm run smoke:visual`
   passed after replacing the first expensive nested 4D value-noise draft with a
   cheaper analytic fBm.
+- Current renderer documentation pass: added `notes/aquarium-renderer-map.md`.
+  The live renderer is explicitly documented as Three scene + moving Aetheria
+  2D gravity render target + fullscreen analytic SDF/gas raymarch. It is not
+  currently a brick map projected into Wronski froxels. The intended future path
+  is 2D source fields, typed SDF source lists, optional sparse bricks only for
+  non-cheap derived fields, froxel injection/integration, depth-aware
+  composition, stochastic TAA resolve, and Bruneton-style global atmosphere.

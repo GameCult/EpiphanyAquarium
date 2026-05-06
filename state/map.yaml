@@ -29,6 +29,7 @@ current_model:
     aquarium: .epiphany-aquarium
     backend_gui: E:\Projects\EpiphanyAgent\.epiphany-gui
   behavior_map: notes/aquarium-behavior-map.md
+  renderer_map: notes/aquarium-renderer-map.md
   backend_api_tree_map: notes/epiphany-agent-api-tree-map.md
   aetheria_volumetric_fog_map: notes/aetheria-volumetric-fog-map.md
   bruneton_atmospheric_scattering_map: notes/bruneton-atmospheric-scattering-map.md
@@ -88,3 +89,4 @@ landed:
   - Added a swarm registry seam. `.epiphany-aquarium/swarm.json` registers EpiphanyAgent and AetheriaLore, and the Tauri backend scopes status, actions, codex-home, workspace root, and artifact roots to the selected member.
   - Added the first field-first SDF/fog renderer brick: `src/aquariumScene3d.ts` now raymarches SDF solids and gassy SDF fog against the shared gravity/grid domain with phase-paired triangle noise and stochastic solid coverage.
   - Replaced visible agent mesh bodies with field-volume chrome planet SDFs. Each swarm member is displaced by cheap local-domain 4D fBm, wrapped in a mass-scaled gassy atmosphere, and Self renders as a solar body with hotter emissive/corona noise.
+  - Documented the live renderer as a hybrid Three/Aetheria gravity-domain plus fullscreen analytic SDF/gas raymarch, and explicitly separated that from the intended future Wronski froxel and sparse brick-map architecture.

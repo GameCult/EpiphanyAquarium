@@ -82,6 +82,12 @@
       "Agent atmospheres are gassy SDF shells whose thickness and density scale with mass/activity. Self is a solar class: higher displacement, warmer emissive shading, and stronger corona/plasma loop noise.",
       "Keep this path cheap until WebGPU takes over. Per-pixel SDF/fog work can get expensive quickly, so use compact analytic noise and avoid nested source/noise loops in smoke-scale viewports."
     ],
+    "aquarium_renderer_architecture": [
+      "The live Aquarium renderer is not yet a brick map or Wronski froxel pipeline. It is a Three.js scene plus moving 2D gravity render target plus a fullscreen analytic SDF/gas raymarch pass.",
+      "The current field-volume pass reconstructs a world ray per pixel, marches jittered quadratic samples, tests analytic planet SDFs, accumulates procedural gas with Beer-Lambert transmittance, and samples the shared gravity texture for surface height/tint.",
+      "Aetheria-style deferred 2D source fields are live now: sparse PowerPulse/wave splats accumulate into a grid texture, and grid/stardust/fog sample that moving domain. Wronski froxels, sparse bricks, TAA, and Bruneton atmosphere remain next-stage architecture.",
+      "Only introduce sparse brick maps for fields that cannot be cheaply derived at sample time: persistent volumetric memory, authored complex gas, cached lighting, or demand-refined large spaces. Do not brick-map simple agent SDFs just to look serious."
+    ],
     "bruneton_atmosphere": [
       "Bruneton's atmospheric scattering model is a precomputed light-transport cache, not a per-frame sky raymarch. Runtime shaders query transmittance, scattering, optional single-Mie, and irradiance textures for sky radiance, aerial perspective, and surface lighting.",
       "The pass graph matters: compute transmittance; compute direct irradiance; compute first-order Rayleigh/Mie scattering; then for orders 2..N compute scattering density, indirect irradiance, and multiple scattering deltas before accumulating them into final textures.",
