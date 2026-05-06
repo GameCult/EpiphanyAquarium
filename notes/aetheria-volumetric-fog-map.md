@@ -79,6 +79,34 @@ samples.
 - The grid/domain transform must remain the source of truth. If the fog domain,
   gravity surface, stardust, and camera-following grid drift apart, the illusion
   tears.
+- The fog raymarch is a post effect with `ZWrite Off`, so it cannot contribute
+  depth for later transparent sorting. Transparent-looking VFX therefore need to
+  join the opaque/depth world by stochastic cutout: write/participate like
+  opaque geometry, discard fragments by animated blue-noise coverage, then rely
+  on temporal accumulation to reconcile the stipple into transparency.
+
+## Stochastic Transparency
+
+`Aetheria/Dithered Particles` is the particle-side answer to the fog/depth
+problem:
+
+- The shader tags itself as `Queue="AlphaTest"` and
+  `RenderType="TransparentCutout"`, not normal transparent blending.
+- Its fragment shader samples particle texture/color alpha, then calls
+  `ditherClip(screenUV + particleOffset, alpha)`.
+- `Dither Functions.cginc` compares alpha against `_DitheringTex` plus
+  `_FrameNumber * 1.61803398875`, then uses `clip()` to discard uncovered
+  fragments.
+- `BlueNoiseProvider` sets the global noise texture, screen-relative noise
+  scale, randomized offsets, and frame number each update.
+- The shader includes a shadow caster pass that applies the same dithered alpha
+  test, so these transparent-looking particles can also cast coverage-consistent
+  shadows.
+
+This is not just a particle style. It is a renderer contract: volumetric fog,
+particles, shields, glow fades, slime, lightning, suns, and similar translucent
+surfaces need compatible stochastic coverage if they must interact with depth,
+fog, TAA, or shadows. Conventional alpha blending becomes the suspicious option.
 
 ## Rebuild Direction
 
@@ -101,6 +129,9 @@ For Aquarium/WebGPU, keep the effect goal and rebuild the machine:
 6. Degrade by reducing fog resolution, sample count, history confidence, and
    noise octaves. Do not degrade by disconnecting fog from the shared grid
    domain.
+7. Treat stochastic cutout transparency as part of the fog architecture. Any
+   transparent-looking particle or billboard that must depth-sort with fog should
+   use blue-noise coverage in the opaque/depth path, then let TAA/HDR resolve it.
 
 ## Source Anchors
 
@@ -117,3 +148,8 @@ For Aquarium/WebGPU, keep the effect goal and rebuild the machine:
   phase-paired scrolling noise, and tint sampling.
 - `E:\Projects\Aetheria-Economy\Assets\Shaders\StableFluids\Fluid.cs`
   exposes the moving 2D fluid velocity domain used by volume/stardust paths.
+- `E:\Projects\Aetheria-Economy\Assets\Shaders\DitheredParticles.shader`,
+  `E:\Projects\Aetheria-Economy\Assets\Shaders\Dither Functions.cginc`, and
+  `E:\Projects\Aetheria-Economy\Assets\Scripts\Zone Display\BlueNoiseProvider.cs`
+  implement the stochastic cutout transparency path used by particles and related
+  depth-sensitive translucent effects.

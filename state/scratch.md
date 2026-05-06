@@ -165,3 +165,8 @@ Current slice:
   which fakes continuous horizon-scale volumetric motion without storing a huge
   3D volume. Captured as `notes/aetheria-volumetric-fog-map.md` and
   `aetheria_volumetric_fog` memory.
+- Stochastic transparency correction: because the fog raymarch is a post effect
+  and cannot write depth, transparent-looking particles and similar VFX need to
+  be depth participants by using blue-noise alpha test/cutout plus TAA resolve.
+  `Aetheria/Dithered Particles` tags AlphaTest/TransparentCutout, clips coverage
+  via `Dither Functions.cginc`, and includes a matching shadow caster pass.
