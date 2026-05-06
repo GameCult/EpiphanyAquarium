@@ -240,3 +240,7 @@ Current slice:
   special multiplier. DOM captions also stopped applying the old projection.z
   screen-space elevation offset; the Three camera projection is the sole label
   anchor, so Self should not bob independently from its body.
+- Follow-up body-scale correction: consistent means world-space, not fixed
+  pixel-space. WebGPU now multiplies the shared body radius by Three's projected
+  camera scale, so zooming in enlarges planets on screen and makes surface
+  inspection possible while preserving one shared world radius across agents.

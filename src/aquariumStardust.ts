@@ -220,7 +220,7 @@ const froxelHeight = 54;
 const froxelDepth = 24;
 const froxelCount = froxelWidth * froxelHeight * froxelDepth;
 const froxelShStrideFloats = 16;
-const agentBodyRadiusPixels = 34;
+const agentBodyWorldRadiusPixels = 34;
 const studioEnvironmentData = new Float32Array([
   0.506, 0.516, 0.533, 1,
   0.152, 0.178, 0.194, 1,
@@ -797,7 +797,7 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
       const isSelf = projection.id === "coordinator" ? 1 : 0;
       this.agentData[index * 4] = (projection.xPercent / 100) * width;
       this.agentData[index * 4 + 1] = (projection.yPercent / 100) * height;
-      this.agentData[index * 4 + 2] = agentBodyRadiusPixels;
+      this.agentData[index * 4 + 2] = agentBodyWorldRadiusPixels * clamp(projection.screenScale ?? 1, 0.48, 3.4);
       this.agentData[index * 4 + 3] = clamp(projection.screenDepth ?? (isSelf ? 0.5 : 0.42), 0, 1);
       const color = parseColor(projection.color ?? "#8fffd3");
       const glow = parseColor(projection.glow ?? projection.color ?? "#8fffd3");
