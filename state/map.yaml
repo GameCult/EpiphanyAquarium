@@ -18,6 +18,12 @@ current_model:
       The aquarium renderer is moving to a Rust-native Bevy client. Bevy owns
       world-space simulation and rendering; cultnet-rs owns agent communication;
       cultcache-rs owns settings and persistent client state.
+    renderer_doctrine: >
+      The live renderer is a Rust/WGPU field machine. ECS state feeds custom
+      Bevy render graph nodes, compute/storage resources carry Grid-space
+      lighting and occupancy, and raymarched surfaces write Bevy deferred
+      prepass data. Legacy React/WebGL/Tauri surfaces are migration fallback,
+      not the architecture center.
   frontend:
     framework: React + Vite + Tauri v2
     primary_files:
@@ -40,6 +46,7 @@ current_model:
     backend_gui: E:\Projects\EpiphanyAgent\.epiphany-gui
   behavior_map: notes/aquarium-behavior-map.md
   renderer_map: notes/aquarium-renderer-map.md
+  rust_vfx_research_map: notes/rust-vfx-research-map.md
   backend_api_tree_map: notes/epiphany-agent-api-tree-map.md
   aetheria_volumetric_fog_map: notes/aetheria-volumetric-fog-map.md
   bruneton_atmospheric_scattering_map: notes/bruneton-atmospheric-scattering-map.md

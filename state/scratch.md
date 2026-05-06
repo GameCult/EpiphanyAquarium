@@ -326,3 +326,10 @@ Current slice:
   camera height divided by the shader's `grid_volume_top = half_extent * 0.18`
   ratio, with a small margin. This keeps the camera inside the Grid-bound
   lighting/raymarch volume instead of sampling from above the box.
+- Current self-distillation pass: pruned React/WebGL-era memory into
+  `legacy_web_stack` fallback status, added Rust/Bevy/WGPU VFX doctrine, and
+  distilled Aetheria's nebula shader as a Grid-domain contract: surface height,
+  patch density/height, tint LOD, slope/global flow, phase-paired triangle
+  noise, stochastic quadratic raymarching, temporal reprojection, and AABB
+  history clipping. New research map lives at
+  `notes/rust-vfx-research-map.md`.

@@ -12,17 +12,19 @@
     "Motion, sound, glow, fluid, and layout should all tell the same state story."
   ],
   "technical_memory": {
-    "interactive_css": [
-      "Use transforms and opacity for lively transitions; avoid layout thrash when objects move.",
-      "Keep hit targets stable even when visual forms wobble.",
-      "Use CSS variables as the bridge between simulation state and DOM presentation.",
-      "Make hover, focus, selected, disabled, busy, and blocked states visually distinct."
+    "legacy_web_stack": [
+      "React/Tauri/WebGL knowledge is historical fallback, not the live renderer identity. Keep it only for migration archaeology, visual smoke patterns, and DOM-billboard lessons that survive the Bevy move.",
+      "Crisp text and interaction still matter, but future UI should be a Rust-native diegetic surface backed by CultCache state, not a web panel model trying to sneak back in with nicer shoes.",
+      "Old WebGL buffer habits are allowed to inform WGPU pass design, but the target architecture is Bevy render graph nodes, storage buffers/textures, WGSL, and explicit GPU ownership."
     ],
-    "webgl2": [
-      "Separate simulation buffers from crisp UI layers unless the object intentionally lives in the sim.",
-      "Ping-pong textures for advection, pressure, dye, and velocity state.",
-      "Use smoke tests and pixel probes to catch blank canvases and accidental hidden emitters.",
-      "Avoid CPU readback in the frame loop unless the delay is part of a buffered pipeline."
+    "rust_bevy_vfx": [
+      "Bevy is now the aquarium's engine, not a wrapper around a web artifact. Treat ECS entities as source/state anchors and the render graph as the frame machine that turns those anchors into fields, G-buffers, lighting, and final pixels.",
+      "Prefer custom Bevy render graph nodes for deep renderer work. `FullscreenMaterial` is useful for simple post effects, but Aquarium's raymarch, light propagation, brick occupancy, and deferred prepass writes need explicit node ordering, bind groups, storage buffers, and texture ownership.",
+      "Use Bevy 0.18's rendering improvements as leverage: generalized atmospheric scattering and atmosphere/PBR integration are reference machinery, while the aquarium's local grid fog remains a custom field volume because it is domain-authored, moving, and interaction-coupled.",
+      "Keep compile features lean. Scenario-driven Bevy feature collections and explicit feature lists matter on Windows; avoid `bevy/dynamic_linking` until the MSVC `bevy_dylib` object-limit failure has a proven workaround.",
+      "Treat `VERBOSE_SHADER_ERROR=1`, WGPU debug labels, and small runtime shader-specialization launches as part of the renderer workflow. Rust type checks do not validate WGSL entrypoints, bind group layouts, or render graph ordering.",
+      "For particles and stardust, study Hanabi's GPU-first contract: particle simulation belongs on the GPU with minimal CPU intervention, but Aquarium's Aetheria-style stardust also needs deterministic world-domain hashing so moving grid windows do not reveal buffer identity.",
+      "CultNet is the communication language and CultCache is the client memory organ. Live app state, camera rig, body positions, active swarms, renderer knobs, and hot-reload recovery state should serialize through CultCache instead of hiding in process-only ECS resources."
     ],
     "gpu_compute_specialist": [
       "Think in passes, domains, memory traffic, and synchronization, not object identity. A buffer slot is often labor, not identity; stable identity should come from deterministic world-space domains when state can be derived.",
@@ -69,6 +71,17 @@
       "For a rebuild, keep Aetheria's effect contract but make the ownership cleaner: one moving grid domain, deferred 2D source fields, explicit WebGPU passes for density/source update, optional froxel injection, temporal integration, reprojection, and HDR composition.",
       "Do not 'fix' the old hack by deleting the hack that makes it special. Preserve phase-paired scrolling triangle noise, stochastic offsets, exponential/quadratic sample distribution, and domain-locked tint/surface sampling; improve resource ownership, history validity, and pass structure around them."
     ],
+    "aetheria_nebula_shader": [
+      "The nebula effect is a domain machine, not a generic fog material. `VolumeSampling` publishes Grid-owned source textures: surface height, patch height, patch density, tint, fluid velocity, flow knobs, density knobs, tint LOD, extinction, and safety distance.",
+      "`Volumetric.cginc` gets its continuity by deriving UVs from world position through `_GridTransform`, so the sampled surface/tint/patch domain moves with the Grid while the visual field remains spatially coherent.",
+      "Density has two layers: a long-range fill term from distance to the displaced Grid surface, and a near-surface patch/floor term from patch density plus patch height. That is why the fog reads as horizon-scale space and local terrain at the same time.",
+      "The cheap 'wild' motion is phase-paired triangle noise advected through a flow vector. Two low-frequency phases half a period apart crossfade via `tri2`; two higher-frequency phases offset by quarter periods subtract finer turbulence at half amplitude.",
+      "Flow is composable: global curl-like `Tri3D` flow, slope swirl along heightfield gradients, and slope flow down/up the gradient can all contribute. The fog does not merely move; it reads the terrain normal and pretends to have weather.",
+      "Slope gating is visual bandwidth control. Near-surface noise amplitude/exponent can be multiplied by surface flatness/slope response, so high-frequency detail appears where the shaped Grid can support it instead of turning the whole volume into static.",
+      "Tint is a field texture sampled at an LOD derived from density. Dense regions get different chroma scale than thin regions, which lets color behave like material depth rather than a screen overlay.",
+      "The raymarcher uses quadratic distance spacing, blue-noise plus Halton-style offsets, Beer-Lambert transmittance/in-scatter, early transmittance termination, temporal reprojection, local AABB history clipping, and final `scene * transmittance + fog` composition.",
+      "For Bevy, rebuild this as explicit WGPU passes: Grid source textures, density/lighting injection, stochastic ray integration or froxel scan, history reprojection/clipping, and deferred composition. Do not collapse it into one heroic fragment shader unless the profiler demands a temporary crime."
+    ],
     "aquarium_field_volume": [
       "Aquarium now has a first field-first rendering brick in `src/aquariumScene3d.ts`: a fullscreen world-space raymarch pass that samples the same moving gravity texture/domain as the grid and stardust.",
       "The pass treats SDF solids, agent-proxy SDF solids, gassy SDF density, pointer density, and grid-hugging surface fog as readings of one shared field rather than separate decorative layers.",
@@ -100,6 +113,8 @@
       "Bevy volumetric lighting now runs on the GPU. The generic FullscreenMaterial helper was replaced by a custom render node that dispatches `cs_grid_lighting` before the fullscreen raymarch. Two storage buffers ping-pong first-order SH coefficients in Grid space; the compute pass advects/scatters them, reprojects history through previous Grid center/scale as a 2D XY problem, injects Self radiance, and the fragment pass samples by world point.",
       "Solar flare waves must be simulation-carried, not analytically painted shells. The Bevy Grid-space SH update injects a short Self-local radiance impulse, then samples previous coefficients from inward along the radial vector during the flare window so stored light is pushed outward and scattered by the volume update.",
       "The Bevy Grid-space SH light field now has a per-frame GPU brick occupancy map. `cs_update_light_bricks` rebuilds an 8x8x4 flag volume from current Grid terrain contact, body bounds, Self influence, and flare bands; `cs_grid_lighting` uses those flags to skip empty bricks cheaply and spend extra advection/scatter detail inside occupied/moving geometry cells.",
+      "The Grid-bound volume must contain the camera. CPU Grid scale and shader volume height are one invariant: if the shader says volume top is `half_extent * 0.18`, the host must choose half extent from zoom, camera XY offset, and camera height divided by that ratio. Otherwise the renderer samples from outside its own world and politely produces black.",
+      "A black frame in a field renderer is an information failure. Keep a diagnostic survival path that proves hit coverage independently of lighting: fallback terrain plane inside the Grid mask and explicit unlit G-buffer payloads are acceptable bring-up scaffolding, but must be removed once SH/PBR lighting proves itself.",
       "Do not enable `bevy/dynamic_linking` in the Windows hotpatch path. Bevy 0.18's `bevy_dylib` can exceed MSVC link.exe's 65,535 object limit and fail with LNK1189; keep Aquarium's `hotpatch` feature on `bevy/hotpatching` without dynamic linking unless the linker strategy changes.",
       "Three loads `public/textures/studio3.hdr` through RGBELoader/PMREM and assigns it to `scene.environment` for PBR lighting. WebGPU field chrome currently matches the studio lighting direction procedurally; direct HDR sampling needs a WebGPU-owned parsed/prefiltered environment texture, not a WebGL PMREM cross-API borrow.",
       "The Three/WebGL layer still owns the moving Aetheria gravity grid, cursor, and fallback rendering. When navigator.gpu exists, Three marks the field as externally rendered and skips the expensive WebGL field-volume pass.",
