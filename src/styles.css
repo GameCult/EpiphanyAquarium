@@ -481,16 +481,14 @@ body:has(.immersiveShell) {
   left: var(--focus-x-world, var(--agent-x));
   top: var(--focus-y-world, var(--agent-y));
   z-index: 7;
-  display: grid;
-  grid-template-areas:
-    "top top"
-    "rail panel"
-    "toast panel";
-  grid-template-columns: 86px minmax(360px, min(680px, 44vw));
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 10px;
+  --radial-origin-x: 28px;
+  --radial-origin-y: 80px;
+  display: block;
+  width: min(450px, 42vw);
+  min-height: 116px;
   max-width: calc(100vw - 32px);
   max-height: min(78vh, 820px);
+  padding: 10px;
   opacity: 0;
   pointer-events: auto;
   transform:
@@ -508,6 +506,18 @@ body:has(.immersiveShell) {
   filter: drop-shadow(0 0 22px color-mix(in srgb, var(--agent-glow) 32%, transparent));
   color: var(--agent-glow);
   isolation: isolate;
+}
+
+.agentFocusSurface:has(.creatureRadialTree) {
+  width: min(520px, 48vw);
+  min-height: 310px;
+}
+
+.agentFocusSurface:has(.creatureLeafSurface) {
+  --radial-origin-x: 132px;
+  --radial-origin-y: 190px;
+  width: min(980px, calc(100vw - 32px));
+  min-height: min(620px, 76vh);
 }
 
 .agentFocusSurface.preview,
@@ -628,7 +638,6 @@ body:has(.immersiveShell) {
 }
 
 .creatureTreeRoot {
-  grid-area: top;
   position: relative;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -698,14 +707,15 @@ body:has(.immersiveShell) {
 }
 
 .creatureRadialTree {
-  grid-area: rail;
-  position: relative;
+  position: absolute;
+  left: var(--radial-origin-x);
+  top: var(--radial-origin-y);
   width: 1px;
   height: 1px;
-  align-self: start;
-  justify-self: start;
-  transform: translate(46px, 54px);
   z-index: 9;
+  transition:
+    left 180ms ease,
+    top 180ms ease;
 }
 
 .creatureTreeNode {
@@ -757,7 +767,9 @@ body:has(.immersiveShell) {
 }
 
 .creatureBreadcrumb {
-  grid-area: toast;
+  position: absolute;
+  left: 18px;
+  bottom: 14px;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -777,11 +789,14 @@ body:has(.immersiveShell) {
 }
 
 .creatureLeafSurface {
-  grid-area: panel;
+  position: absolute;
+  left: calc(var(--radial-origin-x) + var(--leaf-panel-x, 210px));
+  top: calc(var(--radial-origin-y) + var(--leaf-panel-y, 0px));
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  width: min(620px, 40vw);
+  width: min(var(--leaf-panel-width, 460px), 44vw);
   min-width: 320px;
+  height: min(var(--leaf-panel-height, 320px), 58vh);
   max-height: min(56vh, 640px);
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--agent-glow) 36%, rgba(219, 238, 216, 0.3));
@@ -791,6 +806,14 @@ body:has(.immersiveShell) {
     rgba(8, 17, 14, 0.76);
   box-shadow: 0 22px 62px rgba(0, 0, 0, 0.34);
   backdrop-filter: blur(16px);
+  transform: translate(-50%, -50%);
+  transform-origin: 50% 50%;
+  transition:
+    width 180ms ease,
+    height 180ms ease,
+    left 180ms ease,
+    top 180ms ease,
+    transform 180ms ease;
 }
 
 .creatureLeafHeader {
@@ -1437,6 +1460,21 @@ body:has(.immersiveShell) {
   font-size: 0.58rem;
   font-weight: 800;
   text-transform: uppercase;
+}
+
+.agentCharacter.dormant {
+  --agent-elevation: -8px;
+  filter:
+    drop-shadow(0 0 calc(8px + var(--agent-hover-glow, 0px)) rgba(210, 230, 255, 0.44))
+    grayscale(0.18);
+}
+
+.agentCharacter.dormant .agentCaption {
+  color: rgba(248, 252, 255, 0.9);
+}
+
+.agentCharacter.dormant .agentCaption span {
+  color: rgba(214, 230, 255, 0.68);
 }
 
 .agentCharacter {

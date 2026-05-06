@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -165,7 +165,26 @@ fn load_operator_snapshot(request: Option<StatusRequest>) -> Result<OperatorSnap
     let request = request.unwrap_or_default();
     let swarm_members = load_swarm_members()?;
     let active_member = resolve_swarm_member(&swarm_members, request.member_id.as_deref())?;
-    let status = load_status(&active_member, request)?;
+    let status = load_status(&active_member, request).unwrap_or_else(|err| {
+        json!({
+            "availability": {
+                "status": "sleeping",
+                "reason": err,
+            },
+            "scene": {
+                "scene": {
+                    "source": "standalone",
+                    "stateStatus": "sleeping",
+                }
+            },
+            "jobs": {
+                "jobs": []
+            },
+            "roles": {
+                "roles": []
+            }
+        })
+    });
     let artifacts = list_artifacts(&active_member)?;
     let communications = load_swarm_communications()?;
     Ok(OperatorSnapshot {

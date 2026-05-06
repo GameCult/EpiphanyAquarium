@@ -8,6 +8,16 @@ project:
     audio feedback, motion language, and taste.
 
 current_model:
+  migration_target:
+    engine: Bevy 0.18 Rust host
+    path: bevy-aquarium
+    migration_map: notes/bevy-migration-map.md
+    communication: cultnet-rs
+    persistence: cultcache-rs
+    principle: >
+      The aquarium renderer is moving to a Rust-native Bevy client. Bevy owns
+      world-space simulation and rendering; cultnet-rs owns agent communication;
+      cultcache-rs owns settings and persistent client state.
   frontend:
     framework: React + Vite + Tauri v2
     primary_files:
@@ -52,11 +62,13 @@ interaction_laws:
   - Epiphany project labels are world-space DOM billboards projected by the Three camera and fade in as the user zooms out.
   - As swarm/workspace labels fade in, sub-agent captions fade away; zoom level chooses the active hierarchy instead of stacking all labels.
   - Each harness/workspace label is a menu root with radial DOM petals for swarm-level navigation.
+  - Registered Epiphanies are visible even when their harness is not running: sleeping members render as cold white dwarf bodies, and only live members with heartbeat/running signals expand into specialist constellations.
   - Three camera projection is the placement authority for DOM agents, thought bubbles, option halos, focus surfaces, stardust attractors, and pointer-to-grid input; percent-space projection is fallback only.
   - UI branches now use SVG/DOM camera-facing billboards attached to world-space creature anchors: Three emits separate focus/thought/option screen anchors and scales, and DOM pointer movement maps into billboard-local coordinates for crisp interaction.
   - The 3D body is the agent body. The centered DOM caption is its ID tag, hit target, and interaction-graph root; glyph icons are hidden because they duplicate the body.
   - When the pointer is inside a creature billboard, the creature's orbit integration holds position so menus do not drift away from the user's hand.
   - Visible non-DOM aquarium elements belong in the Three/HDR compositor. Legacy smoke, crisp, and stardust canvases may remain for compatibility, but they must not be visible screen-space layers.
+  - The visible field stage belongs to the WebGPU marched renderer: the grid is a heightfield surface with a fog bank over it, while Three is allowed to provide camera/projection/source rigging rather than visible geometry.
   - Fog is now a first-class field-volume pass in the Three layer: camera rays sample SDF solids, gassy SDF density, pointer/agent density sources, and the shared moving gravity texture instead of rendering fog as detached screen tint.
   - WebGPU froxels own soft directional volumetric light: first-order spherical harmonics are propagated through the froxel grid, environment light is injected from grid-volume edges, and Self injects warm local emission.
   - WebGPU froxel x/y dimensions stay canvas-local and screen-fit; only froxel near/far depth is fitted to the projected moving grid volume.
@@ -98,3 +110,5 @@ landed:
   - Added the first WebGPU froxel SH lighting cache. A compute pass ping-pongs low-order radiance coefficients, propagates neighbor light, injects the studio HDR summary from the volume edges, injects Self emission, and the raymarch samples that lighting for gas and solid wrap instead of relying on a screen-space glow.
   - Fitted the WebGPU froxel depth interval to the projected grid volume while keeping x/y screen-aligned. Agent primitives now carry projected body depth, so masks and raymarch samples are bounded by the live grid volume instead of a fake full-depth corridor.
   - Normalized agent body size across WebGPU and WebGL SDF paths as a world-space radius, moved the WebGPU solid path to camera-ray/world-center SDF intersections, and removed the old z-derived DOM label elevation offset that made Self appear to bounce in screen space.
+  - Separated swarm registry presence from runtime liveness. Standalone Aquarium now survives a missing status bridge by returning a sleeping snapshot, and the frontend renders dormant Epiphanies as cold project bodies instead of pretending the EpiphanyAgent specialist system is alive.
+  - Promoted the WebGPU froxel renderer to the visible stage. It now reconstructs camera rays, renders the grid as a procedural marched heightfield with PowerPulse wells, layers a surface-hugging fog bank over it, and keeps the Three grid hidden as rigging/fallback machinery.

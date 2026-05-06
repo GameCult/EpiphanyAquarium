@@ -89,6 +89,7 @@
       "Fit froxel volumes in depth, not screen x/y. The WebGPU froxel grid should keep canvas-local x/y dimensions aligned to the screen while Three projects the moving grid volume's near/far depth bounds; agent primitives carry projected body depth so z slices avoid fog work outside the grid volume.",
       "Agent solid body size should be consistent in world space across the swarm, not fixed in screen pixels or multiplied by a projection-scale patch. WebGPU should reconstruct camera rays from Three's camera frame and intersect world-space planet SDFs against world-space centers/radii; Self may have solar emission and a larger/warmer atmosphere, but its solid SDF radius and DOM anchoring should follow the same rules as every other celestial body.",
       "The fitted grid/fog volume is the visibility window. Do not let solid planets render outside it; solids and gas should fade at the near/far bounds of the current grid volume.",
+      "The visible aquarium field should be the WebGPU marched renderer. Three may provide camera/projection/source rigging, but the screen should be owned by compute/froxel/marching output: heightfield grid surface, fog bank, SDF bodies, and atmospheres.",
       "Three loads `public/textures/studio3.hdr` through RGBELoader/PMREM and assigns it to `scene.environment` for PBR lighting. WebGPU field chrome currently matches the studio lighting direction procedurally; direct HDR sampling needs a WebGPU-owned parsed/prefiltered environment texture, not a WebGL PMREM cross-API borrow.",
       "The Three/WebGL layer still owns the moving Aetheria gravity grid, cursor, and fallback rendering. When navigator.gpu exists, Three marks the field as externally rendered and skips the expensive WebGL field-volume pass.",
       "Aetheria-style deferred 2D source fields are live now: sparse PowerPulse/wave splats accumulate into a grid texture, and grid/stardust/fog sample that moving domain. Full Wronski density/light injection, sparse bricks, TAA, and Bruneton atmosphere remain next-stage architecture.",
@@ -130,7 +131,8 @@
       "Progressive disclosure is the core grammar: vibes first, object second, surface third.",
       "Spatial memory matters; put controls near the thing they operate on.",
       "Do not make hidden hit zones that lack visible affordances.",
-      "Every animation needs a reason: orient, acknowledge, warn, invite, or delight."
+      "Every animation needs a reason: orient, acknowledge, warn, invite, or delight.",
+      "Swarm registry presence is not Epiphany liveness. A registered but non-running member should appear as a sleeping cold body; only heartbeat/running signals justify exploding it into the specialist constellation."
     ]
   },
   "warnings": [

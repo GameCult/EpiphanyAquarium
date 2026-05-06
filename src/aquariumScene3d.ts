@@ -247,8 +247,10 @@ class ThreeAquariumScene implements AquariumScene3d {
   projectProjectLabels(labels: Array<{ id: string; label: string; subLabel?: string }>) {
     const zoomOpacity = smoothstep(8.5, 15.5, this.cameraDistance);
     const centroid = this.agentCentroid();
-    return labels.map((label) => {
-      const point = centroid.clone();
+    return labels.map((label, index) => {
+      const angle = -Math.PI / 2 + (index / Math.max(labels.length, 1)) * Math.PI * 2;
+      const radius = labels.length <= 1 ? 0 : 1.45 + labels.length * 0.18;
+      const point = centroid.clone().add(new THREE.Vector3(Math.cos(angle) * radius, Math.sin(angle) * radius * 0.72, 0.38));
       const screen = this.projectWorldToScreen(point);
       return {
         ...label,
@@ -359,7 +361,7 @@ class ThreeAquariumScene implements AquariumScene3d {
     let splatIndex = 0;
     let sourceIndex = 0;
     let fieldSourceIndex = 0;
-    const selfProjection = projections.find((projection) => projection.id === "coordinator") ?? projections[0];
+    const selfProjection = projections.find((projection) => projection.id === "coordinator");
     if (selfProjection && splatIndex < this.splatMeshes.length) {
       const selfTarget = gridToWorld(selfProjection.gridXPercent, selfProjection.gridYPercent);
       this.configureSplat(this.splatMeshes[splatIndex], selfTarget.x, selfTarget.y, 4.25, 0.7, 2.35, 0, 0, 1.25);

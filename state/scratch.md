@@ -250,3 +250,12 @@ Current slice:
   so WebGPU now applies a near/far depth-window fade to solid hits and gas
   density instead of letting world-space bodies render outside the current
   volume.
+- Current standalone swarm correction: registry presence is not liveness. When
+  the harness status bridge fails or no live heartbeat/running signals exist,
+  the Aquarium still runs and renders registered Epiphanies as sleeping cold
+  white dwarf bodies. Only a member with live heartbeat/job/role activity
+  expands into the specialist constellation.
+- Current renderer ownership correction: the visible stage should be the
+  WebGPU marched field, not the Three helper scene. Three now acts as camera,
+  projection, and source rigging, while the WebGPU froxel shader visibly renders
+  the heightfield grid surface, fog bank, SDF bodies, and atmospheres.

@@ -154,8 +154,24 @@ const constellationSpecs = [
 ] as const;
 const harmonyAgentIds = constellationSpecs.map((agent) => agent.id);
 
-type ConstellationSpec = (typeof constellationSpecs)[number];
+type ConstellationSpec = {
+  id: string;
+  laneId: string;
+  name: string;
+  title: string;
+  glyph: string;
+  shape: string;
+  color: string;
+  glow: string;
+  baseX: number;
+  baseY: number;
+  driftX: number;
+  driftY: number;
+  phase: number;
+};
 type ProjectedAgent = ConstellationSpec & {
+  dormant?: boolean;
+  memberId?: string;
   status: string;
   tone: string;
   thought: string;
@@ -517,6 +533,53 @@ function memberTone(member?: SwarmMember): string {
   if (lower.includes("active") || lower.includes("ready")) return "ok";
   if (lower.includes("bootstrap") || lower.includes("workspace")) return "warn";
   return "neutral";
+}
+
+function epiphanyStatusLooksAlive(status: any): boolean {
+  if (!status || typeof status !== "object") return false;
+  const heartbeat = text(status?.heartbeat?.status).toLowerCase();
+  if (["active", "running", "awake", "live"].some((needle) => heartbeat.includes(needle))) return true;
+  const jobs = Array.isArray(status?.jobs?.jobs) ? status.jobs.jobs : [];
+  if (jobs.some((job: any) => ["active", "running", "launch"].some((needle) => text(job?.status).toLowerCase().includes(needle)))) {
+    return true;
+  }
+  const roles = Array.isArray(status?.roles?.roles) ? status.roles.roles : [];
+  if (roles.some((role: any) => ["active", "running", "launch"].some((needle) => text(role?.status).toLowerCase().includes(needle)))) {
+    return true;
+  }
+  return false;
+}
+
+function dormantMemberAgent(member: SwarmMember, index: number, count: number, active = false): ProjectedAgent {
+  const angle = -Math.PI / 2 + (index / Math.max(count, 1)) * Math.PI * 2;
+  const ring = count <= 1 ? 0 : 1;
+  const radiusX = 24 + count * 1.8;
+  const radiusY = 17 + count * 1.2;
+  const workspace = workspaceLabel(member.workspaceRoot);
+  return {
+    id: `member:${member.id}`,
+    laneId: `member:${member.id}`,
+    memberId: member.id,
+    dormant: true,
+    name: member.label,
+    title: member.kind === "harness" ? "Dormant Epiphany" : "Dormant Workspace",
+    glyph: "•",
+    shape: "core",
+    color: "#dce8ff",
+    glow: active ? "#f6fbff" : "#9eb7dd",
+    baseX: 50 + Math.cos(angle) * radiusX * ring,
+    baseY: 50 + Math.sin(angle) * radiusY * ring,
+    driftX: 0.55,
+    driftY: 0.48,
+    phase: 0.8 + index * 1.37,
+    status: "sleeping",
+    tone: "dormant",
+    thought: `${workspace} is registered, cold, and waiting for a real heartbeat.`,
+    detail: member.workspaceRoot,
+    activity: active ? 0.08 : 0.035,
+    jobs: 0,
+    review: text(member.status, "dormant"),
+  };
 }
 
 const emptyGraphState: EpiphanyGraphsState = {
@@ -1178,8 +1241,11 @@ export function App() {
     const [open, setOpen] = useState(false);
     const [path, setPath] = useState<string[]>([]);
     const selected = treeNodeAtPath(tree, path);
-    const childNodes = selected?.children ?? tree.children ?? [];
     const leaf = selected && !selected.children?.length ? selected : null;
+    const radialParentPath = leaf ? path.slice(0, -1) : path;
+    const radialParent = radialParentPath.length ? treeNodeAtPath(tree, radialParentPath) : tree;
+    const childNodes = selected?.children ?? radialParent?.children ?? tree.children ?? [];
+    const leafAnchor = leaf ? leafAnchorStyle(tree, path) : {};
     const headline =
       agent.id === "coordinator"
         ? text(coordinator.reason ?? crrc.reason, "No coordinator recommendation loaded.")
@@ -1267,7 +1333,7 @@ export function App() {
         ) : null}
 
         {leaf && (
-          <section className={`creatureLeafSurface leaf-${leaf.id}`} aria-label={`${agent.name} ${leaf.label}`}>
+          <section className={`creatureLeafSurface leaf-${leaf.id}`} aria-label={`${agent.name} ${leaf.label}`} style={leafAnchor}>
             <header className="creatureLeafHeader">
               <span>{selectedPathLabel(tree, path)}</span>
               <h2>{leaf.label}</h2>
@@ -1309,6 +1375,7 @@ export function App() {
         harmonyFrame={harmony.frame}
         focusSurface={renderAgentHabitat}
         onAgentOption={handleAquariumOption}
+        onMemberSelect={selectMember}
         isActionBlocked={actionBlocked}
       />
     </main>
@@ -1505,6 +1572,51 @@ function selectedPathLabel(root: HabitatNode, path: string[]) {
   return labels.join(" / ") || root.label;
 }
 
+function leafAnchorStyle(root: HabitatNode, path: string[]): React.CSSProperties {
+  const leafId = path[path.length - 1];
+  const parentPath = path.slice(0, -1);
+  const parent = parentPath.length ? treeNodeAtPath(root, parentPath) : root;
+  const siblings = parent?.children ?? root.children ?? [];
+  const index = Math.max(0, siblings.findIndex((node) => node.id === leafId));
+  const angle = -112 + (224 * index) / Math.max(siblings.length - 1, 1);
+  const radius = parentPath.length ? 148 : 106;
+  const radians = (angle * Math.PI) / 180;
+  const aspect = leafPanelAspect(leafId);
+  const arcDegrees = clampNumber(28 * aspect, 24, 78);
+  const radialDepth = clampNumber(360 / Math.max(aspect, 0.1), 210, 430);
+  const panelWidth = clampNumber(radialDepth * aspect, 320, 680);
+  const panelHeight = radialDepth;
+  const billboardWidth = 940;
+  const billboardHeight = 580;
+  const originX = 132;
+  const originY = 190;
+  const margin = 16;
+  const panelRadius = radius + radialDepth * 0.36;
+  const candidateCenterX = originX + Math.cos(radians) * panelRadius;
+  const candidateCenterY = originY + Math.sin(radians) * panelRadius;
+  const panelCenterX = clampNumber(candidateCenterX, panelWidth / 2 + margin, billboardWidth - panelWidth / 2 - margin);
+  const panelCenterY = clampNumber(candidateCenterY, panelHeight / 2 + margin, billboardHeight - panelHeight / 2 - margin);
+  return {
+    "--leaf-angle": `${angle}deg`,
+    "--leaf-arc": `${arcDegrees}deg`,
+    "--leaf-radius": `${radius}px`,
+    "--leaf-radial-depth": `${radialDepth}px`,
+    "--leaf-panel-radius": `${panelRadius}px`,
+    "--leaf-panel-x": `${panelCenterX - originX}px`,
+    "--leaf-panel-y": `${panelCenterY - originY}px`,
+    "--leaf-panel-width": `${panelWidth}px`,
+    "--leaf-panel-height": `${panelHeight}px`,
+  } as React.CSSProperties;
+}
+
+function leafPanelAspect(leafId: string) {
+  if (["graph", "graphQuery"].includes(leafId)) return 1.55;
+  if (["workspace", "thread", "artifacts", "implementationArtifact"].includes(leafId)) return 1.38;
+  if (["checkpoint", "run", "continue", "heartbeatPulse", "review"].includes(leafId)) return 1.18;
+  if (["heartbeatStatus", "pressure", "reorientVerdict", "runtime"].includes(leafId)) return 1.28;
+  return 1.32;
+}
+
 function AgentConstellation({
   roles,
   roleResults,
@@ -1526,6 +1638,7 @@ function AgentConstellation({
   harmonyFrame,
   focusSurface,
   onAgentOption,
+  onMemberSelect,
   isActionBlocked,
 }: {
   roles: any[];
@@ -1548,6 +1661,7 @@ function AgentConstellation({
   harmonyFrame: AquariumHarmonyFrame | null;
   focusSurface?: (agent: ProjectedAgent) => React.ReactNode;
   onAgentOption?: (option: AquariumOption) => void;
+  onMemberSelect?: (memberId: string) => void;
   isActionBlocked?: (action: OperatorAction) => boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1568,8 +1682,14 @@ function AgentConstellation({
   const focusSurfaceRef = useRef<HTMLDivElement | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [hoveredAgentId, setHoveredAgentId] = useState<string | null>(null);
+  const activeMemberAlive = epiphanyStatusLooksAlive({
+    coordinator,
+    heartbeat,
+    jobs: { jobs },
+    roles: { roles },
+  });
   const agents = useMemo<ProjectedAgent[]>(() => {
-    return constellationSpecs.map((spec) => {
+    const livingAgents: ProjectedAgent[] = activeMemberAlive ? constellationSpecs.map((spec) => {
       const lane = roles.find((role) => text(role.id).toLowerCase() === spec.laneId);
       const result =
         roleResults?.[spec.laneId] ??
@@ -1628,12 +1748,15 @@ function AgentConstellation({
         jobs: ownedJobs.length,
         review,
       };
-    });
-  }, [coordinator, crrc, heartbeat, jobs, latestFaceArtifact, latestHeartbeatEvent, pressure, reorient, reorientResult, roleResults, roles]);
+    }) : [];
+    const sleepingMembers = (swarmMembers ?? [])
+      .filter((member) => !activeMemberAlive || member.id !== activeMember?.id)
+      .map((member, index, members) => dormantMemberAgent(member, index, members.length, member.id === activeMember?.id));
+    return [...livingAgents, ...sleepingMembers];
+  }, [activeMember?.id, activeMemberAlive, coordinator, crrc, heartbeat, jobs, latestFaceArtifact, latestHeartbeatEvent, pressure, reorient, reorientResult, roleResults, roles, swarmMembers]);
   const visibleHarnessMembers = useMemo(() => {
-    const member = activeMember ?? swarmMembers?.[0];
-    return member ? [member] : [];
-  }, [activeMember, swarmMembers]);
+    return swarmMembers ?? [];
+  }, [swarmMembers]);
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0];
   const aquariumAgents = useMemo(() => {
     const optionsByKey = new globalThis.Map<string, AquariumOption>();
@@ -1651,9 +1774,9 @@ function AgentConstellation({
       return {
         ...agent,
         heartbeat: {
-          active: Boolean(text(heartbeat?.status, "")) || Boolean(latestHeartbeatRole),
-          primary: latestHeartbeatRole === text(agent.laneId).toLowerCase() || latestHeartbeatRole === text(agent.id).toLowerCase(),
-          status: text(heartbeat?.status, "idle"),
+          active: !agent.dormant && (Boolean(text(heartbeat?.status, "")) || Boolean(latestHeartbeatRole)),
+          primary: !agent.dormant && (latestHeartbeatRole === text(agent.laneId).toLowerCase() || latestHeartbeatRole === text(agent.id).toLowerCase()),
+          status: agent.dormant ? "sleeping" : text(heartbeat?.status, "idle"),
         },
         harmony: harmonyFrame?.agentVoices[agent.id],
         options,
@@ -2061,12 +2184,15 @@ function AgentConstellation({
     const agentId = rendererRef.current?.pickAgent();
     if (agentId) {
       setSelectedAgentId(agentId);
+      const memberId = aquariumAgents.find((agent) => agent.id === agentId)?.memberId;
+      if (memberId) onMemberSelect?.(memberId);
     } else {
       setSelectedAgentId(null);
     }
   }
   const focusedAgentId = selectedAgentId;
   const focusedAgent = focusedAgentId ? aquariumAgents.find((agent) => agent.id === focusedAgentId) : null;
+  const focusedLivingAgent = focusedAgent?.dormant ? null : focusedAgent;
 
   return (
     <section
@@ -2125,16 +2251,16 @@ function AgentConstellation({
           aria-hidden="true"
         />
         <div className="agentStageVignette" aria-hidden="true" />
-        {focusSurface && focusedAgent && (
+        {focusSurface && focusedLivingAgent && (
           <div
-            className={`agentFocusSurface ${selectedAgentId === focusedAgent.id ? "locked" : "preview"}`}
+            className={`agentFocusSurface ${selectedAgentId === focusedLivingAgent.id ? "locked" : "preview"}`}
             ref={focusSurfaceRef}
-            data-agent-focus={focusedAgent.id}
+            data-agent-focus={focusedLivingAgent.id}
             data-billboard-surface="focus"
             onPointerEnter={(event) => {
-              setHoveredAgentId(focusedAgent.id);
+              setHoveredAgentId(focusedLivingAgent.id);
               updatePointerProjection(event.clientX, event.clientY, event.currentTarget.closest(".agentStage"));
-              rendererRef.current?.setHoveredAgent(focusedAgent.id);
+              rendererRef.current?.setHoveredAgent(focusedLivingAgent.id);
             }}
             onPointerDownCapture={handleInterfacePointerDown}
             onPointerMove={(event) => {
@@ -2144,16 +2270,16 @@ function AgentConstellation({
             onPointerLeave={handleAgentPointerLeave}
             style={
               {
-                "--focus-x-world": `${focusedAgent.baseX}%`,
-                "--focus-y-world": `${focusedAgent.baseY}%`,
-                "--agent-color": focusedAgent.color,
-                "--agent-glow": focusedAgent.glow,
+                "--focus-x-world": `${focusedLivingAgent.baseX}%`,
+                "--focus-y-world": `${focusedLivingAgent.baseY}%`,
+                "--agent-color": focusedLivingAgent.color,
+                "--agent-glow": focusedLivingAgent.glow,
               } as React.CSSProperties
             }
           >
             <svg className="billboardSurfaceSvg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
               <defs>
-                <radialGradient id={`billboard-cursor-${focusedAgent.id}`} cx="50%" cy="50%" r="64%">
+                <radialGradient id={`billboard-cursor-${focusedLivingAgent.id}`} cx="50%" cy="50%" r="64%">
                   <stop offset="0%" stopColor="currentColor" stopOpacity="0.18" />
                   <stop offset="100%" stopColor="currentColor" stopOpacity="0" />
                 </radialGradient>
@@ -2161,18 +2287,19 @@ function AgentConstellation({
               <rect x="1" y="1" width="98" height="98" rx="4" />
               <path d="M8 18 C28 10 72 10 92 18 M8 82 C32 91 68 91 92 82" />
             </svg>
-            {focusSurface(focusedAgent)}
+            {focusSurface(focusedLivingAgent)}
           </div>
         )}
         {agents.map((agent) => (
           <button
-            className={`agentCharacter ${agent.shape} ${agent.tone} ${selectedAgentId === agent.id ? "selected" : ""}`}
+            className={`agentCharacter ${agent.shape} ${agent.tone} ${agent.dormant ? "dormant" : ""} ${selectedAgentId === agent.id ? "selected" : ""}`}
             key={agent.id}
             ref={(node) => bindAgentNode(agent.id, node)}
             type="button"
             data-agent-node={agent.id}
             onClick={() => {
               setSelectedAgentId(agent.id);
+              if (agent.memberId) onMemberSelect?.(agent.memberId);
             }}
             onPointerEnter={(event) => handleAgentPointerEnter(agent.id, event)}
             onPointerDown={() => handleAgentPointerDown(agent.id)}
