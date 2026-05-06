@@ -321,6 +321,7 @@ class ThreeAquariumScene implements AquariumScene3d {
     const halfSize = this.gravityUniforms.uFieldHalfSize.value as THREE.Vector2;
     const origin = this.gravityUniforms.uGravityOrigin.value as THREE.Vector2;
     const margin = 0.045;
+    const near = 1.0;
     const corners = [
       new THREE.Vector3(origin.x - halfSize.x, origin.y - halfSize.y, -0.1),
       new THREE.Vector3(origin.x + halfSize.x, origin.y - halfSize.y, -0.1),
@@ -331,7 +332,6 @@ class ThreeAquariumScene implements AquariumScene3d {
       new THREE.Vector3(origin.x + halfSize.x, origin.y + halfSize.y, 1.7),
       new THREE.Vector3(origin.x - halfSize.x, origin.y + halfSize.y, 1.7),
     ].map((point) => this.camera.position.distanceTo(point));
-    const near = Math.max(0.12, Math.min(...corners) - margin * this.cameraDistance);
     const far = Math.max(near + 0.2, Math.max(...corners) + margin * this.cameraDistance);
     return {
       far,

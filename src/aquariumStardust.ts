@@ -347,6 +347,9 @@ struct SimUniforms {
 @group(0) @binding(4) var<storage, read> previousLighting: array<vec4f>;
 @group(0) @binding(5) var<storage, read_write> nextLighting: array<vec4f>;
 @group(0) @binding(6) var<uniform> uniforms: SimUniforms;
+@group(0) @binding(7) var<storage, read> heightfieldMasks: array<u32>;
+@group(0) @binding(8) var heightmapTex: texture_2d<f32>;
+@group(0) @binding(9) var linearSampler: sampler;
 
 fn index3(x: u32, y: u32, z: u32) -> u32 {
   return z * u32(uniforms.froxelWidth) * u32(uniforms.froxelHeight) + y * u32(uniforms.froxelWidth) + x;
@@ -372,6 +375,44 @@ fn readLighting(index: u32) -> array<vec3f, 4> {
     previousLighting[base + 2u].rgb,
     previousLighting[base + 3u].rgb
   );
+}
+
+fn cameraRay(uv: vec2f) -> vec3f {
+  let top = mix(uniforms.ray00.xyz, uniforms.ray10.xyz, uv.x);
+  let bottom = mix(uniforms.ray01.xyz, uniforms.ray11.xyz, uv.x);
+  return normalize(mix(top, bottom, uv.y));
+}
+
+fn hash(value: f32) -> f32 {
+  return fract(sin(value * 12.9898) * 43758.5453);
+}
+
+fn noise4(point: vec4f) -> f32 {
+  return hash(dot(point, vec4f(12.9898, 78.233, 37.719, 19.19)));
+}
+
+fn fbm4(point: vec4f) -> f32 {
+  var value = 0.0;
+  var amplitude = 0.5;
+  var frequency = 1.0;
+  for (var octave = 0u; octave < 4u; octave = octave + 1u) {
+    value += (noise4(point * frequency) * 2.0 - 1.0) * amplitude;
+    frequency *= 2.03;
+    amplitude *= 0.5;
+  }
+  return value;
+}
+
+fn sampleHeightmap(xy: vec2f) -> vec4f {
+  let uv = xy / vec2f(15.6, 10.8) + vec2f(0.5);
+  let mask = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
+  return textureSampleLevel(heightmapTex, linearSampler, clamp(uv, vec2f(0.0), vec2f(1.0)), 0.0) * mask;
+}
+
+fn gridEdgeFade(xy: vec2f) -> f32 {
+  let centered = abs(xy / vec2f(7.8, 5.4));
+  let edge = max(centered.x, centered.y);
+  return 1.0 - smoothstep(0.78, 1.0, edge);
 }
 
 @compute @workgroup_size(128)
@@ -457,6 +498,26 @@ fn propagateLighting(@builtin(global_invocation_id) id: vec3u) {
     (f32(y) + 0.5) / uniforms.froxelHeight * uniforms.height
   );
   let depth = uniforms.depthNear + (f32(z) + 0.5) / uniforms.froxelDepth * uniforms.depthSpan;
+  let uv = vec2f((f32(x) + 0.5) / uniforms.froxelWidth, (f32(y) + 0.5) / uniforms.froxelHeight);
+  let rayDir = cameraRay(uv);
+  let samplePoint = uniforms.cameraPosition.xyz + rayDir * depth;
+  if (heightfieldMasks[index] != 0u) {
+    let field = sampleHeightmap(samplePoint.xy);
+    let height = field.r - field.g;
+    let fogHeight = samplePoint.z - height;
+    let edgeFade = gridEdgeFade(samplePoint.xy);
+    let lowerShelf = exp(-abs(fogHeight - 0.22) * 2.35);
+    let upperShelf = exp(-abs(fogHeight - 0.82) * 4.0) * 0.22;
+    let flowNoise = fbm4(vec4f(samplePoint.xy * 0.22, fogHeight * 0.7, uniforms.time * 0.035)) * 0.5 + 0.5;
+    let fogDensity = (lowerShelf + upperShelf) * edgeFade * smoothstep(-0.18, 0.18, fogHeight) * (0.52 + flowNoise * 0.76);
+    if (fogDensity > 0.001) {
+      let depthTint = mix(vec3f(0.16, 0.48, 0.62), vec3f(0.76, 1.0, 0.86), clamp(max(-height, 0.0), 0.0, 1.0));
+      let densityWeight = fogDensity * (0.22 + max(-height, 0.0) * 0.1);
+      writeLobe(&lighting, vec3f(0.2, -0.1, 1.0), environment[0].rgb * depthTint, densityWeight * 0.34);
+      writeLobe(&lighting, vec3f(-0.8, 0.25, 0.18), environment[1].rgb * depthTint, densityWeight * 0.24);
+      writeLobe(&lighting, vec3f(0.36, -0.28, 0.89), environment[3].rgb * depthTint, densityWeight * 0.2);
+    }
+  }
   let mask = primitiveMasks[index];
   for (var i = 0u; i < ${maxStardustAgents}u; i = i + 1u) {
     if (f32(i) >= uniforms.count) {
@@ -617,16 +678,17 @@ fn buildHeightfieldMasks(@builtin(global_invocation_id) id: vec3u) {
   let samplePoint = uniforms.cameraPosition.xyz + rayDir * rayDistance;
   let gridUv = samplePoint.xy / vec2f(15.6, 10.8) + vec2f(0.5);
   let insideGrid = gridUv.x >= 0.0 && gridUv.x <= 1.0 && gridUv.y >= 0.0 && gridUv.y <= 1.0;
-  var active = 0u;
+  var isActive = 0u;
   if (insideGrid) {
     let field = sampleHeightmap(samplePoint.xy);
     let surfaceHeight = field.r - field.g;
-    let zSpan = abs(rayDir.z) * halfDepth + 0.18;
-    if (samplePoint.z <= surfaceHeight + zSpan) {
-      active = 1u;
+    let zSpan = abs(rayDir.z) * halfDepth + 0.42;
+    let fogCeiling = 1.05;
+    if (samplePoint.z <= surfaceHeight + fogCeiling + zSpan) {
+      isActive = 1u;
     }
   }
-  heightfieldMasks[index] = active;
+  heightfieldMasks[index] = isActive;
 }
 `;
 
@@ -717,8 +779,29 @@ fn froxelIndex(pixel: vec2f, progress: f32) -> u32 {
   return z * u32(uniforms.froxelWidth) * u32(uniforms.froxelHeight) + y * u32(uniforms.froxelWidth) + x;
 }
 
-fn heightfieldMask(pixel: vec2f, progress: f32) -> bool {
-  return heightfieldMasks[froxelIndex(pixel, progress)] != 0u;
+fn heightfieldSkipCandidate(pixel: vec2f, progress: f32) -> bool {
+  let x = clamp(u32(pixel.x / max(uniforms.width, 1.0) * uniforms.froxelWidth), 0u, u32(uniforms.froxelWidth) - 1u);
+  let y = clamp(u32(pixel.y / max(uniforms.height, 1.0) * uniforms.froxelHeight), 0u, u32(uniforms.froxelHeight) - 1u);
+  let z = clamp(u32(progress * uniforms.froxelDepth), 0u, u32(uniforms.froxelDepth) - 1u);
+  let fw = u32(uniforms.froxelWidth);
+  let fh = u32(uniforms.froxelHeight);
+  let fd = u32(uniforms.froxelDepth);
+  let stride = fw * fh;
+  var occupied = false;
+  let x0 = select(x - 1u, 0u, x == 0u);
+  let x1 = min(x + 1u, fw - 1u);
+  let y0 = select(y - 1u, 0u, y == 0u);
+  let y1 = min(y + 1u, fh - 1u);
+  let z0 = select(z - 1u, 0u, z == 0u);
+  let z1 = min(z + 1u, fd - 1u);
+  for (var zz = z0; zz <= z1; zz = zz + 1u) {
+    for (var yy = y0; yy <= y1; yy = yy + 1u) {
+      for (var xx = x0; xx <= x1; xx = xx + 1u) {
+        occupied = occupied || heightfieldMasks[zz * stride + yy * fw + xx] != 0u;
+      }
+    }
+  }
+  return !occupied;
 }
 
 fn environmentColor(direction: vec3f) -> vec3f {
@@ -755,6 +838,26 @@ fn gridLineFactor(xy: vec2f) -> f32 {
   let grid = abs(fract(xy / cell) - vec2f(0.5));
   let line = 1.0 - smoothstep(0.018, 0.034, min(grid.x, grid.y) * cell);
   return line;
+}
+
+fn gridFogSample(point: vec3f) -> vec4f {
+  let field = sampleHeightmap(point.xy);
+  let height = field.r - field.g;
+  let edgeFade = gridEdgeFade(point.xy);
+  let fogHeight = point.z - height;
+  let lowerShelf = exp(-abs(fogHeight - 0.22) * 2.35);
+  let upperShelf = exp(-abs(fogHeight - 0.82) * 4.0) * 0.22;
+  let flowNoise = fbm4(vec4f(point.xy * 0.22, fogHeight * 0.7, uniforms.time * 0.035)) * 0.5 + 0.5;
+  let verticalWindow = smoothstep(-0.18, 0.18, fogHeight) * (1.0 - smoothstep(1.42, 1.86, fogHeight));
+  let fogBank = (lowerShelf + upperShelf) * edgeFade * verticalWindow * (0.52 + flowNoise * 0.76);
+  let density = fogBank * (0.075 + max(-height, 0.0) * 0.045);
+  let albedo = mix(vec3f(0.62, 0.82, 0.9), vec3f(0.86, 1.0, 0.94), clamp(max(-height, 0.0), 0.0, 1.0));
+  return vec4f(albedo, density);
+}
+
+fn henyeyGreenstein(cosTheta: f32, anisotropy: f32) -> f32 {
+  let g2 = anisotropy * anisotropy;
+  return (1.0 - g2) / max(pow(1.0 + g2 - 2.0 * anisotropy * cosTheta, 1.5) * 12.56637, 0.0001);
 }
 
 fn froxelRadiance(pixel: vec2f, progress: f32, direction: vec3f) -> vec3f {
@@ -795,6 +898,13 @@ fn sphereHit(rayOrigin: vec3f, rayDir: vec3f, center: vec3f, radius: f32) -> f32
   return -b + sqrt(h);
 }
 
+fn blueNoiseOffset(pixel: vec2f, time: f32) -> f32 {
+  let p = floor(pixel);
+  let interleaved = fract(52.9829189 * fract(dot(p, vec2f(0.06711056, 0.00583715))));
+  let temporal = fract(time * 0.61803398875);
+  return -fract(interleaved + temporal);
+}
+
 @fragment
 fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
   let pixel = input.uv * vec2f(uniforms.width, uniforms.height);
@@ -805,12 +915,11 @@ fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
   var solid = vec3f(0.0);
   var solidAlpha = 0.0;
   var solidTransmittance = 1.0;
-  var solidHitT = 100000.0;
-  var solidHitIndex = 999u;
   var surface = vec3f(0.0);
   var surfaceAlpha = 0.0;
   var surfaceTransmittance = 1.0;
-  let jitter = hash(dot(pixel, vec2f(0.067, 0.131)) + uniforms.time * 3.1);
+  var accumulatedDensity = 0.0;
+  let raymarchOffset = blueNoiseOffset(pixel, uniforms.time);
 
   if (abs(rayDir.z) > 0.001) {
     let baseT = (0.0 - rayOrigin.z) / rayDir.z;
@@ -840,59 +949,31 @@ fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
     }
   }
 
-  for (var i = 0u; i < ${maxStardustAgents}u; i = i + 1u) {
-    if (f32(i) >= uniforms.count) {
-      break;
-    }
-    let worldAgent = worldAgents[i];
-    let hitT = sphereHit(rayOrigin, rayDir, worldAgent.xyz, worldAgent.w * 1.16);
-    if (depthWindowFade(hitT) > 0.0 && hitT < solidHitT) {
-      solidHitT = hitT;
-      solidHitIndex = i;
-    }
-  }
-
-  for (var step = 0u; step < 32u; step = step + 1u) {
-    let progress01 = (f32(step) + jitter) / 32.0;
-    let rayDistance = uniforms.depthNear + progress01 * uniforms.depthSpan;
+  var previousRayDistance = uniforms.depthNear;
+  for (var step = 1u; step <= 64u; step = step + 1u) {
+    let exponentialProgress = clamp((f32(step) + raymarchOffset) / 64.0, 0.0, 1.0);
+    let rayDistance = uniforms.depthNear + exponentialProgress * exponentialProgress * uniforms.depthSpan;
+    let progress01 = clamp((rayDistance - uniforms.depthNear) / max(uniforms.depthSpan, 0.0001), 0.0, 1.0);
+    let stepSize = max(rayDistance - previousRayDistance, 0.0001);
     let boundsFade = depthWindowFade(rayDistance);
+    let previousSamplePoint = rayOrigin + rayDir * previousRayDistance;
     let samplePoint = rayOrigin + rayDir * rayDistance;
+    let midSamplePoint = (previousSamplePoint + samplePoint) * 0.5;
+    previousRayDistance = rayDistance;
     var height = 0.0;
     var edgeFade = 0.0;
     var surfaceDistance = 999.0;
-    let heightfieldActive = heightfieldMask(pixel, progress01);
-    if (heightfieldActive) {
-      height = gridHeight(samplePoint.xy);
-      edgeFade = gridEdgeFade(samplePoint.xy) * boundsFade;
-      surfaceDistance = abs(samplePoint.z - height);
-    }
-    let mask = primitiveMask(pixel, progress01);
+    height = gridHeight(samplePoint.xy);
+    edgeFade = gridEdgeFade(samplePoint.xy) * boundsFade;
+    surfaceDistance = abs(samplePoint.z - height);
+    let gridSurfaceActive = edgeFade > 0.0 && samplePoint.z <= height + 0.18;
     var density = 0.0;
     var tint = vec3f(0.0);
+    var saturatedSdfColor = vec3f(0.0);
+    var saturatedSdfWeight = 0.0;
+    let skipGridFog = heightfieldSkipCandidate(pixel, progress01);
 
-    if (solidHitIndex < ${maxStardustAgents}u && rayDistance >= solidHitT) {
-      let worldAgent = worldAgents[solidHitIndex];
-      let color = colors[solidHitIndex];
-      let selfFlag = color.w;
-      let hitPoint = rayOrigin + rayDir * solidHitT;
-      let local = (hitPoint - worldAgent.xyz) / max(worldAgent.w, 0.001);
-      let normal = normalize(local);
-      let plasma = pow(max(fbm4(vec4f(local * mix(1.35, 2.15, selfFlag), uniforms.time * 0.24)) * 0.5 + 0.5, 0.0), mix(2.4, 5.4, selfFlag));
-      let viewDir = normalize(rayOrigin - hitPoint);
-      let reflected = reflect(-viewDir, normal);
-      let fresnel = pow(1.0 - clamp(dot(normal, viewDir), 0.0, 1.0), 4.0);
-      let studioReflection = environmentColor(reflected);
-      let volumeLight = froxelRadiance(pixel, progress01, normal);
-      let diffuseWrap = (environmentColor(normal) * 0.08 + volumeLight * 0.28) * (0.12 + 0.1 * color.rgb);
-      let chrome = diffuseWrap + mix(color.rgb * 0.18, studioReflection, 0.82 + fresnel * 0.16);
-      let solar = vec3f(4.2, 2.1, 0.55) * (0.8 + plasma * 1.5);
-      solid = mix(chrome, solar, selfFlag) * depthWindowFade(solidHitT);
-      solidAlpha = 0.92 * depthWindowFade(solidHitT);
-      solidTransmittance = transmittance;
-      break;
-    }
-
-    if (heightfieldActive && surfaceAlpha < 0.5 && edgeFade > 0.0) {
+    if (gridSurfaceActive && surfaceAlpha < 0.5) {
       let surfaceBand = exp(-surfaceDistance * 26.0) * edgeFade;
       if (surfaceBand > 0.18) {
         let eps = 0.05;
@@ -911,45 +992,83 @@ fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
       }
     }
 
-    if (heightfieldActive) {
-      let fogBank = exp(-abs(samplePoint.z - height - 0.22) * 1.55) * edgeFade;
-      density += fogBank * (0.055 + max(-height, 0.0) * 0.075);
-      tint += fogBank * mix(vec3f(0.18, 0.48, 0.62), vec3f(0.72, 1.0, 0.86), clamp(max(-height, 0.0), 0.0, 1.0)) * 0.095;
+    if (!skipGridFog) {
+      let previousFog = gridFogSample(previousSamplePoint);
+      let midFog = gridFogSample(midSamplePoint);
+      let currentFog = gridFogSample(samplePoint);
+      let fogAlbedo = (previousFog.rgb * previousFog.a + midFog.rgb * midFog.a * 4.0 + currentFog.rgb * currentFog.a)
+        / max(previousFog.a + midFog.a * 4.0 + currentFog.a, 0.0001);
+      let fogDensity = (previousFog.a + midFog.a * 4.0 + currentFog.a) / 6.0 * boundsFade;
+      let lightDir = normalize(vec3f(0.36, -0.28, 0.89));
+      let phase = henyeyGreenstein(dot(rayDir, lightDir), 0.42);
+      let skyLight = environmentColor(vec3f(0.12, -0.08, 1.0)) * 0.72 + environmentColor(-rayDir) * 0.18;
+      let keyLight = environmentColor(lightDir) * phase * 3.2;
+      density += fogDensity;
+      tint += fogAlbedo * fogDensity * (skyLight + keyLight);
     }
 
     for (var i = 0u; i < ${maxStardustAgents}u; i = i + 1u) {
       if (f32(i) >= uniforms.count) {
         break;
       }
-      if ((mask & (1u << i)) == 0u) {
-        continue;
-      }
       let agent = agents[i];
       let worldAgent = worldAgents[i];
       let color = colors[i];
       let selfFlag = color.w;
       let radius = max(worldAgent.w, 0.001);
+      let previousLocal = (previousSamplePoint - worldAgent.xyz) / radius;
+      let midLocal = (midSamplePoint - worldAgent.xyz) / radius;
       let local = (samplePoint - worldAgent.xyz) / radius;
+      let previousDisplacement = fbm4(vec4f(previousLocal * mix(0.72, 1.12, selfFlag), uniforms.time * mix(0.06, 0.16, selfFlag))) * mix(0.035, 0.14, selfFlag);
+      let midDisplacement = fbm4(vec4f(midLocal * mix(0.72, 1.12, selfFlag), uniforms.time * mix(0.06, 0.16, selfFlag))) * mix(0.035, 0.14, selfFlag);
       let displacement = fbm4(vec4f(local * mix(0.72, 1.12, selfFlag), uniforms.time * mix(0.06, 0.16, selfFlag))) * mix(0.035, 0.14, selfFlag);
+      let previousSdf = length(previousLocal) - (1.0 + previousDisplacement);
+      let midSdf = length(midLocal) - (1.0 + midDisplacement);
       let sdf = length(local) - (1.0 + displacement);
       let plasma = pow(max(fbm4(vec4f(local * mix(1.35, 2.15, selfFlag), uniforms.time * 0.24)) * 0.5 + 0.5, 0.0), mix(2.4, 5.4, selfFlag));
-      let atmosphere = exp(-max(sdf, 0.0) * mix(4.6, 2.25, selfFlag));
+      let previousAtmosphere = exp(-max(previousSdf, 0.0) * mix(4.6, 2.25, selfFlag));
+      let midAtmosphere = exp(-max(midSdf, 0.0) * mix(4.6, 2.25, selfFlag));
+      let atmosphere = (previousAtmosphere + midAtmosphere * 4.0 + exp(-max(sdf, 0.0) * mix(4.6, 2.25, selfFlag))) / 6.0;
+      let segmentSdf = min(sdf, min(previousSdf, midSdf));
+      let normalizedStep = stepSize / radius;
+      let solidCore = 1.0 - smoothstep(-0.08, 0.06, segmentSdf);
+      let solidCoverage = clamp((0.12 - segmentSdf) / max(normalizedStep, 0.001), 0.0, 1.0);
+      let normal = normalize(midLocal + vec3f(0.0001, 0.0002, 0.0003));
+      let viewDir = normalize(rayOrigin - samplePoint);
+      let reflected = reflect(-viewDir, normal);
+      let fresnel = pow(1.0 - clamp(dot(normal, viewDir), 0.0, 1.0), 4.0);
+      let studioReflection = environmentColor(reflected);
+      let volumeLight = froxelRadiance(pixel, progress01, normal);
+      let diffuseWrap = (environmentColor(normal) * 0.08 + volumeLight * 0.28) * (0.12 + 0.1 * color.rgb);
+      let chrome = diffuseWrap + mix(color.rgb * 0.18, studioReflection, 0.82 + fresnel * 0.16);
+      let solar = vec3f(4.2, 2.1, 0.55) * (0.8 + plasma * 1.5);
+      let sdfColor = mix(chrome, solar, selfFlag);
+      let solidDensity = solidCore * solidCoverage * mix(12.0, 24.0, selfFlag);
       let localDensity = atmosphere * (0.004 + radius * 0.18 + selfFlag * 0.055) * (0.55 + plasma * mix(0.42, 1.45, selfFlag));
-      density += localDensity * boundsFade;
-      tint += localDensity * boundsFade * mix(color.rgb, vec3f(3.8, 1.85, 0.42), selfFlag);
+      density += (localDensity + solidDensity) * boundsFade;
+      tint += (localDensity * mix(color.rgb, vec3f(3.8, 1.85, 0.42), selfFlag) + solidDensity * sdfColor) * boundsFade;
+      saturatedSdfColor += sdfColor * solidCore * boundsFade;
+      saturatedSdfWeight += solidCore * boundsFade;
     }
 
-    if (solidAlpha > 0.5) {
-      break;
-    }
-
-    let stepSize = 1.0 / 32.0;
     let extinction = density * 4.6;
     let stepTransmittance = exp(-extinction * stepSize);
     let lighting = froxelRadiance(pixel, progress01, vec3f(input.uv - vec2f(0.5), 0.72));
-    let luminance = tint * (0.38 + lighting * 0.72);
+    let luminance = tint * (0.82 + lighting * 0.14);
+    let incomingTransmittance = transmittance;
     scattering += transmittance * (luminance - luminance * stepTransmittance) / max(extinction, 0.0001);
+    let opticalDepth = extinction * stepSize;
+    accumulatedDensity += opticalDepth;
     transmittance *= stepTransmittance;
+    if (accumulatedDensity > 1.05) {
+      let volumeColor = luminance / max(density, 0.0001);
+      let sdfColor = saturatedSdfColor / max(saturatedSdfWeight, 0.0001);
+      let sdfBlend = clamp(saturatedSdfWeight, 0.0, 1.0);
+      solid = mix(volumeColor, sdfColor, sdfBlend);
+      solidAlpha = 0.96;
+      solidTransmittance = incomingTransmittance;
+      break;
+    }
   }
 
   let fogAlpha = clamp(1.0 - transmittance, 0.0, 0.72);
@@ -1137,6 +1256,9 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
         { binding: 4, resource: { buffer: this.lightingBuffers[readIndex] } },
         { binding: 5, resource: { buffer: this.lightingBuffers[1 - readIndex] } },
         { binding: 6, resource: { buffer: this.uniformBuffer } },
+        { binding: 7, resource: { buffer: this.heightfieldMaskBuffer } },
+        { binding: 8, resource: this.heightmapView },
+        { binding: 9, resource: this.sampler },
       ],
     }));
     this.heightmapBindGroup = device.createBindGroup({
@@ -1163,7 +1285,6 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
       label: `froxel render bindings ${lightingIndex}`,
       layout: this.pipeline.getBindGroupLayout(0),
       entries: [
-        { binding: 0, resource: { buffer: this.maskBuffer } },
         { binding: 1, resource: { buffer: this.agentsBuffer } },
         { binding: 2, resource: { buffer: this.colorsBuffer } },
         { binding: 3, resource: { buffer: this.uniformBuffer } },
@@ -1179,6 +1300,7 @@ class WebGpuFroxelFieldOverlay implements AquariumStardustOverlay {
     this.canvas.dataset.stardustMode = "webgpu-froxel-sh-primitive-map";
     this.canvas.dataset.stardustParticles = String(froxelCount);
     this.canvas.dataset.stardustHeightfieldMask = "grid-xy-surface-or-below";
+    this.canvas.dataset.stardustVolumeLighting = "heightfield-fog-sh";
     this.raf = requestAnimationFrame(this.render);
   }
 

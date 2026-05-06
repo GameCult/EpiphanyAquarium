@@ -440,11 +440,7 @@ body:has(.immersiveShell) {
   min-height: 100%;
   border: 0;
   border-radius: 0;
-  background:
-    radial-gradient(circle at 16% 22%, rgba(47, 155, 103, 0.34), transparent 32%),
-    radial-gradient(circle at 82% 18%, rgba(79, 99, 182, 0.32), transparent 30%),
-    radial-gradient(circle at 62% 78%, rgba(207, 90, 47, 0.32), transparent 32%),
-    linear-gradient(135deg, #07110e, #171124 46%, #16241d);
+  background: #050806;
   box-shadow: none;
 }
 
@@ -1274,11 +1270,7 @@ body:has(.immersiveShell) {
   overflow: hidden;
   border: 1px solid #283c35;
   border-radius: 8px;
-  background:
-    radial-gradient(circle at 24% 28%, rgba(100, 152, 100, 0.26), transparent 30%),
-    radial-gradient(circle at 76% 24%, rgba(101, 89, 160, 0.24), transparent 28%),
-    radial-gradient(circle at 68% 78%, rgba(202, 96, 52, 0.24), transparent 32%),
-    #18251f;
+  background: #050806;
   isolation: isolate;
   box-shadow: 0 12px 34px rgba(23, 32, 24, 0.16);
 }
