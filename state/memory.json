@@ -76,6 +76,12 @@
       "Solid SDF hits in the fog pass use stochastic coverage rather than ordinary alpha blending so the renderer keeps the Aetheria transparency/depth contract alive while it grows toward a WebGPU/TAA path.",
       "Next architectural step is to move hard-coded SDF source definitions into a small typed field-source list, then split the monolithic shader into source-field, fog integration, and composition ownership when WebGPU takes over."
     ],
+    "sdf_planet_agents": [
+      "Agent bodies are now field-volume SDF planets, not Three mesh glyphs. DOM captions remain the ID tags and interaction roots; the visible body belongs to the HDR field pass.",
+      "Each planet source carries world XY, mass/activity, height, color, and a Self flag. The shader evaluates a local-domain chrome sphere displaced by cheap 4D fBm where xyz is the planet's local domain and w is time.",
+      "Agent atmospheres are gassy SDF shells whose thickness and density scale with mass/activity. Self is a solar class: higher displacement, warmer emissive shading, and stronger corona/plasma loop noise.",
+      "Keep this path cheap until WebGPU takes over. Per-pixel SDF/fog work can get expensive quickly, so use compact analytic noise and avoid nested source/noise loops in smoke-scale viewports."
+    ],
     "bruneton_atmosphere": [
       "Bruneton's atmospheric scattering model is a precomputed light-transport cache, not a per-frame sky raymarch. Runtime shaders query transmittance, scattering, optional single-Mie, and irradiance textures for sky radiance, aerial perspective, and surface lighting.",
       "The pass graph matters: compute transmittance; compute direct irradiance; compute first-order Rayleigh/Mie scattering; then for orders 2..N compute scattering density, indirect irradiance, and multiple scattering deltas before accumulating them into final textures.",

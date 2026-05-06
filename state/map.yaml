@@ -87,3 +87,4 @@ landed:
   - Mapped the low-frequency agent chirp bank into radial grid vibration channels, preserving the Aetheria split between static wells and gas-giant-like wave breathing.
   - Added a swarm registry seam. `.epiphany-aquarium/swarm.json` registers EpiphanyAgent and AetheriaLore, and the Tauri backend scopes status, actions, codex-home, workspace root, and artifact roots to the selected member.
   - Added the first field-first SDF/fog renderer brick: `src/aquariumScene3d.ts` now raymarches SDF solids and gassy SDF fog against the shared gravity/grid domain with phase-paired triangle noise and stochastic solid coverage.
+  - Replaced visible agent mesh bodies with field-volume chrome planet SDFs. Each swarm member is displaced by cheap local-domain 4D fBm, wrapped in a mass-scaled gassy atmosphere, and Self renders as a solar body with hotter emissive/corona noise.

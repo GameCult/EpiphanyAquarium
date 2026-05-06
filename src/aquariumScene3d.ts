@@ -285,11 +285,7 @@ class ThreeAquariumScene implements AquariumScene3d {
       const height = this.agentHeight(projection);
       group.position.set(target.x, target.y, height);
       group.scale.setScalar(0.9 + projection.z * 0.22 + projection.hover * 0.08);
-      group.rotation.set(0.18 + projection.expression * 0.04, 0, projection.tilt * 0.01);
-      const cup = group.userData.cup as THREE.Mesh | undefined;
-      if (cup?.material instanceof THREE.MeshBasicMaterial) {
-        cup.material.opacity = 0.46 + projection.hover * 0.22 + projection.acknowledgement * 0.18;
-      }
+      group.rotation.set(0, 0, 0);
       if (sourceIndex < maxStardustSources) {
         this.updateStardustSource(sourceIndex, target.x, target.y, projection);
         sourceIndex += 1;
@@ -612,11 +608,13 @@ class ThreeAquariumScene implements AquariumScene3d {
 
   private createFieldVolumeMaterial() {
     const sourceData = Array.from({ length: maxFieldSources }, () => new THREE.Vector4(999, 999, 0, 0));
+    const sourceColors = Array.from({ length: maxFieldSources }, () => new THREE.Vector4(0.52, 1.0, 0.78, 0));
     return new THREE.ShaderMaterial({
       uniforms: {
         uCameraMatrixWorld: { value: new THREE.Matrix4() },
         uCameraPosition: { value: new THREE.Vector3() },
         uCameraTarget: { value: this.cameraTarget },
+        uFieldColors: { value: sourceColors },
         uFieldSources: { value: sourceData },
         uFogSteps: { value: new URLSearchParams(globalThis.location?.search ?? "").has("smoke") ? 28 : 64 },
         uGravityOrigin: this.gravityUniforms.uGravityOrigin,
@@ -641,6 +639,7 @@ class ThreeAquariumScene implements AquariumScene3d {
         uniform mat4 uCameraMatrixWorld;
         uniform vec3 uCameraPosition;
         uniform vec3 uCameraTarget;
+        uniform vec4 uFieldColors[${maxFieldSources}];
         uniform vec4 uFieldSources[${maxFieldSources}];
         uniform int uFogSteps;
         uniform vec2 uGravityOrigin;
@@ -656,6 +655,10 @@ class ThreeAquariumScene implements AquariumScene3d {
           return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
         }
 
+        float hash13(vec3 p) {
+          return fract(sin(dot(p, vec3(17.17, 59.4, 15.13))) * 43758.5453123);
+        }
+
         float tri(float x) {
           return abs(fract(x) - 0.5);
         }
@@ -666,6 +669,29 @@ class ThreeAquariumScene implements AquariumScene3d {
             tri(p.z + tri(p.x)),
             tri(p.y + tri(p.x))
           );
+        }
+
+        float cheapNoise4(vec4 p) {
+          return sin(dot(p, vec4(1.71, 2.43, 3.17, 1.19)))
+            * cos(dot(p, vec4(2.13, -1.37, 1.91, 2.61)))
+            + 0.45 * sin(dot(p, vec4(-1.11, 3.03, 2.07, 1.73)) + sin(p.w + p.x));
+        }
+
+        float fbm4(vec4 p) {
+          float value = 0.0;
+          float amplitude = 0.5;
+          mat3 rot = mat3(
+            0.00, 0.80, 0.60,
+           -0.80, 0.36,-0.48,
+           -0.60,-0.48, 0.64
+          );
+          for (int i = 0; i < 4; i += 1) {
+            value += cheapNoise4(p) * amplitude;
+            p.xyz = rot * p.xyz * 2.03 + vec3(3.7, 1.9, 5.1);
+            p.w = p.w * 1.37 + 2.11;
+            amplitude *= 0.52;
+          }
+          return clamp(value, -1.0, 1.0);
         }
 
         float triNoise3d(vec3 p) {
@@ -699,6 +725,25 @@ class ThreeAquariumScene implements AquariumScene3d {
           return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0) - r;
         }
 
+        float sourceRadius(vec4 source) {
+          return 0.16 + source.z * 0.12 + source.w * 0.035;
+        }
+
+        float sourceDisplacement(vec3 local, float radius, float mass, float selfFlag) {
+          vec3 domain = local / max(radius, 0.001);
+          float grain = fbm4(vec4(domain * mix(1.85, 3.35, selfFlag), uTime * mix(0.12, 0.34, selfFlag)));
+          float ridges = 1.0 - abs(fbm4(vec4(domain * 4.8 + grain, uTime * 0.58)) * 1.35);
+          float loops = pow(clamp(ridges, 0.0, 1.0), 4.2) * selfFlag;
+          return grain * radius * mix(0.08, 0.24, selfFlag) * (0.65 + mass * 0.8) + loops * radius * 0.34;
+        }
+
+        float planetSdf(vec3 p, vec4 source, float selfFlag) {
+          vec3 center = vec3(source.xy, 0.54 + source.w * 0.55);
+          float radius = sourceRadius(source);
+          vec3 local = p - center;
+          return length(local) - radius - sourceDisplacement(local, radius, source.z, selfFlag);
+        }
+
         vec4 sampleGravity(vec2 xy) {
           vec2 uv = (xy - uGravityOrigin) / uGravitySize + 0.5;
           float mask = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
@@ -711,31 +756,37 @@ class ThreeAquariumScene implements AquariumScene3d {
         }
 
         float solidSdf(vec3 p, out vec3 color) {
-          vec3 anchor = uCameraTarget;
-          float sphere = sdSphere(p - (anchor + vec3(-1.45, 0.72, 0.72)), 0.34);
-          float box = sdRoundBox(p - (anchor + vec3(1.55, -0.88, 0.58)), vec3(0.34, 0.22, 0.28), 0.12);
           float agentSolid = 999.0;
           vec3 agentColor = vec3(0.55, 1.0, 0.78);
           for (int i = 0; i < ${maxFieldSources}; i += 1) {
             vec4 source = uFieldSources[i];
-            vec3 center = vec3(source.xy, 0.54 + source.w * 0.55);
-            float d = sdSphere(p - center, 0.12 + source.z * 0.06);
+            vec4 sourceColor = uFieldColors[i];
+            float d = planetSdf(p, source, sourceColor.w);
             if (d < agentSolid) {
               agentSolid = d;
-              agentColor = mix(vec3(0.42, 0.96, 0.82), vec3(1.0, 0.82, 0.42), clamp(source.z, 0.0, 1.0));
+              agentColor = sourceColor.rgb;
             }
           }
-          float d = sphere;
-          color = vec3(0.72, 1.0, 0.88);
-          if (box < d) {
-            d = box;
-            color = vec3(1.0, 0.72, 0.48);
+          color = agentColor;
+          return agentSolid;
+        }
+
+        float nearestPlanet(vec3 p, out vec4 source, out vec4 sourceColor, out float sdfValue) {
+          float nearest = 999.0;
+          source = vec4(999.0, 999.0, 0.0, 0.0);
+          sourceColor = vec4(0.5, 1.0, 0.76, 0.0);
+          for (int i = 0; i < ${maxFieldSources}; i += 1) {
+            vec4 candidate = uFieldSources[i];
+            vec4 candidateColor = uFieldColors[i];
+            float d = planetSdf(p, candidate, candidateColor.w);
+            if (d < nearest) {
+              nearest = d;
+              source = candidate;
+              sourceColor = candidateColor;
+            }
           }
-          if (agentSolid < d) {
-            d = agentSolid;
-            color = agentColor;
-          }
-          return d;
+          sdfValue = nearest;
+          return nearest;
         }
 
         float gasDensity(vec3 p, vec3 rayDir) {
@@ -758,8 +809,15 @@ class ThreeAquariumScene implements AquariumScene3d {
           float sourceFog = 0.0;
           for (int i = 0; i < ${maxFieldSources}; i += 1) {
             vec4 source = uFieldSources[i];
-            vec2 delta = p.xy - source.xy;
-            sourceFog += exp(-dot(delta, delta) * 0.72 - abs(p.z - 0.62) * 1.8) * (0.05 + source.z * 0.11);
+            vec4 sourceColor = uFieldColors[i];
+            vec3 center = vec3(source.xy, 0.54 + source.w * 0.55);
+            float radius = sourceRadius(source);
+            float selfFlag = sourceColor.w;
+            float d = planetSdf(p, source, selfFlag);
+            float shell = exp(-max(d, 0.0) / max(radius * mix(0.28, 0.82, selfFlag) * (0.78 + source.z * 0.55), 0.001));
+            float outside = smoothstep(-0.025, 0.08, d);
+            float loopNoise = pow(max(0.0, fbm4(vec4((p - center) / max(radius, 0.001) * 3.5, uTime * 0.42)) * 0.5 + 0.5), mix(2.6, 7.0, selfFlag));
+            sourceFog += shell * outside * (0.035 + source.z * 0.12 + selfFlag * 0.36) * (0.55 + loopNoise * mix(0.7, 2.4, selfFlag));
           }
           vec2 pointerDelta = p.xy - uPointer.xy;
           float pointerFog = exp(-dot(pointerDelta, pointerDelta) * 1.1 - abs(p.z - 0.28) * 2.2) * uPointer.z * 0.18;
@@ -772,6 +830,16 @@ class ThreeAquariumScene implements AquariumScene3d {
           vec3 base = mix(vec3(0.18, 0.92, 0.72), vec3(1.0, 0.72, 0.42), clamp(field.b * 2.5, 0.0, 1.0));
           vec3 cool = vec3(0.22, 0.46, 0.72);
           return mix(cool, base, clamp(density * 8.0, 0.0, 1.0));
+        }
+
+        vec3 atmosphereTint(vec3 p) {
+          vec4 nearestSource;
+          vec4 nearestColor;
+          float d;
+          nearestPlanet(p, nearestSource, nearestColor, d);
+          float selfFlag = nearestColor.w;
+          vec3 solar = vec3(2.8, 1.65, 0.46);
+          return mix(nearestColor.rgb * 0.95 + vec3(0.08, 0.22, 0.18), solar, selfFlag);
         }
 
         vec3 estimateNormal(vec3 p) {
@@ -811,15 +879,27 @@ class ThreeAquariumScene implements AquariumScene3d {
               solidHit = 1.0;
               solidT = t;
               vec3 normal = estimateNormal(p);
+              vec4 hitSource;
+              vec4 hitColor;
+              float hitSdf;
+              nearestPlanet(p, hitSource, hitColor, hitSdf);
+              float selfFlag = hitColor.w;
+              vec3 viewDir = normalize(rayOrigin - p);
+              vec3 reflected = reflect(-viewDir, normal);
+              vec3 sky = mix(vec3(0.04, 0.12, 0.18), vec3(0.62, 0.98, 0.86), clamp(reflected.z * 0.5 + 0.5, 0.0, 1.0));
+              float fresnel = pow(1.0 - clamp(dot(normal, viewDir), 0.0, 1.0), 4.0);
               float light = clamp(dot(normal, normalize(vec3(-0.32, 0.44, 0.84))) * 0.5 + 0.5, 0.0, 1.0);
-              solidColor = localSolidColor * (0.36 + light * 0.9) + localSolidColor * 0.35;
+              float plasma = pow(clamp(fbm4(vec4((p - vec3(hitSource.xy, 0.54 + hitSource.w * 0.55)) / max(sourceRadius(hitSource), 0.001) * 5.4, uTime * 0.62)) * 0.5 + 0.5, 0.0, 1.0), 5.0);
+              vec3 chrome = mix(localSolidColor * (0.18 + light * 0.28), sky * 1.55, 0.72 + fresnel * 0.22);
+              vec3 solar = vec3(4.2, 2.15, 0.56) * (0.74 + plasma * 1.7) + vec3(1.2, 0.32, 0.08) * fresnel;
+              solidColor = mix(chrome + localSolidColor * fresnel * 0.7, solar, selfFlag);
               break;
             }
             float stepSize = maxT / max(float(uFogSteps), 1.0) * (0.45 + progress * 1.45);
             float d = gasDensity(p, rayDir);
             float extinction = d * 0.82;
             float stepTransmittance = exp(-extinction * stepSize);
-            vec3 luminance = fogTint(p, d) * d * 1.35;
+            vec3 luminance = mix(fogTint(p, d), atmosphereTint(p), clamp(d * 4.0, 0.0, 1.0)) * d * 1.35;
             scattering += transmittance * (luminance - luminance * stepTransmittance) / max(extinction, 0.0001);
             transmittance *= stepTransmittance;
             if (transmittance < 0.015) break;
@@ -853,39 +933,23 @@ class ThreeAquariumScene implements AquariumScene3d {
   private updateFieldSource(index: number, x: number, y: number, projection: SceneProjection) {
     if (index < 0 || index >= maxFieldSources) return;
     const sources = this.fieldVolumeMaterial.uniforms.uFieldSources.value as THREE.Vector4[];
+    const colors = this.fieldVolumeMaterial.uniforms.uFieldColors.value as THREE.Vector4[];
     if (!sources[index]) return;
-    sources[index].set(x, y, clamp(0.22 + projection.expression * 0.34 + projection.acknowledgement * 0.9, 0, 1.4), projection.z ?? 0);
+    const mass = projection.id === "coordinator"
+      ? clamp(1.18 + projection.expression * 0.26 + projection.acknowledgement * 0.42, 0, 1.65)
+      : clamp(0.22 + projection.expression * 0.34 + projection.acknowledgement * 0.9, 0, 1.4);
+    sources[index].set(x, y, mass, projection.z ?? 0);
+    if (colors[index]) {
+      const color = new THREE.Color(projection.color ?? "#8fffd3");
+      const glow = new THREE.Color(projection.glow ?? projection.color ?? "#8fffd3");
+      const body = projection.id === "coordinator" ? glow.lerp(new THREE.Color("#ffd15e"), 0.46) : color.lerp(glow, 0.42);
+      colors[index].set(body.r, body.g, body.b, projection.id === "coordinator" ? 1 : 0);
+    }
   }
 
   private createAgent(projection: SceneProjection) {
-    const color = new THREE.Color(projection.color ?? "#8fffd3");
-    const glow = new THREE.Color(projection.glow ?? projection.color ?? "#8fffd3");
     const group = new THREE.Group();
-    const cup = new THREE.Mesh(
-      new THREE.TorusGeometry(0.42, 0.035, 12, 64),
-      new THREE.MeshBasicMaterial({ color: glow, opacity: 0.38, transparent: true, depthWrite: false }),
-    );
-    cup.position.z = -0.43;
-    const anchor = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.015, 0.015, 0.78, 8),
-      new THREE.MeshBasicMaterial({ color: glow, opacity: 0.28, transparent: true, depthWrite: false }),
-    );
-    anchor.rotation.x = Math.PI / 2;
-    anchor.position.z = -0.04;
-    const body = new THREE.Mesh(
-      new THREE.OctahedronGeometry(0.24, 0),
-      new THREE.MeshStandardMaterial({
-        color,
-        emissive: glow,
-        emissiveIntensity: 0.64,
-        metalness: 0.18,
-        roughness: 0.32,
-        transparent: false,
-        opacity: 1,
-      }),
-    );
-    group.add(cup, anchor, body);
-    group.userData.cup = cup;
+    group.userData.agentId = projection.id;
     this.agentGroups.set(projection.id, group);
     this.scene.add(group);
     return group;

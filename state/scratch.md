@@ -185,3 +185,12 @@ Current slice:
   global transport fields. Captured as
   `notes/bruneton-atmospheric-scattering-map.md` and `bruneton_atmosphere`
   memory.
+- Current SDF planet pass: visible swarm bodies are no longer Three mesh
+  octahedra/cups/anchors. `src/aquariumScene3d.ts` keeps invisible groups only
+  as projection anchors; the field-volume shader renders each agent as a chrome
+  planet SDF displaced by cheap 4D fBm in local xyz plus time. Each source
+  carries mass/activity, height, color, and a Self flag. Atmosphere shells scale
+  with mass; Self uses solar emissive shading and stronger displacement/corona
+  noise. Build passed, and `EPIPHANY_SMOKE_PORT=14920 npm run smoke:visual`
+  passed after replacing the first expensive nested 4D value-noise draft with a
+  cheaper analytic fBm.
