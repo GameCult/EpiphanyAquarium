@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-dev = ["bevy/dynamic_linking"]
+dev = []
 hotpatch = ["dev", "bevy/hotpatching"]
 
 [dependencies]
