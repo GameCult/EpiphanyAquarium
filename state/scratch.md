@@ -277,3 +277,7 @@ Current slice:
   the heightfield and fading at the radius. The pass is Bruneton-inspired in
   contract: transmittance plus in-scatter along the camera ray, lit by the
   cached field. Full compute precomputed textures remain future work.
+- Current sampling cleanup: the visible vertical atmosphere bands came from
+  exposing the compact SH froxel lattice. The shader now trilinear-filters SH
+  reads, uses a 12x7x8 light grid, softens the radial fade, and jitters
+  terrain/atmosphere ray steps with stable interleaved noise.
