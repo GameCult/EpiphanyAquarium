@@ -321,11 +321,10 @@ Current slice:
   visibility payloads into Bevy's deferred G-buffer. This is a diagnostic
   bridge, not the final lighting model; restore PBR/SH authority only after
   hits are visibly proven.
-- Current Grid volume invariant: Grid scale is now camera-volume aware. The
-  half extent is the max of zoom scale, camera XY offset from the target, and
-  camera height divided by the shader's `grid_volume_top = half_extent * 0.18`
-  ratio, with a small margin. This keeps the camera inside the Grid-bound
-  lighting/raymarch volume instead of sampling from above the box.
+- Current Grid volume invariant: Grid radius is camera zoom distance. Pitch and
+  yaw must not resize the Grid; the shader volume height now matches the radius
+  so the camera stays barely inside the local volume without angle-coupled scale
+  churn.
 - Current self-distillation pass: pruned React/WebGL-era memory into
   `legacy_web_stack` fallback status, added Rust/Bevy/WGPU VFX doctrine, and
   distilled Aetheria's nebula shader as a Grid-domain contract: surface height,
@@ -486,3 +485,7 @@ Current slice:
   is energy-conserving, low intensity, low high-pass frequency, and high
   low-frequency boost so HDR solar energy spreads softly instead of blasting
   the whole scene.
+- Current lighting simplification: removed the default timed Self flare pulse
+  from Bevy SH lighting. The old pulse ran every 2.15 seconds and injected an
+  outward carried radiance wave; future flare work should be explicit debug or
+  interaction state, not idle lighting noise.

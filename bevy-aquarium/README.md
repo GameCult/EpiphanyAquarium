@@ -62,9 +62,14 @@ Current pass:
   occupancy, SH lighting, and the deferred raymarch sample it.
 - The density-history experiment is removed; the current renderer is back to
   making the sun and planets read before field complexity returns.
+- The Grid radius is the camera zoom distance. Orbit angle does not resize the
+  Grid; the shader volume height matches the radius so the camera stays just
+  inside the local volume.
 - The camera renders through an HDR intermediate with `Tonemapping::AcesFitted`
   and gentle wide bloom before tonemapping, so solar emissive values can spread
   without flattening the whole scene.
+- Default SH lighting is steady; timed solar flare pulses are parked until they
+  return as explicit field events.
 
 Next renderer pass:
 

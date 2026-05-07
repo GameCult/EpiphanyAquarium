@@ -56,8 +56,6 @@ use std::time::Duration;
 const GRID_BASE_HALF_EXTENT: f32 = 42.0;
 const GRID_MIN_HALF_EXTENT: f32 = 12.0;
 const GRID_MAX_HALF_EXTENT: f32 = 720.0;
-const GRID_VOLUME_TOP_RATIO: f32 = 0.18;
-const GRID_CAMERA_VOLUME_MARGIN: f32 = 1.08;
 const BODY_RADIUS: f32 = 0.9;
 const SELF_RADIUS: f32 = 1.25;
 const GRID_Z: f32 = 0.0;
@@ -605,15 +603,8 @@ fn grid_center_from_array(value: [f32; 3]) -> Vec3 {
     Vec3::new(value[0], value[1], GRID_Z)
 }
 
-fn grid_half_extent_for_camera(distance: f32, pitch: f32) -> f32 {
-    let zoom_extent = GRID_BASE_HALF_EXTENT * (distance / 34.0);
-    let horizontal_extent = distance * pitch.cos().abs() * GRID_CAMERA_VOLUME_MARGIN;
-    let vertical_extent =
-        distance * pitch.sin().max(0.0) * GRID_CAMERA_VOLUME_MARGIN / GRID_VOLUME_TOP_RATIO;
-    zoom_extent
-        .max(horizontal_extent)
-        .max(vertical_extent)
-        .clamp(GRID_MIN_HALF_EXTENT, GRID_MAX_HALF_EXTENT)
+fn grid_half_extent_for_camera(distance: f32, _pitch: f32) -> f32 {
+    distance.clamp(GRID_MIN_HALF_EXTENT, GRID_MAX_HALF_EXTENT)
 }
 
 #[derive(Resource, Default)]

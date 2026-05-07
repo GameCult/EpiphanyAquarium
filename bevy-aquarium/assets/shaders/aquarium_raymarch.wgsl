@@ -66,7 +66,6 @@ const LIGHT_BRICK_COUNT: u32 = LIGHT_BRICK_WIDTH * LIGHT_BRICK_HEIGHT * LIGHT_BR
 const LIGHT_BRICK_TERRAIN: u32 = 1u;
 const LIGHT_BRICK_BODY: u32 = 2u;
 const LIGHT_BRICK_SELF: u32 = 4u;
-const LIGHT_BRICK_FLARE: u32 = 8u;
 const SH_L0_OFFSET: u32 = 0u;
 const SH_L1X_OFFSET: u32 = LIGHT_GRID_COUNT;
 const SH_L1Y_OFFSET: u32 = LIGHT_GRID_COUNT * 2u;
@@ -118,7 +117,7 @@ fn grid_edge_fade(xy: vec2f) -> f32 {
 }
 
 fn grid_volume_top(half_extent: f32) -> f32 {
-    return max(8.0, half_extent * 0.18);
+    return max(8.0, half_extent);
 }
 
 fn analytic_grid_height(xy: vec2f) -> f32 {
@@ -328,12 +327,6 @@ fn write_sh(index: u32, l0: vec4f, l1x: vec4f, l1y: vec4f, l1z: vec4f) {
     next_sh_volume.values[SH_L1Z_OFFSET + index] = vec4f(clamp(l1z.rgb, vec3f(0.0), vec3f(18.0)), 0.0);
 }
 
-fn flare_impulse(phase: f32) -> f32 {
-    let rise = smoothstep(0.015, 0.08, phase);
-    let fall = 1.0 - smoothstep(0.12, 0.32, phase);
-    return rise * fall;
-}
-
 @compute @workgroup_size(64)
 fn cs_update_grid_height(@builtin(global_invocation_id) id: vec3u) {
     let index = id.x;
@@ -383,14 +376,6 @@ fn cs_update_light_bricks(@builtin(global_invocation_id) id: vec3u) {
         }
         if (self_flag > 0.5 && outside_distance <= influence_radius * 1.8) {
             flags |= LIGHT_BRICK_SELF;
-        }
-        let flare_phase = fract(field.time / 2.15);
-        let impulse = flare_impulse(flare_phase);
-        let flare_radius = field.grid_half_extent * (0.16 + 0.72 * flare_phase);
-        let flare_width = max(field.grid_half_extent * 0.16, 2.0);
-        let distance_to_self = distance(center.xy, body.xy);
-        if (self_flag > 0.5 && impulse > 0.0 && abs(distance_to_self - flare_radius) <= flare_width) {
-            flags |= LIGHT_BRICK_FLARE;
         }
     }
 
@@ -450,7 +435,7 @@ fn cs_grid_lighting(@builtin(global_invocation_id) id: vec3u) {
         let n = vec3i(i32(x), i32(y), i32(z)) + neighbors[i];
         if (all(n >= vec3i(0)) && n.x < i32(LIGHT_GRID_WIDTH) && n.y < i32(LIGHT_GRID_HEIGHT) && n.z < i32(LIGHT_GRID_DEPTH)) {
             let ni = light_grid_index_xyz(u32(n.x), u32(n.y), u32(n.z));
-            let scatter = select(0.016, 0.026, (brick_flags & (LIGHT_BRICK_BODY | LIGHT_BRICK_SELF | LIGHT_BRICK_FLARE)) != 0u);
+            let scatter = select(0.016, 0.026, (brick_flags & (LIGHT_BRICK_BODY | LIGHT_BRICK_SELF)) != 0u);
             l0 += previous_coeff_at(ni, SH_L0_OFFSET) * scatter;
             l1x += previous_coeff_at(ni, SH_L1X_OFFSET) * scatter;
             l1y += previous_coeff_at(ni, SH_L1Y_OFFSET) * scatter;
@@ -458,7 +443,7 @@ fn cs_grid_lighting(@builtin(global_invocation_id) id: vec3u) {
         }
     }
 
-    if ((brick_flags & (LIGHT_BRICK_BODY | LIGHT_BRICK_SELF | LIGHT_BRICK_FLARE)) != 0u) {
+    if ((brick_flags & (LIGHT_BRICK_BODY | LIGHT_BRICK_SELF)) != 0u) {
         let detail_phase = sin(dot(point, vec3f(0.31, -0.23, 0.47)) + field.time * 1.7);
         let twist = vec2f(-local.y, local.x) * (0.45 + 0.2 * detail_phase);
         let detailed_xy = xy - twist * field.grid_half_extent * 0.018;
@@ -477,34 +462,13 @@ fn cs_grid_lighting(@builtin(global_invocation_id) id: vec3u) {
         let to_sun = sun_position - point;
         let distance = max(length(to_sun), 0.001);
         let direction = to_sun / distance;
-        let outward = -direction;
         let strength = exp(-distance * 0.045) * 8.6 * edge_fade;
-        let flare_phase = fract(field.time / 2.15);
-        let impulse = flare_impulse(flare_phase);
-        let push_distance = field.grid_half_extent * (0.11 + 0.045 * sin(distance * 0.72 + height_above_grid * 0.34)) * impulse;
-        let pushed_from_xy = point.xy - outward.xy * push_distance;
-        let pushed_sample = previous_grid_volume_position(pushed_from_xy, height_above_grid);
-        let carried_l0 = previous_coeff_sample(pushed_sample, SH_L0_OFFSET);
-        let carried_l1x = previous_coeff_sample(pushed_sample, SH_L1X_OFFSET);
-        let carried_l1y = previous_coeff_sample(pushed_sample, SH_L1Y_OFFSET);
-        let carried_l1z = previous_coeff_sample(pushed_sample, SH_L1Z_OFFSET);
-        let wave_gain = impulse * edge_fade * smoothstep(0.5, field.grid_half_extent * 0.92, distance);
-        l0 += carried_l0 * wave_gain * 0.42;
-        l1x += carried_l1x * wave_gain * 0.42;
-        l1y += carried_l1y * wave_gain * 0.42;
-        l1z += carried_l1z * wave_gain * 0.42;
-
-        let source_core = exp(-pow(distance / max(field.grid_half_extent * 0.08, 0.75), 2.0));
-        let source_ripple = 0.72 + 0.28 * sin(distance * 2.35 - field.time * 18.0 + height_above_grid * 0.9);
-        let source_flare = impulse * source_core * source_ripple * exp(-height_above_grid / max(top * 0.42, 0.001)) * edge_fade;
-        let radiance = vec3f(4.4, 2.35, 0.72) * min(strength, 9.0)
-            + vec3f(8.6, 2.85, 0.44) * max(source_flare, 0.0) * 8.0;
+        let radiance = vec3f(4.4, 2.35, 0.72) * min(strength, 9.0);
         let rgb = vec4f(radiance, 0.0);
         l0 += rgb * 0.282095;
-        let flare_direction = normalize(mix(direction, outward, impulse * source_core));
-        l1x += rgb * (0.488603 * flare_direction.x);
-        l1y += rgb * (0.488603 * flare_direction.y);
-        l1z += rgb * (0.488603 * flare_direction.z);
+        l1x += rgb * (0.488603 * direction.x);
+        l1y += rgb * (0.488603 * direction.y);
+        l1z += rgb * (0.488603 * direction.z);
     }
 
     l0 *= edge_fade;
