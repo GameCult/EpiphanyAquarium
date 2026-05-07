@@ -42,7 +42,7 @@ struct GridHeightField {
     samples: array<vec4f>,
 };
 
-struct FogHistory {
+struct GridDensityHistory {
     samples: array<vec4f>,
 };
 
@@ -54,13 +54,13 @@ struct FogHistory {
 @group(0) @binding(5) var<storage, read_write> next_sh_volume: ShVolume;
 @group(0) @binding(6) var<storage, read_write> light_bricks: BrickMap;
 @group(0) @binding(7) var<storage, read_write> grid_height_field: GridHeightField;
-@group(0) @binding(8) var<storage, read> previous_fog_history: FogHistory;
-@group(0) @binding(9) var<storage, read_write> next_fog_history: FogHistory;
+@group(0) @binding(8) var<storage, read> read_grid_density_history: GridDensityHistory;
+@group(0) @binding(9) var<storage, read_write> next_grid_density_history: GridDensityHistory;
 
 const GRID_FIELD_SIZE: u32 = 128u;
-const FOG_HISTORY_WIDTH: u32 = 64u;
-const FOG_HISTORY_HEIGHT: u32 = 64u;
-const FOG_HISTORY_COUNT: u32 = FOG_HISTORY_WIDTH * FOG_HISTORY_HEIGHT;
+const GRID_DENSITY_HISTORY_WIDTH: u32 = 64u;
+const GRID_DENSITY_HISTORY_HEIGHT: u32 = 64u;
+const GRID_DENSITY_HISTORY_COUNT: u32 = GRID_DENSITY_HISTORY_WIDTH * GRID_DENSITY_HISTORY_HEIGHT;
 const FROXEL_WIDTH: u32 = 16u;
 const FROXEL_HEIGHT: u32 = 9u;
 const FROXEL_DEPTH: u32 = 16u;
@@ -157,8 +157,8 @@ fn grid_field_index(x: u32, y: u32) -> u32 {
     return y * GRID_FIELD_SIZE + x;
 }
 
-fn fog_history_index(x: u32, y: u32) -> u32 {
-    return y * FOG_HISTORY_WIDTH + x;
+fn grid_density_history_index(x: u32, y: u32) -> u32 {
+    return y * GRID_DENSITY_HISTORY_WIDTH + x;
 }
 
 fn grid_height(xy: vec2f) -> f32 {
@@ -183,30 +183,30 @@ fn grid_normal_from_sample(sample: vec4f) -> vec3f {
     return normalize(vec3f(-sample.y, -sample.z, cell_world * 2.0));
 }
 
-fn fog_history_density_at(local: vec2f) -> vec4f {
+fn grid_density_history_density_at(local: vec2f) -> vec4f {
     let uv = clamp(local * 0.5 + vec2f(0.5), vec2f(0.0), vec2f(1.0));
-    let p = uv * vec2f(f32(FOG_HISTORY_WIDTH - 1u), f32(FOG_HISTORY_HEIGHT - 1u));
+    let p = uv * vec2f(f32(GRID_DENSITY_HISTORY_WIDTH - 1u), f32(GRID_DENSITY_HISTORY_HEIGHT - 1u));
     let base = vec2u(floor(p));
-    let next = min(base + vec2u(1u), vec2u(FOG_HISTORY_WIDTH - 1u, FOG_HISTORY_HEIGHT - 1u));
+    let next = min(base + vec2u(1u), vec2u(GRID_DENSITY_HISTORY_WIDTH - 1u, GRID_DENSITY_HISTORY_HEIGHT - 1u));
     let f = fract(p);
-    let s00 = previous_fog_history.samples[fog_history_index(base.x, base.y)];
-    let s10 = previous_fog_history.samples[fog_history_index(next.x, base.y)];
-    let s01 = previous_fog_history.samples[fog_history_index(base.x, next.y)];
-    let s11 = previous_fog_history.samples[fog_history_index(next.x, next.y)];
+    let s00 = read_grid_density_history.samples[grid_density_history_index(base.x, base.y)];
+    let s10 = read_grid_density_history.samples[grid_density_history_index(next.x, base.y)];
+    let s01 = read_grid_density_history.samples[grid_density_history_index(base.x, next.y)];
+    let s11 = read_grid_density_history.samples[grid_density_history_index(next.x, next.y)];
     return mix(mix(s00, s10, f.x), mix(s01, s11, f.x), f.y);
 }
 
-fn debug_fog_history_at(xy: vec2f) -> vec4f {
+fn debug_grid_density_history_at(xy: vec2f) -> vec4f {
     let local = grid_local(xy);
     let uv = clamp(local * 0.5 + vec2f(0.5), vec2f(0.0), vec2f(1.0));
-    let p = uv * vec2f(f32(FOG_HISTORY_WIDTH - 1u), f32(FOG_HISTORY_HEIGHT - 1u));
+    let p = uv * vec2f(f32(GRID_DENSITY_HISTORY_WIDTH - 1u), f32(GRID_DENSITY_HISTORY_HEIGHT - 1u));
     let base = vec2u(floor(p));
-    let next = min(base + vec2u(1u), vec2u(FOG_HISTORY_WIDTH - 1u, FOG_HISTORY_HEIGHT - 1u));
+    let next = min(base + vec2u(1u), vec2u(GRID_DENSITY_HISTORY_WIDTH - 1u, GRID_DENSITY_HISTORY_HEIGHT - 1u));
     let f = fract(p);
-    let s00 = previous_fog_history.samples[fog_history_index(base.x, base.y)];
-    let s10 = previous_fog_history.samples[fog_history_index(next.x, base.y)];
-    let s01 = previous_fog_history.samples[fog_history_index(base.x, next.y)];
-    let s11 = previous_fog_history.samples[fog_history_index(next.x, next.y)];
+    let s00 = read_grid_density_history.samples[grid_density_history_index(base.x, base.y)];
+    let s10 = read_grid_density_history.samples[grid_density_history_index(next.x, base.y)];
+    let s01 = read_grid_density_history.samples[grid_density_history_index(base.x, next.y)];
+    let s11 = read_grid_density_history.samples[grid_density_history_index(next.x, next.y)];
     return mix(mix(s00, s10, f.x), mix(s01, s11, f.x), f.y);
 }
 
@@ -374,7 +374,7 @@ fn flare_impulse(phase: f32) -> f32 {
     return rise * fall;
 }
 
-fn fog_source_density(xy: vec2f) -> f32 {
+fn grid_density_source(xy: vec2f) -> f32 {
     let sample = grid_sample(xy);
     let slope = length(sample.yz) / max((field.grid_half_extent * 2.0) / f32(GRID_FIELD_SIZE - 1u), 0.001);
     let cup = smoothstep(0.02, 0.9, max(-sample.x, 0.0));
@@ -405,27 +405,27 @@ fn cs_update_grid_height(@builtin(global_invocation_id) id: vec3u) {
 }
 
 @compute @workgroup_size(64)
-fn cs_update_fog_history(@builtin(global_invocation_id) id: vec3u) {
+fn cs_update_grid_density_history(@builtin(global_invocation_id) id: vec3u) {
     let index = id.x;
-    if (index >= FOG_HISTORY_COUNT) {
+    if (index >= GRID_DENSITY_HISTORY_COUNT) {
         return;
     }
-    let y = index / FOG_HISTORY_WIDTH;
-    let x = index - y * FOG_HISTORY_WIDTH;
+    let y = index / GRID_DENSITY_HISTORY_WIDTH;
+    let x = index - y * GRID_DENSITY_HISTORY_WIDTH;
     let uv = vec2f(
-        (f32(x) + 0.5) / f32(FOG_HISTORY_WIDTH),
-        (f32(y) + 0.5) / f32(FOG_HISTORY_HEIGHT),
+        (f32(x) + 0.5) / f32(GRID_DENSITY_HISTORY_WIDTH),
+        (f32(y) + 0.5) / f32(GRID_DENSITY_HISTORY_HEIGHT),
     );
     let local = uv * 2.0 - vec2f(1.0);
     let xy = field.grid_center + local * field.grid_half_extent;
-    let density = fog_source_density(xy);
+    let density = grid_density_source(xy);
     let previous_local = (xy - field.previous_grid_center) / max(field.previous_grid_half_extent, 0.001);
-    let previous = fog_history_density_at(previous_local);
+    let previous = grid_density_history_density_at(previous_local);
     let inside_previous = select(0.0, 1.0, all(abs(previous_local) <= vec2f(1.0)));
     let rejection = clamp(abs(density - previous.x) * 2.2 + (1.0 - inside_previous), 0.0, 1.0);
     let history_weight = (1.0 - rejection) * exp(-field.delta_time * 1.8);
     let blended = mix(density, previous.x, clamp(history_weight, 0.0, 0.92));
-    next_fog_history.samples[index] = vec4f(blended, density, rejection, inside_previous);
+    next_grid_density_history.samples[index] = vec4f(blended, density, rejection, inside_previous);
 }
 
 @compute @workgroup_size(64)
@@ -593,7 +593,41 @@ fn atmosphere_sample(point: vec3f) -> f32 {
     }
     let surface_height = grid_height(point.xy);
     let height_above_grid = max(point.z - surface_height, 0.0);
-    return exp(-height_above_grid * 0.62) * 0.018 * edge_fade;
+    let source = debug_grid_density_history_at(point.xy);
+    let retained_density = max(source.x, source.y * 0.45);
+    let vertical_falloff = exp(-height_above_grid * 0.62);
+    let floor_haze = exp(-height_above_grid * 1.85) * 0.008;
+    return (floor_haze + retained_density * vertical_falloff * 0.055) * edge_fade;
+}
+
+struct AtmosphereIntegration {
+    inscatter: vec3f,
+    transmittance: f32,
+};
+
+fn integrate_atmosphere_to_surface(ray_origin: vec3f, ray_dir: vec3f, end_t: f32, jitter: f32) -> AtmosphereIntegration {
+    var inscatter = vec3f(0.0);
+    var transmittance = 1.0;
+    var previous_t = field.depth_near;
+    let clamped_end = min(end_t, field.depth_far);
+    for (var i = 1u; i <= 18u; i = i + 1u) {
+        let progress = clamp((f32(i) - 0.5 + jitter) / 18.0, 0.0, 1.0);
+        let t = field.depth_near + progress * progress * max(clamped_end - field.depth_near, 0.0);
+        let step_size = max(t - previous_t, 0.0001);
+        previous_t = t;
+        let point = ray_origin + ray_dir * t;
+        let density = atmosphere_sample(point) * depth_window_fade(t);
+        let light = sample_sh_lighting(vec3f(0.0, 0.0, 1.0), point);
+        let extinction = density * 2.9;
+        let step_transmittance = exp(-extinction * step_size);
+        let phase_tint = vec3f(0.50, 0.64, 0.82);
+        inscatter += transmittance * light * density * step_size * phase_tint;
+        transmittance *= step_transmittance;
+        if (transmittance < 0.025) {
+            break;
+        }
+    }
+    return AtmosphereIntegration(inscatter, transmittance);
 }
 
 struct DeferredPrepassOutput {
@@ -739,6 +773,12 @@ fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> 
         }
     }
 
+    if (sample.hit) {
+        let atmosphere = integrate_atmosphere_to_surface(ray_origin, ray_dir, sample.t, jitter);
+        sample.color = sample.color * atmosphere.transmittance + atmosphere.inscatter;
+        sample.emissive = sample.emissive * atmosphere.transmittance + atmosphere.inscatter;
+    }
+
     return sample;
 }
 
@@ -763,8 +803,8 @@ fn debug_sh_luminance(sample: SurfaceSample) -> f32 {
     return clamp(dot(light, vec3f(0.2126, 0.7152, 0.0722)) / 4.0, 0.0, 1.0);
 }
 
-fn debug_fog_history(sample: SurfaceSample) -> vec3f {
-    let history = debug_fog_history_at(sample.point.xy);
+fn debug_grid_density_history(sample: SurfaceSample) -> vec3f {
+    let history = debug_grid_density_history_at(sample.point.xy);
     let density_color = vec3f(0.08, 0.42, 0.95) * history.x;
     let rejection_color = vec3f(1.0, 0.22, 0.05) * history.z;
     let invalid_color = vec3f(0.5, 0.0, 0.9) * (1.0 - history.w);
@@ -796,7 +836,7 @@ fn debug_color(sample: SurfaceSample, uv: vec2f) -> vec3f {
         return mix(vec3f(0.01, 0.015, 0.04), vec3f(1.0, 0.76, 0.18), luminance);
     }
     if (mode == 7u) {
-        return debug_fog_history(sample);
+        return debug_grid_density_history(sample);
     }
     return sample.color;
 }

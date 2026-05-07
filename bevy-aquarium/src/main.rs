@@ -80,9 +80,9 @@ const LIGHT_BRICK_DEPTH: usize = 4;
 const LIGHT_BRICK_COUNT: usize = LIGHT_BRICK_WIDTH * LIGHT_BRICK_HEIGHT * LIGHT_BRICK_DEPTH;
 const GRID_FIELD_SIZE: usize = 128;
 const GRID_FIELD_COUNT: usize = GRID_FIELD_SIZE * GRID_FIELD_SIZE;
-const FOG_HISTORY_WIDTH: usize = 64;
-const FOG_HISTORY_HEIGHT: usize = 64;
-const FOG_HISTORY_COUNT: usize = FOG_HISTORY_WIDTH * FOG_HISTORY_HEIGHT;
+const GRID_DENSITY_HISTORY_WIDTH: usize = 64;
+const GRID_DENSITY_HISTORY_HEIGHT: usize = 64;
+const GRID_DENSITY_HISTORY_COUNT: usize = GRID_DENSITY_HISTORY_WIDTH * GRID_DENSITY_HISTORY_HEIGHT;
 
 fn main() {
     let runtime_bridge = CultRuntimeBridge::load().unwrap_or_else(|err| {
@@ -464,7 +464,7 @@ enum RendererDebugMode {
     Motion,
     BrickOccupancy,
     ShLuminance,
-    FogHistory,
+    GridDensityHistory,
 }
 
 impl RendererDebugMode {
@@ -476,7 +476,7 @@ impl RendererDebugMode {
         Self::Motion,
         Self::BrickOccupancy,
         Self::ShLuminance,
-        Self::FogHistory,
+        Self::GridDensityHistory,
     ];
 
     fn as_key(self) -> &'static str {
@@ -488,7 +488,7 @@ impl RendererDebugMode {
             Self::Motion => "motion",
             Self::BrickOccupancy => "brick-occupancy",
             Self::ShLuminance => "sh-luminance",
-            Self::FogHistory => "fog-history",
+            Self::GridDensityHistory => "grid-density-history",
         }
     }
 
@@ -500,7 +500,7 @@ impl RendererDebugMode {
             "motion" => Self::Motion,
             "brick-occupancy" => Self::BrickOccupancy,
             "sh-luminance" => Self::ShLuminance,
-            "fog-history" => Self::FogHistory,
+            "grid-density-history" => Self::GridDensityHistory,
             _ => Self::Final,
         }
     }
@@ -514,7 +514,7 @@ impl RendererDebugMode {
             Self::Motion => 4.0,
             Self::BrickOccupancy => 5.0,
             Self::ShLuminance => 6.0,
-            Self::FogHistory => 7.0,
+            Self::GridDensityHistory => 7.0,
         }
     }
 
@@ -766,7 +766,7 @@ struct AquariumRaymarchPipeline {
     prepass_layout: BindGroupLayoutDescriptor,
     deferred_prepass_pipeline_id: CachedRenderPipelineId,
     height_pipeline_id: CachedComputePipelineId,
-    fog_pipeline_id: CachedComputePipelineId,
+    grid_density_pipeline_id: CachedComputePipelineId,
     compute_pipeline_id: CachedComputePipelineId,
     brick_pipeline_id: CachedComputePipelineId,
 }
@@ -774,7 +774,7 @@ struct AquariumRaymarchPipeline {
 #[derive(Resource)]
 struct AquariumLightBuffers {
     buffers: [Buffer; 2],
-    fog_history: [Buffer; 2],
+    grid_density_history: [Buffer; 2],
     brick_occupancy: Buffer,
     grid_height: Buffer,
     frame: AtomicU32,
@@ -788,7 +788,7 @@ fn init_aquarium_raymarch_pipeline(
     pipeline_cache: Res<PipelineCache>,
 ) {
     let storage_size = (LIGHT_COEFFICIENT_COUNT * size_of::<Vec4>()) as u64;
-    let fog_history_storage_size = (FOG_HISTORY_COUNT * size_of::<Vec4>()) as u64;
+    let grid_density_history_storage_size = (GRID_DENSITY_HISTORY_COUNT * size_of::<Vec4>()) as u64;
     let brick_storage_size = (LIGHT_BRICK_COUNT * size_of::<u32>()) as u64;
     let grid_height_storage_size = (GRID_FIELD_COUNT * size_of::<Vec4>()) as u64;
     let buffers = [
@@ -805,16 +805,16 @@ fn init_aquarium_raymarch_pipeline(
             mapped_at_creation: false,
         }),
     ];
-    let fog_history = [
+    let grid_density_history = [
         render_device.create_buffer(&BufferDescriptor {
-            label: Some("aquarium_fog_history_a"),
-            size: fog_history_storage_size,
+            label: Some("aquarium_grid_density_history_a"),
+            size: grid_density_history_storage_size,
             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         }),
         render_device.create_buffer(&BufferDescriptor {
-            label: Some("aquarium_fog_history_b"),
-            size: fog_history_storage_size,
+            label: Some("aquarium_grid_density_history_b"),
+            size: grid_density_history_storage_size,
             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         }),
@@ -868,13 +868,14 @@ fn init_aquarium_raymarch_pipeline(
         entry_point: Some("cs_update_grid_height".into()),
         ..default()
     });
-    let fog_pipeline_id = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
-        label: Some("aquarium_fog_history_compute".into()),
-        layout: vec![compute_layout.clone()],
-        shader: shader.clone(),
-        entry_point: Some("cs_update_fog_history".into()),
-        ..default()
-    });
+    let grid_density_pipeline_id =
+        pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+            label: Some("aquarium_grid_density_history_compute".into()),
+            layout: vec![compute_layout.clone()],
+            shader: shader.clone(),
+            entry_point: Some("cs_update_grid_density_history".into()),
+            ..default()
+        });
     let deferred_prepass_pipeline_id =
         pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
             label: Some("aquarium_raymarch_deferred_prepass_pipeline".into()),
@@ -937,13 +938,13 @@ fn init_aquarium_raymarch_pipeline(
         prepass_layout,
         deferred_prepass_pipeline_id,
         height_pipeline_id,
-        fog_pipeline_id,
+        grid_density_pipeline_id,
         compute_pipeline_id,
         brick_pipeline_id,
     });
     commands.insert_resource(AquariumLightBuffers {
         buffers,
-        fog_history,
+        grid_density_history,
         brick_occupancy,
         grid_height,
         frame: AtomicU32::new(0),
@@ -997,7 +998,8 @@ impl ViewNode for AquariumDeferredPrepassNode {
         else {
             return Ok(());
         };
-        let Some(fog_pipeline) = pipeline_cache.get_compute_pipeline(pipeline.fog_pipeline_id)
+        let Some(grid_density_pipeline) =
+            pipeline_cache.get_compute_pipeline(pipeline.grid_density_pipeline_id)
         else {
             return Ok(());
         };
@@ -1030,8 +1032,14 @@ impl ViewNode for AquariumDeferredPrepassNode {
                 (5, buffers.buffers[write_index].as_entire_binding()),
                 (6, buffers.brick_occupancy.as_entire_binding()),
                 (7, buffers.grid_height.as_entire_binding()),
-                (8, buffers.fog_history[read_index].as_entire_binding()),
-                (9, buffers.fog_history[write_index].as_entire_binding()),
+                (
+                    8,
+                    buffers.grid_density_history[read_index].as_entire_binding(),
+                ),
+                (
+                    9,
+                    buffers.grid_density_history[write_index].as_entire_binding(),
+                ),
             )),
         );
         {
@@ -1048,11 +1056,11 @@ impl ViewNode for AquariumDeferredPrepassNode {
             pass.set_bind_group(0, &compute_bind_group, &[settings_index.index()]);
             pass.dispatch_workgroups(GRID_FIELD_COUNT.div_ceil(64) as u32, 1, 1);
             height_span.end(&mut pass);
-            let fog_span = diagnostics.pass_span(&mut pass, "aquarium_fog_history");
-            pass.set_pipeline(fog_pipeline);
+            let density_span = diagnostics.pass_span(&mut pass, "aquarium_grid_density_history");
+            pass.set_pipeline(grid_density_pipeline);
             pass.set_bind_group(0, &compute_bind_group, &[settings_index.index()]);
-            pass.dispatch_workgroups(FOG_HISTORY_COUNT.div_ceil(64) as u32, 1, 1);
-            fog_span.end(&mut pass);
+            pass.dispatch_workgroups(GRID_DENSITY_HISTORY_COUNT.div_ceil(64) as u32, 1, 1);
+            density_span.end(&mut pass);
             let brick_span = diagnostics.pass_span(&mut pass, "aquarium_light_brick_occupancy");
             pass.set_pipeline(brick_pipeline);
             pass.set_bind_group(0, &compute_bind_group, &[settings_index.index()]);
@@ -1072,7 +1080,10 @@ impl ViewNode for AquariumDeferredPrepassNode {
                 (2, settings_binding.clone()),
                 (3, buffers.buffers[write_index].as_entire_binding()),
                 (7, buffers.grid_height.as_entire_binding()),
-                (8, buffers.fog_history[write_index].as_entire_binding()),
+                (
+                    8,
+                    buffers.grid_density_history[write_index].as_entire_binding(),
+                ),
             )),
         );
 
