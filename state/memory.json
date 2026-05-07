@@ -165,7 +165,8 @@
       "For realtime audio, keep enough queued samples ahead of playback.",
       "Use GPU or batched generation for expensive spectral work.",
       "Agent voices can be continuous; interface controls should be transient.",
-      "Subtractive interface hits start with noise and shape it with resonators."
+      "Subtractive interface hits start with noise and shape it with resonators.",
+      "Rust-native synth work belongs in the isolated `crates/aquarium_synth` crate. Bevy should consume narrow `AudioUnit` adapters and presets from that crate instead of growing patch logic in `bevy-aquarium/src/main.rs`."
     ],
     "interaction_design": [
       "Progressive disclosure is the core grammar: vibes first, object second, surface third.",

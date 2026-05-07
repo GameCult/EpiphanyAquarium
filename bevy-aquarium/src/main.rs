@@ -1,3 +1,4 @@
+use aquarium_synth::{PatchUnit, presets as synth_presets};
 use bevy::asset::AssetPlugin;
 use bevy::audio::{AudioPlayer, PlaybackSettings, SpatialListener, Volume};
 use bevy::core_pipeline::prepass::{
@@ -38,8 +39,7 @@ use bevy::render::{
     view::ViewDepthTexture,
 };
 use bevy_procedural_audio::prelude::{
-    AudioUnit, DspAppExt, DspGraph, DspManager, DspPlugin, DspSource, SourceType, sine_hz,
-    triangle_hz,
+    DspAppExt, DspGraph, DspManager, DspPlugin, DspSource, SourceType,
 };
 use cultcache_rs::{CultCache, DatabaseEntry, SingleFileMessagePackBackingStore};
 use cultnet_rs::{
@@ -1895,12 +1895,12 @@ fn spawn_sound<D: DspGraph>(
     ));
 }
 
-fn aquarium_pluck() -> impl AudioUnit {
-    (sine_hz(440.0) + triangle_hz(880.0) * 0.28 + sine_hz(1760.0) * 0.08) * 0.18
+fn aquarium_pluck() -> PatchUnit {
+    PatchUnit::new(synth_presets::aquarium_pluck())
 }
 
-fn aquarium_heartbeat() -> impl AudioUnit {
-    (sine_hz(72.0) + sine_hz(116.0) * 0.42) * 0.22
+fn aquarium_heartbeat() -> PatchUnit {
+    PatchUnit::new(synth_presets::aquarium_heartbeat())
 }
 
 fn orbit_anchor(center: Vec3, radius: f32, phase: f32) -> Vec3 {

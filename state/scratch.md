@@ -365,3 +365,9 @@ Current slice:
   separate overlay. Bevy `RenderDiagnosticsPlugin` is enabled after
   `DefaultPlugins`; custom scoped timings still need to be added around brick
   update, SH propagation, and the raymarch pass.
+- Current audio slice: created `crates/aquarium_synth` to keep synth work out of
+  the Bevy host. The crate defines serializable modular primitives
+  (oscillator, envelope, pitch/duty motion, filter, phaser, repeat, arpeggio),
+  maps the traditional sfxr API surface into a `SynthPatch`, and exposes
+  `PatchUnit` as a FunDSP `AudioUnit`. Bevy's pluck/heartbeat graphs now only
+  call crate presets.

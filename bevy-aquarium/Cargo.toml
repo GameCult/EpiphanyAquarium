@@ -43,6 +43,7 @@ bevy = { version = "0.18", default-features = false, features = [
     "zstd_rust",
 ] }
 anyhow = "1"
+aquarium_synth = { path = "../crates/aquarium_synth" }
 bevy_procedural_audio = { path = "../vendor/bevy_procedural_audio", default-features = false, features = ["bevy_audio"] }
 cultcache-rs = { path = "../../cultcache-rs" }
 cultnet-rs = { path = "../../cultnet-rs" }

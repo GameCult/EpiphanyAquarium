@@ -3,4 +3,6 @@ dist/
 .epiphany-aquarium/
 src-tauri/target/
 bevy-aquarium/target/
+crates/*/target/
+crates/aquarium_synth/Cargo.lock
 *.log

@@ -205,6 +205,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "aquarium_synth"
+version = "0.1.0"
+dependencies = [
+ "fundsp",
+ "serde",
+]
+
+[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -368,6 +376,7 @@ name = "bevy-aquarium"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "aquarium_synth",
  "bevy",
  "bevy_procedural_audio",
  "cultcache-rs",
