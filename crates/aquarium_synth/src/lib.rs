@@ -1,6 +1,8 @@
 use fundsp::prelude::{AttoHash, AudioUnit, BufferMut, BufferRef, SignalFrame};
+use rustfft::{Fft, FftPlanner, num_complex::Complex};
 use serde::{Deserialize, Serialize};
 use std::f32::consts::TAU;
+use std::sync::Arc;
 use std::{error::Error, fmt};
 
 const DEFAULT_SAMPLE_RATE: f32 = 44_100.0;
@@ -84,15 +86,184 @@ pub struct AudioComparison {
     pub score: f32,
 }
 
-pub fn analyze_audio(samples: &[f32], config: &AudioAnalysisConfig) -> AudioAnalysis {
-    let features = extract_audio_features(samples, config);
-    let rms_envelope = rms_envelope(samples, config.fft_size, config.hop_size);
-    let log_mel_spectrogram = log_mel_spectrogram(samples, config);
-    AudioAnalysis {
-        features,
-        log_mel_spectrogram,
-        rms_envelope,
+pub struct AudioAnalyzer {
+    config: AudioAnalysisConfig,
+    fft_size: usize,
+    fft: Arc<dyn Fft<f32>>,
+    fft_buffer: Vec<Complex<f32>>,
+    spectrum_buffer: Vec<f32>,
+    mel_edges: Vec<usize>,
+}
+
+impl AudioAnalyzer {
+    pub fn new(config: AudioAnalysisConfig) -> Self {
+        let fft_size = config.fft_size.max(32).next_power_of_two();
+        let mut planner = FftPlanner::new();
+        let fft = planner.plan_fft_forward(fft_size);
+        let mel_edges = mel_band_edges(
+            config.mel_band_count.max(1),
+            fft_size,
+            config.sample_rate,
+            config.min_frequency_hz,
+            config.max_frequency_hz,
+        );
+        Self {
+            config,
+            fft_size,
+            fft,
+            fft_buffer: vec![Complex::default(); fft_size],
+            spectrum_buffer: vec![0.0; fft_size / 2 + 1],
+            mel_edges,
+        }
     }
+
+    pub fn config(&self) -> &AudioAnalysisConfig {
+        &self.config
+    }
+
+    pub fn analyze(&mut self, samples: &[f32]) -> AudioAnalysis {
+        let features = self.extract_features(samples);
+        let rms_envelope = rms_envelope(samples, self.fft_size, self.config.hop_size);
+        let log_mel_spectrogram = self.log_mel_spectrogram(samples);
+        AudioAnalysis {
+            features,
+            log_mel_spectrogram,
+            rms_envelope,
+        }
+    }
+
+    pub fn compare(
+        &mut self,
+        reference_samples: &[f32],
+        candidate_samples: &[f32],
+    ) -> AudioComparison {
+        let reference = self.analyze(reference_samples);
+        let candidate = self.analyze(candidate_samples);
+        comparison_from_analysis(reference, candidate)
+    }
+
+    fn extract_features(&mut self, samples: &[f32]) -> AudioFeatures {
+        let peak = samples
+            .iter()
+            .map(|sample| sample.abs())
+            .fold(0.0, f32::max);
+        let gate = (peak * self.config.gate_ratio).max(self.config.gate_floor);
+        let first = samples
+            .iter()
+            .position(|sample| sample.abs() >= gate)
+            .unwrap_or(0);
+        let last = samples
+            .iter()
+            .rposition(|sample| sample.abs() >= gate)
+            .unwrap_or(first);
+        let active = if samples.is_empty() {
+            &[][..]
+        } else {
+            &samples[first..=last]
+        };
+        let rms = mean_square(active).sqrt();
+        let zero_crossings = active
+            .windows(2)
+            .filter(|pair| pair[0].signum() != pair[1].signum())
+            .count();
+        let duration_seconds = (last.saturating_sub(first) + usize::from(!samples.is_empty()))
+            as f32
+            / self.config.sample_rate.max(1.0);
+        let spectrum = self.average_power_spectrum(active);
+        let (spectral_centroid_hz, spectral_rolloff_hz) =
+            spectral_shape(&spectrum, self.config.sample_rate, 0.85);
+        AudioFeatures {
+            attack_seconds: first as f32 / self.config.sample_rate.max(1.0),
+            duration_seconds,
+            peak,
+            rms,
+            zero_crossing_rate: zero_crossings as f32
+                / duration_seconds.max(1.0 / self.config.sample_rate),
+            spectral_centroid_hz,
+            spectral_rolloff_hz,
+        }
+    }
+
+    fn log_mel_spectrogram(&mut self, samples: &[f32]) -> Spectrogram {
+        let bands = self.config.mel_band_count.max(1);
+        if samples.is_empty() {
+            return Spectrogram {
+                frames: 1,
+                bands,
+                values: vec![0.0; bands],
+            };
+        }
+        let mut values = Vec::new();
+        let mut frames = 0;
+        let mut start = 0;
+        while start < samples.len() {
+            self.write_frame_power_spectrum(samples, start);
+            for band in 0..bands {
+                let left = self.mel_edges[band];
+                let center = self.mel_edges[band + 1].max(left + 1);
+                let right = self.mel_edges[band + 2].max(center + 1);
+                let mut energy = 0.0;
+                let mut weight_sum = 0.0;
+                for bin in left..right.min(self.spectrum_buffer.len()) {
+                    let weight = if bin <= center {
+                        (bin - left) as f32 / (center - left).max(1) as f32
+                    } else {
+                        (right - bin) as f32 / (right - center).max(1) as f32
+                    }
+                    .max(0.0);
+                    energy += self.spectrum_buffer[bin] * weight;
+                    weight_sum += weight;
+                }
+                values.push((energy / weight_sum.max(1.0) + 1.0e-9).ln());
+            }
+            frames += 1;
+            start += self.config.hop_size.max(1);
+        }
+        normalize_in_place(&mut values);
+        Spectrogram {
+            frames,
+            bands,
+            values,
+        }
+    }
+
+    fn average_power_spectrum(&mut self, samples: &[f32]) -> Vec<f32> {
+        if samples.is_empty() {
+            return vec![0.0; self.fft_size / 2 + 1];
+        }
+        let hop_size = (self.fft_size / 2).max(1);
+        let mut sum = vec![0.0; self.fft_size / 2 + 1];
+        let mut frames = 0.0;
+        let mut start = 0;
+        while start < samples.len() {
+            self.write_frame_power_spectrum(samples, start);
+            for (target, value) in sum.iter_mut().zip(&self.spectrum_buffer) {
+                *target += *value;
+            }
+            frames += 1.0;
+            start += hop_size;
+        }
+        for value in &mut sum {
+            *value /= frames;
+        }
+        sum
+    }
+
+    fn write_frame_power_spectrum(&mut self, samples: &[f32], start: usize) {
+        for offset in 0..self.fft_size {
+            let sample =
+                samples.get(start + offset).copied().unwrap_or(0.0) * hann(offset, self.fft_size);
+            self.fft_buffer[offset] = Complex::new(sample, 0.0);
+        }
+        self.fft.process(&mut self.fft_buffer);
+        for (bin, output) in self.spectrum_buffer.iter_mut().enumerate() {
+            *output = self.fft_buffer[bin].norm_sqr();
+        }
+    }
+}
+
+pub fn analyze_audio(samples: &[f32], config: &AudioAnalysisConfig) -> AudioAnalysis {
+    AudioAnalyzer::new(config.clone()).analyze(samples)
 }
 
 pub fn compare_audio(
@@ -100,8 +271,10 @@ pub fn compare_audio(
     candidate_samples: &[f32],
     config: &AudioAnalysisConfig,
 ) -> AudioComparison {
-    let reference = analyze_audio(reference_samples, config);
-    let candidate = analyze_audio(candidate_samples, config);
+    AudioAnalyzer::new(config.clone()).compare(reference_samples, candidate_samples)
+}
+
+fn comparison_from_analysis(reference: AudioAnalysis, candidate: AudioAnalysis) -> AudioComparison {
     let duration_ratio = safe_ratio(
         candidate.features.duration_seconds,
         reference.features.duration_seconds,
@@ -1222,46 +1395,6 @@ fn hash_noise(seed: u64, slot: u32) -> f32 {
     ((value >> 40) as f32 / 8_388_608.0) * 2.0 - 1.0
 }
 
-fn extract_audio_features(samples: &[f32], config: &AudioAnalysisConfig) -> AudioFeatures {
-    let peak = samples
-        .iter()
-        .map(|sample| sample.abs())
-        .fold(0.0, f32::max);
-    let gate = (peak * config.gate_ratio).max(config.gate_floor);
-    let first = samples
-        .iter()
-        .position(|sample| sample.abs() >= gate)
-        .unwrap_or(0);
-    let last = samples
-        .iter()
-        .rposition(|sample| sample.abs() >= gate)
-        .unwrap_or(first);
-    let active = if samples.is_empty() {
-        &[][..]
-    } else {
-        &samples[first..=last]
-    };
-    let rms = mean_square(active).sqrt();
-    let zero_crossings = active
-        .windows(2)
-        .filter(|pair| pair[0].signum() != pair[1].signum())
-        .count();
-    let duration_seconds = (last.saturating_sub(first) + usize::from(!samples.is_empty())) as f32
-        / config.sample_rate.max(1.0);
-    let spectrum = average_power_spectrum(active, config.fft_size.max(32));
-    let (spectral_centroid_hz, spectral_rolloff_hz) =
-        spectral_shape(&spectrum, config.sample_rate, 0.85);
-    AudioFeatures {
-        attack_seconds: first as f32 / config.sample_rate.max(1.0),
-        duration_seconds,
-        peak,
-        rms,
-        zero_crossing_rate: zero_crossings as f32 / duration_seconds.max(1.0 / config.sample_rate),
-        spectral_centroid_hz,
-        spectral_rolloff_hz,
-    }
-}
-
 fn rms_envelope(samples: &[f32], window_size: usize, hop_size: usize) -> Vec<f32> {
     let window_size = window_size.max(16);
     let hop_size = hop_size.max(1);
@@ -1276,98 +1409,6 @@ fn rms_envelope(samples: &[f32], window_size: usize, hop_size: usize) -> Vec<f32
         start += hop_size;
     }
     envelope
-}
-
-fn log_mel_spectrogram(samples: &[f32], config: &AudioAnalysisConfig) -> Spectrogram {
-    let fft_size = config.fft_size.max(32).next_power_of_two();
-    let hop_size = config.hop_size.max(1);
-    let bands = config.mel_band_count.max(1);
-    if samples.is_empty() {
-        return Spectrogram {
-            frames: 1,
-            bands,
-            values: vec![0.0; bands],
-        };
-    }
-    let edges = mel_band_edges(
-        bands,
-        fft_size,
-        config.sample_rate,
-        config.min_frequency_hz,
-        config.max_frequency_hz,
-    );
-    let mut values = Vec::new();
-    let mut frames = 0;
-    let mut start = 0;
-    while start < samples.len() {
-        let spectrum = frame_power_spectrum(samples, start, fft_size);
-        for band in 0..bands {
-            let left = edges[band];
-            let center = edges[band + 1].max(left + 1);
-            let right = edges[band + 2].max(center + 1);
-            let mut energy = 0.0;
-            let mut weight_sum = 0.0;
-            for bin in left..right.min(spectrum.len()) {
-                let weight = if bin <= center {
-                    (bin - left) as f32 / (center - left).max(1) as f32
-                } else {
-                    (right - bin) as f32 / (right - center).max(1) as f32
-                }
-                .max(0.0);
-                energy += spectrum[bin] * weight;
-                weight_sum += weight;
-            }
-            values.push((energy / weight_sum.max(1.0) + 1.0e-9).ln());
-        }
-        frames += 1;
-        start += hop_size;
-    }
-    normalize_in_place(&mut values);
-    Spectrogram {
-        frames,
-        bands,
-        values,
-    }
-}
-
-fn average_power_spectrum(samples: &[f32], fft_size: usize) -> Vec<f32> {
-    if samples.is_empty() {
-        return vec![0.0; fft_size / 2 + 1];
-    }
-    let hop_size = (fft_size / 2).max(1);
-    let mut sum = vec![0.0; fft_size / 2 + 1];
-    let mut frames = 0.0;
-    let mut start = 0;
-    while start < samples.len() {
-        let spectrum = frame_power_spectrum(samples, start, fft_size);
-        for (target, value) in sum.iter_mut().zip(spectrum) {
-            *target += value;
-        }
-        frames += 1.0;
-        start += hop_size;
-    }
-    for value in &mut sum {
-        *value /= frames;
-    }
-    sum
-}
-
-fn frame_power_spectrum(samples: &[f32], start: usize, fft_size: usize) -> Vec<f32> {
-    let bins = fft_size / 2 + 1;
-    let mut spectrum = vec![0.0; bins];
-    for (bin, output) in spectrum.iter_mut().enumerate() {
-        let mut real = 0.0;
-        let mut imaginary = 0.0;
-        for offset in 0..fft_size {
-            let index = start + offset;
-            let sample = samples.get(index).copied().unwrap_or(0.0) * hann(offset, fft_size);
-            let angle = TAU * bin as f32 * offset as f32 / fft_size as f32;
-            real += sample * angle.cos();
-            imaginary -= sample * angle.sin();
-        }
-        *output = real * real + imaginary * imaginary;
-    }
-    spectrum
 }
 
 fn mel_band_edges(

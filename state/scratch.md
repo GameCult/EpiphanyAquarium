@@ -396,6 +396,11 @@ Current slice:
   envelope, normalized log-mel spectrogram data, feature ratios, envelope
   distance, spectrogram distance, and an overall score. Ground-truth sfxr tests
   now use that API.
+- Current analysis performance slice: replaced the naive per-bin DFT with
+  `rustfft` through a reusable `AudioAnalyzer` that caches the FFT plan,
+  complex frame buffer, spectrum buffer, and mel band edges. Use this analyzer
+  from worker/buffer-generation tooling; do not run analysis on the realtime
+  audio callback thread.
 - Current renderer pass: added a 64x64 GPU fog-history field over the moving
   Grid domain. `cs_update_fog_history` ping-pongs density/history/rejection
   samples after Grid-height generation and before brick/SH/deferred raymarch.
