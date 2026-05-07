@@ -345,3 +345,15 @@ Current slice:
   `legacy_frontend`, and `state/memory.json` marks the old Three/WebGPU field
   volume section as migration archaeology. The live center is Bevy/WGPU render
   graph, CultNet, and CultCache.
+- Clocked medicine pass: start was recorded as 2026-05-07T00:28:48+01:00.
+  Earliest valid stop is 2026-05-07T01:28:48+01:00. The pass is not complete
+  until wall time reaches that target.
+- Current distillation: the Bevy renderer spine is already the custom deferred
+  prepass node. The next real cut is instrumentation, not more atmosphere:
+  CultCache-backed debug mode, visible G-buffer/depth/normal/motion checks,
+  brick/SH views, and GPU timings around brick update, SH propagation, and the
+  raymarch prepass.
+- WGPU lesson added: treat ping-pong storage buffers/textures as the normal
+  pattern for temporal fields. Portable storage textures are usually write
+  targets, while previous state should be sampled or read from a separate
+  resource.

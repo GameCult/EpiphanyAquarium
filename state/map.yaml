@@ -94,8 +94,10 @@ interaction_laws:
   - Self solar flares are field simulation events: inject a short local radiance impulse, then advect previous SH history outward through the Grid-space volume so the flare becomes a carried volumetric wavefront instead of an analytic shell painted into every cell.
   - The Bevy light brick map is dynamic GPU state, not static topology. Rebuild occupancy every frame from current Grid terrain contact, moving body bounds, Self influence, and flare bands before SH lighting decides which cells get detailed flow.
   - Renderer diagnostics are part of the renderer, not optional developer garnish. Persist a debug mode through CultCache and expose hit coverage, brick occupancy, SH lighting, density, temporal rejection, transmittance, and in-scatter before adding more field complexity.
+  - The current Bevy deferred-prepass raymarch path is the renderer spine. Do not add new fog/beauty passes until that path can prove depth, normals, motion vectors, deferred payload, brick occupancy, SH luminance, and terrain/body hit coverage on demand.
   - Aetheria's nebula contract should return as Grid source textures and temporal reconstruction: surface height, patch density/height, tint, flow/noise settings, quadratic stochastic march steps, history reprojection, and AABB clipping.
   - Global sky and aerial-perspective lighting should use Bruneton-style precomputed transport caches; local dynamic fog should not be forced to solve horizon-scale multiple scattering per frame.
+  - Bevy's built-in `VolumetricFog`/atmosphere features are references and possible global baselines, not replacements for the local Aetheria-style Grid nebula unless they consume the same Grid source textures and temporal history.
   - Visual smoke verifies render presence and layout health, not cursor-driven 3D interaction; billboard/creature clicks need targeted raycast-aware probes.
   - Stardust is currently visible as tiny, faint 3D points inside the Three scene under ACES tone mapping; the old WebGPU overlay is disabled until it can feed the shared compositor instead of screen space.
   - Transparent-looking depth-sensitive VFX should use stochastic blue-noise cutout coverage and temporal resolve assumptions, not ordinary alpha blending, when they need to coexist with fog/depth.
@@ -114,6 +116,10 @@ next_actions:
   - Render swarm members as first-class aquarium organisms instead of only selecting them through Self's connection leaf.
   - Add a CultCache-backed `RendererDebugMode` for the Bevy renderer.
   - Add debug views for raymarch hit coverage, light brick occupancy, SH luminance, density, temporal rejection, transmittance, and in-scatter.
+  - Add Bevy RenderDiagnosticsPlugin spans first, then wgpu-profiler scopes if nested GPU timing detail is still missing around brick update, SH propagation, and deferred-prepass raymarch.
+  - Split the current `aquarium_light_compute` timing/labels into separately accountable brick occupancy and SH propagation scopes.
+  - After diagnostics, move Grid height from duplicated analytic shader logic into an explicit Grid-domain source texture sampled by terrain, SH lighting, future fog, and stardust.
+  - After Grid source textures, restore fog as a small temporal Aetheria-style path with current/history targets and visible history rejection before introducing sparse froxels/octrees.
   - Port Aetheria nebula source textures/settings into Bevy as explicit Grid-domain resources before rebuilding full fog.
   - Rebuild stardust as a GPU worker-slot lattice over moving Grid-space cells, using deterministic world hashes for identity.
 

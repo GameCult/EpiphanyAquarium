@@ -54,13 +54,15 @@ Current pass:
 - Sleeping Epiphanies render as cold white dwarfs.
 - A living Epiphany expands into a small agent swarm.
 - All bodies use the same spring integration path.
-- The grid is a real mesh heightfield generated from gravity wells.
+- The visible grid and bodies are raymarched through the Bevy/WGPU renderer;
+  ECS entities carry simulation, cache, label, audio, and renderer-source state.
 
 Next renderer pass:
 
-- Replace mesh displacement with a Bevy render graph path that writes a gravity
-  field texture.
-- Add WebGPU compute froxel bins for solid and gaseous SDF primitives.
-- March the shared density accumulator and write depth when density saturates.
-- Add volumetric lighting caches before making the fog pretty. Pretty fog that
-  lies is just expensive weather.
+- Add a CultCache-backed renderer debug mode.
+- Expose hit coverage, depth, normals, motion vectors, deferred payloads, brick
+  occupancy, and SH luminance before adding more fog.
+- Add GPU timing scopes around brick update, SH propagation, and the deferred
+  prepass raymarch.
+- Move Grid height into an explicit Grid-domain source texture sampled by
+  terrain, lighting, future fog, and stardust.
