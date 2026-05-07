@@ -475,7 +475,8 @@ Current slice:
   voices around 400-475, and heavy wobble/FM/formant basses around 260-320.
   Practical game budgets should stay well below parity and keep fills off the
   audio callback thread.
-- Current renderer post pass: Bevy camera now has explicit `Hdr`,
-  `Tonemapping::AcesFitted`, and thresholded additive `Bloom`. The renderer
-  should now let the sun's HDR emissive values bloom while keeping planet/grid
-  midtones under ACES instead of clamping everything into flat SDR.
+- Current renderer post pass: Bevy camera has explicit `Hdr`,
+  `Tonemapping::AcesFitted`, and gentle wide `Bloom` before tonemapping. Bloom
+  is energy-conserving, low intensity, low high-pass frequency, and high
+  low-frequency boost so HDR solar energy spreads softly instead of blasting
+  the whole scene.

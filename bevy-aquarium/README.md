@@ -63,8 +63,8 @@ Current pass:
 - The density-history experiment is removed; the current renderer is back to
   making the sun and planets read before field complexity returns.
 - The camera renders through an HDR intermediate with `Tonemapping::AcesFitted`
-  and thresholded bloom, so solar emissive values can glow without flattening
-  the whole scene.
+  and gentle wide bloom before tonemapping, so solar emissive values can spread
+  without flattening the whole scene.
 
 Next renderer pass:
 
