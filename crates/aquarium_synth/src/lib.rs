@@ -101,6 +101,27 @@ pub const CLASSIC_808_PRIMITIVE_GOLF_SCRIPTS: [(&str, &str); 6] = [
     ),
 ];
 
+pub const FM_BELL_NAMES: [&str; 4] = ["bell", "chime", "coin", "gong"];
+
+pub const FM_BELL_PRIMITIVE_GOLF_SCRIPTS: [(&str, &str); 4] = [
+    (
+        "bell",
+        "d w=sin g=.24 a=.002 s=.04 d=1.2 l=.9;def n=O fm=4.1 fmd=.55;v u=O f=440 fmi=5.8;v u=O f=880 g=.08 fmi=2.4",
+    ),
+    (
+        "chime",
+        "d w=sin g=.18 a=.001 s=.025 d=.9 h=.02;def n=O fm=3 fmd=.38;v u=O f=660 fmi=4.2;v u=O f=990 g=.07 fmi=2.1",
+    ),
+    (
+        "coin",
+        "d w=sin a=0 s=.02 d=.45 h=.04 drv=.08;v f=1200 g=.18 fm=5 fmi=3.4 fmd=.18;v f=1800 g=.09 fm=7 fmi=1.8 fmd=.12",
+    ),
+    (
+        "gong",
+        "d w=sin a=.003 s=.08 d=1.6 l=.82 drv=.1;v f=196 g=.24 fm=2.414 fmi=7.2 fmd=.9;v f=311 g=.12 fm=3.73 fmi=4.1 fmd=.7",
+    ),
+];
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AudioAnalysisConfig {
     pub sample_rate: f32,
@@ -551,6 +572,23 @@ pub struct Arpeggio {
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct FrequencyModulation {
+    pub ratio: f32,
+    pub index: f32,
+    pub index_decay_seconds: f32,
+}
+
+impl Default for FrequencyModulation {
+    fn default() -> Self {
+        Self {
+            ratio: 1.0,
+            index: 0.0,
+            index_decay_seconds: 0.0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Formant {
     pub frequency_hz: f32,
     pub bandwidth_hz: f32,
@@ -658,6 +696,7 @@ pub struct Voice {
     pub filter: Filter,
     pub phaser: Phaser,
     pub arpeggio: Option<Arpeggio>,
+    pub fm: FrequencyModulation,
     pub color: VoiceColor,
     pub formants: Vec<Formant>,
     pub modulators: Vec<Modulator>,
@@ -674,6 +713,7 @@ impl Voice {
             filter: Filter::default(),
             phaser: Phaser::default(),
             arpeggio: None,
+            fm: FrequencyModulation::default(),
             color: VoiceColor::default(),
             formants: Vec::new(),
             modulators: Vec::new(),
@@ -1179,6 +1219,7 @@ impl SfxrParams {
             } else {
                 None
             },
+            fm: FrequencyModulation::default(),
             color: VoiceColor {
                 noise_mix: if self.wave_type == Waveform::Noise {
                     0.35
@@ -1627,6 +1668,12 @@ fn voice_from_fields(fields: &[(&str, &str)], line: usize) -> Result<Voice, Patc
                 .unwrap_or(0.0),
         },
         arpeggio,
+        fm: FrequencyModulation {
+            ratio: parse_optional_f32_any(fields, &["fm_ratio", "fm"], line)?.unwrap_or(1.0),
+            index: parse_optional_f32_any(fields, &["fm_index", "fmi"], line)?.unwrap_or(0.0),
+            index_decay_seconds: parse_optional_f32_any(fields, &["fm_decay", "fmd"], line)?
+                .unwrap_or(0.0),
+        },
         color,
         formants,
         modulators,
@@ -1638,11 +1685,12 @@ fn voice_from_fields(fields: &[(&str, &str)], line: usize) -> Result<Voice, Patc
             | "min_freq" | "pitch_ramp" | "pitch_dramp" | "vibrato" | "vibrato_hz"
             | "vibrato_delay" | "duty_ramp" | "lpf" | "lpf_ramp" | "resonance" | "hpf"
             | "hpf_ramp" | "phaser" | "phaser_ramp" | "arp_delay" | "arp_mult" | "noise"
-            | "drive" | "fold" | "tremolo" | "tremolo_hz" | "formant_mix" | "formants" | "gain" => {
-            }
+            | "drive" | "fold" | "tremolo" | "tremolo_hz" | "formant_mix" | "formants"
+            | "fm_ratio" | "fm_index" | "fm_decay" | "gain" => {}
             "w" | "f" | "g" | "a" | "s" | "d" | "pu" | "min" | "pr" | "pdr" | "vi" | "vh"
             | "vd" | "du" | "dur" | "l" | "lr" | "res" | "h" | "hr" | "ph" | "phr" | "ad"
-            | "am" | "nz" | "drv" | "fl" | "tr" | "th" | "fm" | "fs" | "m" | "pa" => {}
+            | "am" | "nz" | "drv" | "fl" | "tr" | "th" | "fm" | "fmi" | "fmd" | "fs" | "m"
+            | "pa" => {}
             "mods" => {}
             unknown => return Err(unknown_field(line, "voice", unknown)),
         }
@@ -2044,6 +2092,7 @@ impl PatchPlayer {
 #[derive(Clone, Debug)]
 struct VoiceState {
     phase: f32,
+    fm_phase: f32,
     sample_counter: u64,
     noise_epoch: u32,
     low_pass_position: f32,
@@ -2058,6 +2107,7 @@ impl VoiceState {
     fn new(voice: &Voice) -> Self {
         Self {
             phase: 0.0,
+            fm_phase: 0.0,
             sample_counter: 0,
             noise_epoch: 0,
             low_pass_position: 0.0,
@@ -2100,12 +2150,15 @@ impl VoiceState {
         .clamp(0.02, 0.98);
         let previous_phase = self.phase;
         self.phase = (self.phase + frequency / sample_rate).fract();
+        self.fm_phase = (self.fm_phase + frequency * voice.fm.ratio.max(0.0) / sample_rate).fract();
         if self.phase < previous_phase {
             self.noise_epoch = self.noise_epoch.wrapping_add(1);
         }
+        let phase =
+            self.phase + voice.oscillator.phase + fm_phase_offset(voice.fm, self.fm_phase, age);
         let mut sample = oscillator_sample(
             voice.oscillator.waveform,
-            self.phase + voice.oscillator.phase,
+            phase,
             duty,
             seed ^ self.noise_epoch as u64,
         );
@@ -2463,6 +2516,18 @@ fn modulator_value(modulator: Modulator, age: f32, seed: u64) -> f32 {
             hash_noise(seed ^ 0x4d6f_6475_6c61_7465, slot)
         }
     }
+}
+
+fn fm_phase_offset(fm: FrequencyModulation, phase: f32, age: f32) -> f32 {
+    if fm.index <= 0.0 || fm.ratio <= 0.0 {
+        return 0.0;
+    }
+    let decay = if fm.index_decay_seconds > 0.0 {
+        (-age / fm.index_decay_seconds.max(0.0001)).exp()
+    } else {
+        1.0
+    };
+    (phase * TAU).sin() * fm.index * decay / TAU
 }
 
 fn stable_name_hash(name: &str) -> u64 {
@@ -2985,6 +3050,129 @@ mod tests {
     #[test]
     fn classic_808_scripts_score_as_golfable_but_readable() {
         for (name, script) in CLASSIC_808_PRIMITIVE_GOLF_SCRIPTS {
+            let metrics = patch_script_metrics(script);
+            assert!(metrics.terse_score > 0.35, "{name} was not terse enough");
+            assert!(
+                metrics.readability_score > 0.14,
+                "{name} readability was {}",
+                metrics.readability_score
+            );
+            assert!(
+                metrics.balanced_score > 0.22,
+                "{name} balanced score was {}",
+                metrics.balanced_score
+            );
+        }
+    }
+
+    #[test]
+    fn fm_fields_create_bright_inharmonic_spectra() {
+        let plain = render_script_mono(
+            "v w=sin f=440 g=.2 s=.04 d=.8",
+            RenderOptions {
+                duration_seconds: 0.9,
+                ..RenderOptions::default()
+            },
+        )
+        .unwrap();
+        let fm = render_script_mono(
+            "v w=sin f=440 g=.2 s=.04 d=.8 fm=4.1 fmi=5.8 fmd=.45",
+            RenderOptions {
+                duration_seconds: 0.9,
+                ..RenderOptions::default()
+            },
+        )
+        .unwrap();
+        let comparison = compare_audio(
+            &plain,
+            &fm,
+            &AudioAnalysisConfig {
+                fft_size: 256,
+                hop_size: 256,
+                mel_band_count: 18,
+                ..AudioAnalysisConfig::default()
+            },
+        );
+        assert!(comparison.log_mel_distance > 0.08);
+        assert!(
+            comparison.candidate.features.spectral_centroid_hz
+                > comparison.reference.features.spectral_centroid_hz * 1.5
+        );
+    }
+
+    #[test]
+    fn fm_bell_scripts_use_only_graph_primitives() {
+        for (name, script) in FM_BELL_PRIMITIVE_GOLF_SCRIPTS {
+            let patch = SynthPatch::from_script(script).unwrap();
+            assert!(!patch.voices.is_empty(), "{name} produced no voices");
+            for statement in script
+                .split(';')
+                .map(str::trim)
+                .filter(|part| !part.is_empty())
+            {
+                let command = statement.split_whitespace().next().unwrap();
+                assert!(
+                    matches!(
+                        command,
+                        "p" | "patch"
+                            | "d"
+                            | "defaults"
+                            | "def"
+                            | "template"
+                            | "t"
+                            | "v"
+                            | "voice"
+                            | "l"
+                            | "lfo"
+                            | "control"
+                    ),
+                    "{name} used non-primitive command `{command}`"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fm_bell_scripts_have_bell_like_audio_shapes() {
+        for (name, script) in FM_BELL_PRIMITIVE_GOLF_SCRIPTS {
+            let buffer = render_script_mono(
+                script,
+                RenderOptions {
+                    duration_seconds: 1.8,
+                    ..RenderOptions::default()
+                },
+            )
+            .unwrap();
+            let analysis = analyze_audio(
+                &buffer,
+                &AudioAnalysisConfig {
+                    fft_size: 256,
+                    hop_size: 256,
+                    mel_band_count: 18,
+                    ..AudioAnalysisConfig::default()
+                },
+            );
+            assert!(analysis.features.peak > 0.01, "{name} was too quiet");
+            assert!(
+                analysis.features.duration_seconds > 0.35,
+                "{name} decayed too quickly"
+            );
+            assert!(
+                analysis.features.spectral_centroid_hz > 450.0,
+                "{name} centroid was {}",
+                analysis.features.spectral_centroid_hz
+            );
+            assert!(
+                analysis.features.zero_crossing_rate > 500.0,
+                "{name} zcr was {}",
+                analysis.features.zero_crossing_rate
+            );
+        }
+    }
+
+    #[test]
+    fn fm_bell_scripts_score_as_golfable_but_readable() {
+        for (name, script) in FM_BELL_PRIMITIVE_GOLF_SCRIPTS {
             let metrics = patch_script_metrics(script);
             assert!(metrics.terse_score > 0.35, "{name} was not terse enough");
             assert!(

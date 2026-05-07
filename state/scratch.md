@@ -457,3 +457,9 @@ Current slice:
   square, pitch ramps, filters, phaser smear, drive, and templates. Tests check
   primitive-only syntax, recognizable feature heuristics, and readability/golf
   scores.
+- Current FM bell target: added a primitive voice FM operator with script fields
+  `fm` ratio, `fmi` index, and `fmd` index decay. `FM_BELL_PRIMITIVE_GOLF_SCRIPTS`
+  covers bell, chime, coin, and gong using only primitive graph forms and compiler
+  templates/defaults. Tests prove FM brightens the spectrum versus a plain sine,
+  and validate bell-like long decay, centroid, zero-crossing, primitive-only
+  syntax, and readability/golf thresholds.
