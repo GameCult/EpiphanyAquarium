@@ -790,6 +790,93 @@ pub fn render_script_mono(
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct PatchScriptMetrics {
+    pub byte_count: usize,
+    pub line_count: usize,
+    pub statement_count: usize,
+    pub field_count: usize,
+    pub average_fields_per_statement: f32,
+    pub alias_field_ratio: f32,
+    pub terse_score: f32,
+    pub readability_score: f32,
+    pub balanced_score: f32,
+}
+
+pub fn patch_script_metrics(script: &str) -> PatchScriptMetrics {
+    let statements = script_statements(script);
+    let statement_count = statements.len();
+    let line_count = script
+        .lines()
+        .filter(|line| !line.split('#').next().unwrap_or("").trim().is_empty())
+        .count()
+        .max(1);
+    let mut field_count = 0usize;
+    let mut alias_fields = 0usize;
+    let mut named_commands = 0usize;
+    let mut numeric_chars = 0usize;
+    let mut numeric_values = 0usize;
+    for statement in &statements {
+        let mut parts = statement.split_whitespace();
+        if let Some(command) = parts.next() {
+            if command.len() > 1 {
+                named_commands += 1;
+            }
+        }
+        for part in parts {
+            let Some((key, value)) = part.split_once('=') else {
+                continue;
+            };
+            field_count += 1;
+            if key.len() <= 2 {
+                alias_fields += 1;
+            }
+            if value.parse::<f32>().is_ok() {
+                numeric_values += 1;
+                numeric_chars += value
+                    .chars()
+                    .filter(|character| character.is_ascii_digit())
+                    .count();
+            }
+        }
+    }
+    let byte_count = script.trim().len();
+    let average_fields_per_statement = field_count as f32 / statement_count.max(1) as f32;
+    let alias_field_ratio = alias_fields as f32 / field_count.max(1) as f32;
+    let named_command_ratio = named_commands as f32 / statement_count.max(1) as f32;
+    let line_room = (line_count as f32 / statement_count.max(1) as f32).clamp(0.0, 1.0);
+    let field_load = (1.0 - (average_fields_per_statement / 16.0).clamp(0.0, 1.0)).max(0.0);
+    let numeric_breath = if numeric_values == 0 {
+        1.0
+    } else {
+        (1.0 - ((numeric_chars as f32 / numeric_values as f32) - 4.0).max(0.0) / 8.0)
+            .clamp(0.0, 1.0)
+    };
+    let readability_score = (0.30 * (1.0 - alias_field_ratio)
+        + 0.20 * named_command_ratio
+        + 0.20 * line_room
+        + 0.15 * field_load
+        + 0.15 * numeric_breath)
+        .clamp(0.0, 1.0);
+    let terse_score = (1.0 / (1.0 + byte_count as f32 / 160.0)).clamp(0.0, 1.0);
+    let balanced_score = if readability_score + terse_score <= f32::EPSILON {
+        0.0
+    } else {
+        2.0 * readability_score * terse_score / (readability_score + terse_score)
+    };
+    PatchScriptMetrics {
+        byte_count,
+        line_count,
+        statement_count,
+        field_count,
+        average_fields_per_statement,
+        alias_field_ratio,
+        terse_score,
+        readability_score,
+        balanced_score,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct SfxrParams {
     pub wave_type: Waveform,
     pub base_freq: f32,
@@ -1108,24 +1195,38 @@ impl Error for PatchScriptError {}
 
 pub fn parse_patch_script(script: &str) -> Result<SynthPatch, PatchScriptError> {
     let mut patch = SynthPatch::new(Vec::new());
-    for (index, raw_line) in script.lines().enumerate() {
-        let line_number = index + 1;
-        let line = raw_line.split('#').next().unwrap_or("").trim();
-        if line.is_empty() {
-            continue;
-        }
-        for statement in line
-            .split(';')
-            .map(str::trim)
-            .filter(|part| !part.is_empty())
-        {
-            parse_patch_statement(&mut patch, statement, line_number)?;
-        }
+    for (line_number, statement) in script_statements_with_lines(script) {
+        parse_patch_statement(&mut patch, statement, line_number)?;
     }
     if patch.voices.is_empty() {
         return Err(PatchScriptError::new(0, "script produced no voices"));
     }
     Ok(patch)
+}
+
+fn script_statements(script: &str) -> Vec<&str> {
+    script_statements_with_lines(script)
+        .into_iter()
+        .map(|(_, statement)| statement)
+        .collect()
+}
+
+fn script_statements_with_lines(script: &str) -> Vec<(usize, &str)> {
+    script
+        .lines()
+        .enumerate()
+        .flat_map(|(index, raw_line)| {
+            let line_number = index + 1;
+            raw_line
+                .split('#')
+                .next()
+                .unwrap_or("")
+                .split(';')
+                .map(str::trim)
+                .filter(|part| !part.is_empty())
+                .map(move |statement| (line_number, statement))
+        })
+        .collect()
 }
 
 fn parse_patch_statement(
@@ -2554,6 +2655,42 @@ mod tests {
                 comparison.log_mel_distance
             );
         }
+    }
+
+    #[test]
+    fn primitive_golf_scripts_expose_readability_metrics() {
+        for (name, script) in CLASSIC_SFXR_PRIMITIVE_GOLF_SCRIPTS {
+            let metrics = patch_script_metrics(script);
+            assert_eq!(
+                metrics.statement_count,
+                script
+                    .split(';')
+                    .filter(|part| !part.trim().is_empty())
+                    .count(),
+                "{name} statement count drifted"
+            );
+            assert!(metrics.terse_score > 0.35, "{name} was not terse enough");
+            assert!(
+                metrics.readability_score > 0.15,
+                "{name} readability score was {}",
+                metrics.readability_score
+            );
+            assert!(
+                metrics.balanced_score > 0.22,
+                "{name} balanced score was {}",
+                metrics.balanced_score
+            );
+        }
+    }
+
+    #[test]
+    fn readability_metric_rewards_descriptive_spacing() {
+        let golfed = patch_script_metrics(CLASSIC_SFXR_PRIMITIVE_GOLF_SCRIPTS[1].1);
+        let readable = patch_script_metrics(
+            "patch repeat=.11315\nvoice wave=sine freq=57.5946 gain=.22 sustain=.1306122449 decay=.1777777778 pitch_ramp=-.208544 vibrato=.09 vibrato_hz=3.9602 drive=.12",
+        );
+        assert!(readable.readability_score > golfed.readability_score);
+        assert!(golfed.terse_score > readable.terse_score);
     }
 
     #[test]

@@ -438,3 +438,9 @@ Current slice:
   statements with short field aliases. Tests reject preset atoms/sfxr commands in
   those scripts and compare the primitive output back to the named sfxr patch
   path with the public analysis metrics.
+- Current readability metric pass: `patch_script_metrics` now exposes byte,
+  line, statement, field, average field-load, alias-ratio, terseness,
+  readability, and balanced scores. The readability score rewards descriptive
+  names, named commands, line room, moderate statement density, and reasonable
+  numeric precision; tests prove readable spelling scores higher on readability
+  while the primitive golf scripts still score higher on terseness.
