@@ -504,3 +504,8 @@ Current slice:
 - Current Grid texturing correction: the Bevy shader now anchors grid line pitch
   and weather/noise domains to absolute world XY. The moving Grid frame only
   clips/fades visibility; it must not drag or rescale the texture domain.
+- Current bright-square correction: the very bright square was the Grid terrain
+  being packed as an unlit/emissive surface, not a real light. The terrain path
+  now writes regular lit material data with zero emissive, and the Grid
+  weather/line contribution is reduced so bloom responds to Self and intentional
+  HDR accents instead of the rectangular Grid window.
