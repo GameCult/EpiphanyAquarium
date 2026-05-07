@@ -13,7 +13,6 @@ use bevy::core_pipeline::{
 };
 use bevy::ecs::query::QueryItem;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
-use bevy::light::GlobalAmbientLight;
 use bevy::pbr::DefaultOpaqueRendererMethod;
 use bevy::post_process::bloom::{Bloom, BloomCompositeMode, BloomPrefilter};
 use bevy::prelude::*;
@@ -88,11 +87,6 @@ fn main() {
     let settings = runtime_bridge.settings.clone();
     App::new()
         .insert_resource(ClearColor(Color::srgb(0.008, 0.011, 0.014)))
-        .insert_resource(GlobalAmbientLight {
-            color: Color::srgb(0.62, 0.72, 0.86),
-            brightness: 0.18,
-            affects_lightmapped_meshes: true,
-        })
         .insert_resource(DefaultOpaqueRendererMethod::deferred())
         .insert_resource(CameraRig::from_settings(&settings))
         .insert_resource(RendererDebugState::from_settings(
@@ -1134,15 +1128,6 @@ fn setup(mut commands: Commands, bridge: Res<CultRuntimeBridge>, grid_frame: Res
         bridge.domain_state.reload_generation
     );
     commands.spawn((
-        DirectionalLight {
-            illuminance: 4800.0,
-            shadows_enabled: true,
-            ..default()
-        },
-        Transform::from_xyz(-18.0, -12.0, 32.0).looking_at(Vec3::ZERO, Vec3::Z),
-    ));
-
-    commands.spawn((
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
             fov: 46.0_f32.to_radians(),
@@ -1297,6 +1282,21 @@ fn spawn_body_from_state(commands: &mut Commands, domain_root: Entity, state: Aq
         .id();
 
     commands.entity(body).with_children(|parent| {
+        if class == BodyClass::LivingSelf {
+            parent.spawn((
+                PointLight {
+                    color: Color::srgb(1.0, 0.74, 0.32),
+                    intensity: 95_000.0,
+                    range: 52.0,
+                    radius: SELF_RADIUS,
+                    shadows_enabled: true,
+                    ..default()
+                },
+                Transform::default(),
+                Name::new("Self Diegetic Light"),
+            ));
+        }
+
         parent.spawn((
             Text2d::new(label),
             TextFont {

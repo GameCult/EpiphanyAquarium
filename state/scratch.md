@@ -509,3 +509,8 @@ Current slice:
   now writes regular lit material data with zero emissive, and the Grid
   weather/line contribution is reduced so bloom responds to Self and intentional
   HDR accents instead of the rectangular Grid window.
+- Current diegetic-lighting correction: removed the Bevy global ambient and
+  directional lights. Self now carries the scene's primary `PointLight` as a
+  child entity, and the raymarched planet path no longer marks ordinary planets
+  unlit or emissive. Non-Self bodies are deferred materials; Self is the solar
+  emitter.

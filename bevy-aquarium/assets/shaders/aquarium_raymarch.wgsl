@@ -646,16 +646,15 @@ fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> 
             let plasma = pow(max(fbm4(vec4f(local * mix(1.35, 2.15, self_flag), field.time * 0.24)) * 0.5 + 0.5, 0.0), mix(2.4, 5.4, self_flag));
             let view_dir = normalize(ray_origin - point);
             let fresnel = pow(1.0 - clamp(dot(normal, view_dir), 0.0, 1.0), 3.6);
-            let light = sample_sh_lighting(normal, point);
-            let chrome = color.rgb * (0.16 + light * (0.54 + fresnel * 0.45)) + vec3f(0.72, 0.88, 1.0) * fresnel * 0.32;
+            let albedo = clamp(color.rgb, vec3f(0.0), vec3f(0.92));
             let solar = vec3f(5.4, 2.35, 0.58) * (0.72 + plasma * 1.75) + vec3f(1.0, 0.72, 0.24) * fresnel * 1.8;
             sample.hit = true;
             sample.kind = 2.0;
             sample.point = point;
             sample.normal = normal;
-            sample.color = mix(chrome, solar, self_flag);
-            sample.emissive = mix(chrome * 0.62, solar * 1.25, self_flag);
-            sample.unlit = true;
+            sample.color = mix(albedo, vec3f(1.0, 0.76, 0.32), self_flag);
+            sample.emissive = solar * self_flag;
+            sample.unlit = false;
             sample.roughness = mix(0.18, 0.38, self_flag);
             sample.metallic = 1.0 - self_flag * 0.45;
             sample.t = displaced_t;
@@ -817,11 +816,10 @@ fn terrain_hit(ray_origin: vec3f, ray_dir: vec3f, jitter: f32) -> TerrainHit {
     let fresnel = pow(1.0 - clamp(dot(normal, view_dir), 0.0, 1.0), 2.6);
     let lines = grid_line_factor(surface_point.xy);
     let field_energy = clamp(abs(height) * 1.15, 0.0, 1.0);
-    let light = sample_sh_lighting(normal, surface_point);
     let weather = grid_weather_color(surface_point.xy, height);
     let grid_base = weather + vec3f(0.82, 0.92, 0.84) * lines * (0.24 + field_energy * 0.08);
     let hot = mix(grid_base, vec3f(0.82, 0.42, 0.18), field_energy * 0.34);
-    let lit = hot * edge_fade * (vec3f(0.08) + light * (0.14 + fresnel * 0.16) + lines * 0.05);
+    let lit = hot * edge_fade * (0.38 + fresnel * 0.12 + lines * 0.05);
     let alpha = clamp(edge_fade * (0.18 + lines * 0.42 + field_energy * 0.14 + fresnel * 0.08), 0.0, 0.68);
     return TerrainHit(lit, alpha, surface_t);
 }
