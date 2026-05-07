@@ -23,6 +23,10 @@ Current renderer truth:
   into first-order SH, propagate/scatter through neighbors, and surfaces sample
   that field by normal. There is no global ambient or manual Self-lighting term
   in `shade_diegetic`.
+- Body shading now uses normals from the same displaced body SDF used for hit
+  refinement. The broad sphere is only a cheap cull; the visible hit is refined
+  against `body_sdf`, and `body_normal` finite-differences that SDF so surface
+  detail affects lighting instead of only silhouette.
 
 Current next cut:
 

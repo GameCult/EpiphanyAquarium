@@ -587,6 +587,34 @@ struct SurfaceSample {
     t: f32,
 };
 
+fn body_displacement(body: vec4f, color: vec4f, point: vec3f) -> f32 {
+    let radius = max(body.w, 0.001);
+    let self_flag = color.w;
+    let local = (point - body.xyz) / radius;
+    let domain_scale = mix(0.72, 1.12, self_flag);
+    let time_scale = mix(0.06, 0.16, self_flag);
+    let amplitude = mix(0.035, 0.14, self_flag);
+    return fbm4(vec4f(local * domain_scale, field.time * time_scale)) * amplitude;
+}
+
+fn body_sdf(body: vec4f, color: vec4f, point: vec3f) -> f32 {
+    let radius = max(body.w, 0.001);
+    let displaced_radius = radius * (1.0 + body_displacement(body, color, point));
+    return length(point - body.xyz) - displaced_radius;
+}
+
+fn body_normal(body: vec4f, color: vec4f, point: vec3f) -> vec3f {
+    let epsilon = max(body.w * 0.012, 0.006);
+    let dx = vec3f(epsilon, 0.0, 0.0);
+    let dy = vec3f(0.0, epsilon, 0.0);
+    let dz = vec3f(0.0, 0.0, epsilon);
+    return normalize(vec3f(
+        body_sdf(body, color, point + dx) - body_sdf(body, color, point - dx),
+        body_sdf(body, color, point + dy) - body_sdf(body, color, point - dy),
+        body_sdf(body, color, point + dz) - body_sdf(body, color, point - dz)
+    ));
+}
+
 fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> SurfaceSample {
     let terrain = terrain_hit(ray_origin, ray_dir, jitter);
     var sample = SurfaceSample(
@@ -628,9 +656,11 @@ fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> 
             let color = field.colors[i];
             let self_flag = color.w;
             let radius = body.w;
+            let displacement_bound = mix(0.055, 0.18, self_flag);
+            let broad_radius = radius * (1.0 + displacement_bound);
             let oc = ray_origin - body.xyz;
             let b = dot(oc, ray_dir);
-            let c = dot(oc, oc) - radius * radius;
+            let c = dot(oc, oc) - broad_radius * broad_radius;
             let h = b * b - c;
             if (h < 0.0) {
                 continue;
@@ -638,28 +668,49 @@ fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> 
             let root = sqrt(h);
             let t0 = -b - root;
             let t1 = -b + root;
-            let hit_t = select(t1, t0, t0 > field.depth_near);
-            if (hit_t <= field.depth_near || hit_t >= sample.t || hit_t > field.depth_far) {
+            let start_t = max(t0, field.depth_near);
+            let end_t = min(min(t1, sample.t), field.depth_far);
+            if (end_t <= start_t) {
                 continue;
             }
-            let hit = ray_origin + ray_dir * hit_t;
-            let local = (hit - body.xyz) / max(radius, 0.001);
-            let displacement = fbm4(vec4f(local * mix(0.72, 1.12, self_flag), field.time * mix(0.06, 0.16, self_flag))) * mix(0.035, 0.14, self_flag);
-            let displaced_radius = radius * (1.0 + displacement);
-            let displaced_c = dot(oc, oc) - displaced_radius * displaced_radius;
-            let displaced_h = b * b - displaced_c;
-            if (displaced_h < 0.0) {
+
+            var previous_t = start_t;
+            var previous_sdf = body_sdf(body, color, ray_origin + ray_dir * previous_t);
+            var hit_low = start_t;
+            var hit_high = end_t + 1.0;
+            for (var trace_step = 1u; trace_step <= 14u; trace_step = trace_step + 1u) {
+                let progress = (f32(trace_step) - 0.35 + jitter * 0.35) / 14.0;
+                let t = mix(start_t, end_t, clamp(progress, 0.0, 1.0));
+                let point = ray_origin + ray_dir * t;
+                let sdf = body_sdf(body, color, point);
+                if (previous_sdf > 0.0 && sdf <= 0.0) {
+                    hit_low = previous_t;
+                    hit_high = t;
+                    break;
+                }
+                previous_t = t;
+                previous_sdf = sdf;
+            }
+
+            if (hit_high > end_t) {
                 continue;
             }
-            let displaced_root = sqrt(displaced_h);
-            let displaced_t0 = -b - displaced_root;
-            let displaced_t1 = -b + displaced_root;
-            let displaced_t = select(displaced_t1, displaced_t0, displaced_t0 > field.depth_near);
-            if (displaced_t <= field.depth_near || displaced_t >= sample.t || displaced_t > field.depth_far) {
-                continue;
+
+            for (var refine = 0u; refine < 6u; refine = refine + 1u) {
+                let mid_t = (hit_low + hit_high) * 0.5;
+                let mid_point = ray_origin + ray_dir * mid_t;
+                let mid_sdf = body_sdf(body, color, mid_point);
+                if (mid_sdf > 0.0) {
+                    hit_low = mid_t;
+                } else {
+                    hit_high = mid_t;
+                }
             }
+
+            let displaced_t = hit_high;
             let point = ray_origin + ray_dir * displaced_t;
-            let normal = normalize((point - body.xyz) / max(displaced_radius, 0.001));
+            let normal = body_normal(body, color, point);
+            let local = (point - body.xyz) / max(radius, 0.001);
             let plasma = pow(max(fbm4(vec4f(local * mix(1.35, 2.15, self_flag), field.time * 0.24)) * 0.5 + 0.5, 0.0), mix(2.4, 5.4, self_flag));
             let view_dir = normalize(ray_origin - point);
             let fresnel = pow(1.0 - clamp(dot(normal, view_dir), 0.0, 1.0), 3.6);
