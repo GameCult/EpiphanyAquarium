@@ -16,7 +16,12 @@ current_model:
       web: https://github.com/GameCult/EpiphanyAquarium-Web
       bevy: https://github.com/GameCult/EpiphanyAquarium-Bevy
       synth: https://github.com/GameCult/AquariumSynth
-      engine: https://github.com/GameCult/EpiphanyAquarium-Engine
+      engine: https://github.com/GameCult/Aquarium-Engine
+    local_roots:
+      web: E:\Projects\EpiphanyAquarium-Web
+      bevy: E:\Projects\EpiphanyAquarium-Bevy
+      synth: E:\Projects\AquariumSynth
+      engine: E:\Projects\Aquarium-Engine
     doctrine: >
       Each pivot now has its own public repo and readable lineage. The original
       repo remains archive/meta; future active work should choose the repo that
@@ -24,7 +29,7 @@ current_model:
       one historical junk drawer.
   migration_target:
     engine: C# Aquarium-owned engine core, likely Stride-scaffolded
-    path: https://github.com/GameCult/EpiphanyAquarium-Engine
+    path: https://github.com/GameCult/Aquarium-Engine
     migration_map: notes/rust-branch-retrospective.md
     communication: CultNet contract
     persistence: CultCache contract

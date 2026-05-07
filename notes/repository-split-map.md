@@ -25,8 +25,8 @@ actually explains it instead of dragging every pivot behind it forever.
   - Extracted with `git subtree split --prefix=crates/aquarium_synth`.
   - Contains the standalone Rust synth crate, tests, lockfile, and split notes.
 
-- `GameCult/EpiphanyAquarium-Engine`
-  - URL: https://github.com/GameCult/EpiphanyAquarium-Engine
+- `GameCult/Aquarium-Engine`
+  - URL: https://github.com/GameCult/Aquarium-Engine
   - New-history C# engine seed. It does not pretend to have existed in old
     commits; it starts where the pivot starts.
 
@@ -34,6 +34,13 @@ actually explains it instead of dragging every pivot behind it forever.
 
 `GameCult/EpiphanyAquarium` remains the full archive/meta repo unless deliberately
 retired later. It records the split and keeps the pre-surgery worktree intact.
+
+Local working copies live directly under `E:\Projects`:
+
+- `E:\Projects\EpiphanyAquarium-Web`
+- `E:\Projects\EpiphanyAquarium-Bevy`
+- `E:\Projects\AquariumSynth`
+- `E:\Projects\Aquarium-Engine`
 
 ## Verification
 

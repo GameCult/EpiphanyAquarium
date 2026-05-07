@@ -6,7 +6,12 @@ Current pivot truth:
   - `https://github.com/GameCult/EpiphanyAquarium-Web`
   - `https://github.com/GameCult/EpiphanyAquarium-Bevy`
   - `https://github.com/GameCult/AquariumSynth`
-  - `https://github.com/GameCult/EpiphanyAquarium-Engine`
+  - `https://github.com/GameCult/Aquarium-Engine`
+- Local project roots now live directly under `E:\Projects`:
+  - `E:\Projects\EpiphanyAquarium-Web`
+  - `E:\Projects\EpiphanyAquarium-Bevy`
+  - `E:\Projects\AquariumSynth`
+  - `E:\Projects\Aquarium-Engine`
 - Split map lives at `notes/repository-split-map.md`.
 - The Bevy/Rust branch is frozen as prototype/reference, not the future host.
 - The next target is C# land: use Stride as scaffolding and parts donor where
@@ -75,7 +80,7 @@ Frozen Bevy renderer truth:
 
 Current next cut:
 
-- Start the C# host/scaffold map in `GameCult/EpiphanyAquarium-Engine` before
+- Start the C# host/scaffold map in `GameCult/Aquarium-Engine` before
   writing renderer code.
 - Keep Bevy changes limited to documentation, salvage extraction, or
   build-preservation unless explicitly reactivated.

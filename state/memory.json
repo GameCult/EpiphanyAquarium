@@ -51,7 +51,7 @@
       "GameCult/EpiphanyAquarium-Web owns the React/Tauri/WebGL prototype lineage.",
       "GameCult/EpiphanyAquarium-Bevy owns the frozen Rust/Bevy prototype lineage and keeps its state/notes because the branch doctrine is part of the artifact.",
       "GameCult/AquariumSynth owns the standalone Rust synth crate extracted with `git subtree split --prefix=crates/aquarium_synth`; the Bevy repo keeps an in-tree copy only for historical build context.",
-      "GameCult/EpiphanyAquarium-Engine is intentionally new history for the C# engine seed. Do not fake old provenance into it."
+      "GameCult/Aquarium-Engine is intentionally new history for the C# engine seed. Its local root is `E:\\Projects\\Aquarium-Engine`; do not fake old provenance into it."
     ],
     "gpu_compute_specialist": [
       "Think in passes, domains, memory traffic, and synchronization, not object identity. A buffer slot is often labor, not identity; stable identity should come from deterministic world-space domains when state can be derived.",
