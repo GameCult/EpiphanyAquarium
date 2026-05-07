@@ -470,3 +470,10 @@ Current slice:
   `to=target:depth` lists. `wob`/`wobble` remains only a style alias. The wobble
   bass golf scripts now use `mod n=wob ...` so the examples teach the general
   routing abstraction rather than a genre button.
+- Current synth performance pass: added `crates/aquarium_synth/examples/voice_capacity.rs`
+  as a release-mode benchmark for preallocated `PatchPlayer::render_mono`
+  buffer filling. Warmed local single-thread result at 44.1 kHz for two-second
+  buffers: simple plucks stay around 400-500 estimated realtime voices, colored
+  formant voices around 200-260, and heavy wobble/FM/formant basses around
+  100-120. Practical game budgets should stay well below parity and keep fills
+  off the audio callback thread.
