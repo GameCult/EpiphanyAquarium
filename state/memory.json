@@ -168,7 +168,8 @@
       "Agent voices can be continuous; interface controls should be transient.",
       "Subtractive interface hits start with noise and shape it with resonators.",
       "Rust-native synth work belongs in the isolated `crates/aquarium_synth` crate. Bevy should consume narrow `AudioUnit` adapters and presets from that crate instead of growing patch logic in `bevy-aquarium/src/main.rs`.",
-      "`aquarium_synth` has a line-oriented patch script: `patch`, `voice`, and `sfxr` commands with key=value fields. It can mix modular voices with classic sfxr preset lines, e.g. `sfxr preset=laser mutate_seed=9 mutate=0.01`."
+      "`aquarium_synth` has a line-oriented patch script: `patch`, `voice`, and `sfxr` commands with key=value fields. It can mix modular voices with classic sfxr preset lines, e.g. `sfxr preset=laser mutate_seed=9 mutate=0.01`.",
+      "Use the original `sfxr` crate as dev-only ground truth for compatibility tests. Compare acoustic features against reference renders rather than exact samples unless the goal changes to cloning sfxr's generator internals."
     ],
     "interaction_design": [
       "Progressive disclosure is the core grammar: vibes first, object second, surface third.",

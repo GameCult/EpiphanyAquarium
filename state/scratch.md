@@ -384,3 +384,9 @@ Current slice:
   oscillator/envelope/filter/phaser/arpeggio voices with classic sfxr preset
   lines, supports seeded mutation, and tests prove all classic named sfxr
   families generate non-silent audio.
+- Current sfxr ground-truth correction: added dev-only `sfxr = 0.1.4` tests.
+  The integration test renders seeded reference `Sample` presets with
+  `sfxr::Generator`, converts the same sample fields into `SfxrParams`, renders
+  the modular Aquarium path, and compares duration/RMS/attack/zero-crossing
+  features. This anchors compatibility without turning Aquarium into a hidden
+  exact clone of the sfxr generator.
