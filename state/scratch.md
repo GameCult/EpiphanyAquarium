@@ -413,3 +413,10 @@ Current slice:
   prepass now integrates a compact volumetric segment to the nearest
   terrain/body hit, applying SH-lit in-scatter and transmittance from the Grid
   density source before packing the deferred payload.
+- Current audio continuation: `aquarium_synth` now has realtime-facing buffer
+  fill methods on `PatchPlayer` (`render_mono`, `render_interleaved_stereo`) and
+  first-class scriptable modulation lanes. `voice` scripts can use
+  `mods=target:wave:hz:depth[:phase[:bias]]` to move gain, pitch, duty, low/high
+  pass, noise, drive, fold, and formant mix with sine/triangle/square/sample-hold
+  LFOs. Tests prove chunk rendering matches sample iteration exactly and that
+  modulators change envelope/spectrogram motion.

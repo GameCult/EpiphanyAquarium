@@ -10,8 +10,8 @@ const DEFAULT_SAMPLE_RATE: f32 = 44_100.0;
 pub const PATCH_SCRIPT_EXAMPLE: &str = r#"
 # One command per line. Comments start with #.
 patch gain=0.7 soft_clip=true
-voice wave=sine freq=220 gain=0.12 attack=0.002 sustain=0.03 decay=0.2 vibrato=0.02 vibrato_hz=5 formants=620:90:1,1040:150:0.8 formant_mix=0.45
-voice wave=triangle freq=440 gain=0.04 attack=0 sustain=0.02 decay=0.18 lpf=0.7 hpf=0.02
+voice wave=sine freq=220 gain=0.12 attack=0.002 sustain=0.03 decay=0.2 vibrato=0.02 vibrato_hz=5 formants=620:90:1,1040:150:0.8 formant_mix=0.45 mods=formant:sine:2:0.12,pitch:triangle:3:0.015
+voice wave=triangle freq=440 gain=0.04 attack=0 sustain=0.02 decay=0.18 lpf=0.7 hpf=0.02 mods=gain:sine:8:0.18,lpf:hold:12:0.08
 sfxr preset=laser mutate_seed=9 mutate=0.01
 "#;
 
@@ -494,6 +494,37 @@ impl Default for VoiceColor {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum ModTarget {
+    Gain,
+    Pitch,
+    Duty,
+    LowPass,
+    HighPass,
+    Noise,
+    Drive,
+    Fold,
+    FormantMix,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum ModWaveform {
+    Sine,
+    Triangle,
+    Square,
+    SampleHold,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct Modulator {
+    pub target: ModTarget,
+    pub waveform: ModWaveform,
+    pub frequency_hz: f32,
+    pub depth: f32,
+    pub phase: f32,
+    pub bias: f32,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Voice {
     pub oscillator: Oscillator,
@@ -505,6 +536,7 @@ pub struct Voice {
     pub arpeggio: Option<Arpeggio>,
     pub color: VoiceColor,
     pub formants: Vec<Formant>,
+    pub modulators: Vec<Modulator>,
     pub gain: f32,
 }
 
@@ -520,6 +552,7 @@ impl Voice {
             arpeggio: None,
             color: VoiceColor::default(),
             formants: Vec::new(),
+            modulators: Vec::new(),
             gain,
         }
     }
@@ -830,6 +863,7 @@ impl SfxrParams {
                 formant_mix: 0.0,
             },
             formants: Vec::new(),
+            modulators: Vec::new(),
             gain: 0.22,
         };
         let mut patch = SynthPatch::new(vec![voice]);
@@ -1006,6 +1040,10 @@ fn voice_from_fields(fields: &[(&str, &str)], line: usize) -> Result<Voice, Patc
         Some(value) => parse_formants(value, line)?,
         None => Vec::new(),
     };
+    let modulators = match field_value(fields, "mods") {
+        Some(value) => parse_modulators(value, line)?,
+        None => Vec::new(),
+    };
     let voice = Voice {
         oscillator: Oscillator {
             waveform,
@@ -1041,6 +1079,7 @@ fn voice_from_fields(fields: &[(&str, &str)], line: usize) -> Result<Voice, Patc
         arpeggio,
         color,
         formants,
+        modulators,
         gain: parse_optional_f32(fields, "gain", line)?.unwrap_or(0.2),
     };
     for (key, _) in fields {
@@ -1051,6 +1090,7 @@ fn voice_from_fields(fields: &[(&str, &str)], line: usize) -> Result<Voice, Patc
             | "hpf_ramp" | "phaser" | "phaser_ramp" | "arp_delay" | "arp_mult" | "noise"
             | "drive" | "fold" | "tremolo" | "tremolo_hz" | "formant_mix" | "formants" | "gain" => {
             }
+            "mods" => {}
             unknown => return Err(unknown_field(line, "voice", unknown)),
         }
     }
@@ -1093,6 +1133,95 @@ fn parse_formants(value: &str, line: usize) -> Result<Vec<Formant>, PatchScriptE
             })
         })
         .collect()
+}
+
+fn parse_modulators(value: &str, line: usize) -> Result<Vec<Modulator>, PatchScriptError> {
+    if value.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    value
+        .split(',')
+        .map(|spec| {
+            let mut parts = spec.split(':');
+            let target = parse_mod_target(
+                parts
+                    .next()
+                    .ok_or_else(|| PatchScriptError::new(line, "modulator needs target"))?,
+                line,
+            )?;
+            let waveform = parse_mod_waveform(
+                parts
+                    .next()
+                    .ok_or_else(|| PatchScriptError::new(line, "modulator needs waveform"))?,
+                line,
+            )?;
+            let frequency_hz = parts
+                .next()
+                .ok_or_else(|| PatchScriptError::new(line, "modulator needs frequency"))?
+                .parse::<f32>()
+                .map_err(|_| PatchScriptError::new(line, "modulator frequency must be a number"))?;
+            let depth = parts
+                .next()
+                .ok_or_else(|| PatchScriptError::new(line, "modulator needs depth"))?
+                .parse::<f32>()
+                .map_err(|_| PatchScriptError::new(line, "modulator depth must be a number"))?;
+            let phase = parts
+                .next()
+                .unwrap_or("0")
+                .parse::<f32>()
+                .map_err(|_| PatchScriptError::new(line, "modulator phase must be a number"))?;
+            let bias = parts
+                .next()
+                .unwrap_or("0")
+                .parse::<f32>()
+                .map_err(|_| PatchScriptError::new(line, "modulator bias must be a number"))?;
+            if parts.next().is_some() {
+                return Err(PatchScriptError::new(
+                    line,
+                    "modulator format is target:wave:hz:depth[:phase[:bias]]",
+                ));
+            }
+            Ok(Modulator {
+                target,
+                waveform,
+                frequency_hz,
+                depth,
+                phase,
+                bias,
+            })
+        })
+        .collect()
+}
+
+fn parse_mod_target(value: &str, line: usize) -> Result<ModTarget, PatchScriptError> {
+    match value {
+        "gain" => Ok(ModTarget::Gain),
+        "pitch" => Ok(ModTarget::Pitch),
+        "duty" => Ok(ModTarget::Duty),
+        "lpf" => Ok(ModTarget::LowPass),
+        "hpf" => Ok(ModTarget::HighPass),
+        "noise" => Ok(ModTarget::Noise),
+        "drive" => Ok(ModTarget::Drive),
+        "fold" => Ok(ModTarget::Fold),
+        "formant" | "formant_mix" => Ok(ModTarget::FormantMix),
+        other => Err(PatchScriptError::new(
+            line,
+            format!("unknown modulator target `{other}`"),
+        )),
+    }
+}
+
+fn parse_mod_waveform(value: &str, line: usize) -> Result<ModWaveform, PatchScriptError> {
+    match value {
+        "sine" => Ok(ModWaveform::Sine),
+        "tri" | "triangle" => Ok(ModWaveform::Triangle),
+        "square" => Ok(ModWaveform::Square),
+        "hold" | "sample_hold" => Ok(ModWaveform::SampleHold),
+        other => Err(PatchScriptError::new(
+            line,
+            format!("unknown modulator waveform `{other}`"),
+        )),
+    }
 }
 
 fn apply_sfxr_fields(
@@ -1286,6 +1415,15 @@ impl PatchPlayer {
         self.reset();
     }
 
+    pub fn sample_rate(&self) -> f32 {
+        self.sample_rate
+    }
+
+    pub fn set_seed(&mut self, seed: u64) {
+        self.seed = seed;
+        self.reset();
+    }
+
     pub fn next_sample(&mut self) -> f32 {
         let age = self.sample_index as f32 / self.sample_rate;
         let repeat_age = match self.patch.repeat {
@@ -1303,6 +1441,22 @@ impl PatchPlayer {
             (value * 1.35).tanh()
         } else {
             value.clamp(-1.0, 1.0)
+        }
+    }
+
+    pub fn render_mono(&mut self, output: &mut [f32]) {
+        for sample in output {
+            *sample = self.next_sample();
+        }
+    }
+
+    pub fn render_interleaved_stereo(&mut self, output: &mut [f32]) {
+        for frame in output.chunks_mut(2) {
+            let sample = self.next_sample();
+            frame[0] = sample;
+            if let Some(right) = frame.get_mut(1) {
+                *right = sample;
+            }
         }
     }
 }
@@ -1346,13 +1500,17 @@ impl VoiceState {
             return 0.0;
         }
 
-        let mut frequency = frequency_at(voice, age);
+        let pitch_mod = mod_amount(&voice.modulators, ModTarget::Pitch, age, seed);
+        let mut frequency = frequency_at(voice, age) * 2.0_f32.powf(pitch_mod);
         if let Some(arpeggio) = voice.arpeggio {
             if age >= arpeggio.delay_seconds {
                 frequency *= arpeggio.multiplier;
             }
         }
-        let duty = (voice.oscillator.duty + voice.duty.ramp_per_second * age).clamp(0.02, 0.98);
+        let duty = (voice.oscillator.duty
+            + voice.duty.ramp_per_second * age
+            + mod_amount(&voice.modulators, ModTarget::Duty, age, seed))
+        .clamp(0.02, 0.98);
         let previous_phase = self.phase;
         self.phase = (self.phase + frequency / sample_rate).fract();
         if self.phase < previous_phase {
@@ -1365,25 +1523,34 @@ impl VoiceState {
             seed ^ self.noise_epoch as u64,
         );
         sample = self.color(voice, sample, age, seed);
-        sample = self.filter(voice.filter, sample, age);
-        sample = self.formants(voice, sample, sample_rate);
+        sample = self.filter(modulated_filter(voice, age, seed), sample, age);
+        sample = self.formants(voice, sample, sample_rate, age, seed);
         sample = self.phaser(voice.phaser, sample, age, sample_rate);
-        sample * envelope
+        let gain_mod = (1.0 + mod_amount(&voice.modulators, ModTarget::Gain, age, seed)).max(0.0);
+        sample * envelope * gain_mod
     }
 
     fn color(&self, voice: &Voice, sample: f32, age: f32, seed: u64) -> f32 {
         let mut value = sample;
-        let noise_mix = voice.color.noise_mix.clamp(0.0, 1.0);
+        let noise_mix = (voice.color.noise_mix
+            + mod_amount(&voice.modulators, ModTarget::Noise, age, seed))
+        .clamp(0.0, 1.0);
         if noise_mix > 0.0 {
             let noise = hash_noise(seed ^ self.sample_counter, self.noise_epoch);
             value = value * (1.0 - noise_mix) + noise * noise_mix;
         }
-        if voice.color.drive > 0.0 {
-            let drive = 1.0 + voice.color.drive.clamp(0.0, 1.0) * 12.0;
+        let drive_amount = (voice.color.drive
+            + mod_amount(&voice.modulators, ModTarget::Drive, age, seed))
+        .clamp(0.0, 1.0);
+        if drive_amount > 0.0 {
+            let drive = 1.0 + drive_amount * 12.0;
             value = (value * drive).tanh() / drive.tanh();
         }
-        if voice.color.fold > 0.0 {
-            value = wavefold(value * (1.0 + voice.color.fold.clamp(0.0, 1.0) * 3.5));
+        let fold_amount = (voice.color.fold
+            + mod_amount(&voice.modulators, ModTarget::Fold, age, seed))
+        .clamp(0.0, 1.0);
+        if fold_amount > 0.0 {
+            value = wavefold(value * (1.0 + fold_amount * 3.5));
         }
         if voice.color.tremolo_depth > 0.0 && voice.color.tremolo_hz > 0.0 {
             let lfo = 0.5 + 0.5 * (age * voice.color.tremolo_hz * TAU).sin();
@@ -1430,8 +1597,17 @@ impl VoiceState {
         (sample + delayed) * 0.5
     }
 
-    fn formants(&mut self, voice: &Voice, sample: f32, sample_rate: f32) -> f32 {
-        let mix = voice.color.formant_mix.clamp(0.0, 1.0);
+    fn formants(
+        &mut self,
+        voice: &Voice,
+        sample: f32,
+        sample_rate: f32,
+        age: f32,
+        seed: u64,
+    ) -> f32 {
+        let mix = (voice.color.formant_mix
+            + mod_amount(&voice.modulators, ModTarget::FormantMix, age, seed))
+        .clamp(0.0, 1.0);
         if mix <= 0.0 || self.formants.is_empty() {
             return sample;
         }
@@ -1628,6 +1804,44 @@ fn frequency_at(voice: &Voice, age: f32) -> f32 {
     frequency
         .max(voice.pitch.min_frequency_hz)
         .clamp(10.0, 22_000.0)
+}
+
+fn modulated_filter(voice: &Voice, age: f32, seed: u64) -> Filter {
+    let mut filter = voice.filter;
+    filter.low_pass = (filter.low_pass
+        + mod_amount(&voice.modulators, ModTarget::LowPass, age, seed))
+    .clamp(0.0, 1.0);
+    filter.high_pass = (filter.high_pass
+        + mod_amount(&voice.modulators, ModTarget::HighPass, age, seed))
+    .clamp(0.0, 1.0);
+    filter
+}
+
+fn mod_amount(modulators: &[Modulator], target: ModTarget, age: f32, seed: u64) -> f32 {
+    modulators
+        .iter()
+        .filter(|modulator| modulator.target == target)
+        .map(|modulator| modulator.bias + modulator.depth * modulator_value(*modulator, age, seed))
+        .sum()
+}
+
+fn modulator_value(modulator: Modulator, age: f32, seed: u64) -> f32 {
+    let phase = (age * modulator.frequency_hz + modulator.phase).fract();
+    match modulator.waveform {
+        ModWaveform::Sine => (phase * TAU).sin(),
+        ModWaveform::Triangle => 1.0 - 4.0 * (phase - 0.5).abs(),
+        ModWaveform::Square => {
+            if phase < 0.5 {
+                1.0
+            } else {
+                -1.0
+            }
+        }
+        ModWaveform::SampleHold => {
+            let slot = (age * modulator.frequency_hz.max(0.001)).floor() as u32;
+            hash_noise(seed ^ 0x4d6f_6475_6c61_7465, slot)
+        }
+    }
 }
 
 fn oscillator_sample(waveform: Waveform, phase: f32, duty: f32, seed: u64) -> f32 {
@@ -1905,6 +2119,67 @@ mod tests {
     fn patch_script_reports_line_numbers() {
         let err = SynthPatch::from_script("patch gain=1\nvoice wave=beige").unwrap_err();
         assert_eq!(err.line, 2);
+    }
+
+    #[test]
+    fn patch_script_reports_bad_modulators() {
+        let err = SynthPatch::from_script("voice wave=sine mods=paperwork:sine:1:1").unwrap_err();
+        assert_eq!(err.line, 1);
+        assert!(err.to_string().contains("unknown modulator target"));
+    }
+
+    #[test]
+    fn render_mono_matches_next_sample_sequence() {
+        let patch = presets::aquarium_voice();
+        let mut sampled = PatchPlayer::new(patch.clone(), 44_100.0);
+        let mut chunked = PatchPlayer::new(patch, 44_100.0);
+        sampled.set_seed(19);
+        chunked.set_seed(19);
+        let expected: Vec<f32> = (0..2048).map(|_| sampled.next_sample()).collect();
+        let mut output = vec![0.0; expected.len()];
+        chunked.render_mono(&mut output);
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn render_interleaved_stereo_duplicates_mono_frames() {
+        let mut player = PatchPlayer::new(presets::aquarium_pluck(), 48_000.0);
+        let mut output = vec![0.0; 1025];
+        player.render_interleaved_stereo(&mut output);
+        for frame in output.chunks(2).take(output.len() / 2) {
+            assert_eq!(frame[0], frame[1]);
+        }
+    }
+
+    #[test]
+    fn script_modulators_change_audio_motion() {
+        let dry = SynthPatch::from_script(
+            "voice wave=triangle freq=220 gain=0.2 attack=0.01 sustain=0.35 decay=0.2 lpf=0.55 formant_mix=0.45 formants=520:85:1,1380:180:0.8",
+        )
+        .unwrap();
+        let moving = SynthPatch::from_script(
+            "voice wave=triangle freq=220 gain=0.2 attack=0.01 sustain=0.35 decay=0.2 lpf=0.55 formant_mix=0.45 formants=520:85:1,1380:180:0.8 mods=pitch:sine:6:0.04,gain:triangle:4:0.3,lpf:sine:3:-0.2,formant:sine:2:0.2",
+        )
+        .unwrap();
+        let mut dry_player = PatchPlayer::new(dry, 44_100.0);
+        let mut moving_player = PatchPlayer::new(moving, 44_100.0);
+        let mut dry_buffer = vec![0.0; 16_384];
+        let mut moving_buffer = vec![0.0; 16_384];
+        dry_player.render_mono(&mut dry_buffer);
+        moving_player.render_mono(&mut moving_buffer);
+        let comparison = compare_audio(
+            &dry_buffer,
+            &moving_buffer,
+            &AudioAnalysisConfig {
+                fft_size: 256,
+                hop_size: 256,
+                mel_band_count: 18,
+                ..AudioAnalysisConfig::default()
+            },
+        );
+        assert!(comparison.envelope_distance > 0.01);
+        assert!(comparison.log_mel_distance > 0.03);
+        assert!(comparison.score < 0.95);
     }
 
     #[test]
