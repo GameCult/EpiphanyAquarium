@@ -32,6 +32,19 @@ Current renderer truth:
   planet-local domain warp without six extra finite-difference samples.
   `body_bound_radius` is derived from `body_displacement_amplitude` plus margin,
   so broad phase remains a conservative contract rather than a shape shortcut.
+- Non-Self planet displacement is intentionally exaggerated: low-frequency
+  domain-warped noise plus three cheap directional macro lobes, with declared
+  displacement amplitude raised to 18% of radius. Self keeps its existing lower
+  solar/blob frequency mix for now.
+- Smooth-potato correction: ordinary planets now add high-frequency ridged
+  detail in the same warped local domain. The fine layer has much lower
+  amplitude than the macro lobes so normals get tooth without wrecking the
+  readable silhouette.
+- Body surface domains must be translation-invariant. Cursor pull made the bug
+  visible because it moved planets faster than idle orbit, but the real fault
+  was identity/domain seed coupling to body position and shader slot. The CPU
+  now writes a stable per-body seed derived from `body_id`; WGSL samples that
+  seed while using `(point - body.xyz) / radius` as the local domain.
 
 Current next cut:
 

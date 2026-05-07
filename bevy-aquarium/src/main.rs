@@ -658,6 +658,7 @@ struct AquariumRaymarch {
     ray11: Vec4,
     bodies: [Vec4; MAX_RAYMARCH_BODIES],
     colors: [Vec4; MAX_RAYMARCH_BODIES],
+    body_seeds: [Vec4; MAX_RAYMARCH_BODIES],
     froxel_masks: [UVec4; RAYMARCH_FROXEL_MASK_WORDS],
 }
 
@@ -683,6 +684,7 @@ impl Default for AquariumRaymarch {
             ray11: Vec4::new(0.5, 0.8, -0.28, 0.0),
             bodies: [Vec4::ZERO; MAX_RAYMARCH_BODIES],
             colors: [Vec4::ZERO; MAX_RAYMARCH_BODIES],
+            body_seeds: [Vec4::ZERO; MAX_RAYMARCH_BODIES],
             froxel_masks: [UVec4::ZERO; RAYMARCH_FROXEL_MASK_WORDS],
         }
     }
@@ -1481,12 +1483,15 @@ fn update_raymarch_uniforms(
 
     raymarch.bodies = [Vec4::ZERO; MAX_RAYMARCH_BODIES];
     raymarch.colors = [Vec4::ZERO; MAX_RAYMARCH_BODIES];
+    raymarch.body_seeds = [Vec4::ZERO; MAX_RAYMARCH_BODIES];
     raymarch.froxel_masks = [UVec4::ZERO; RAYMARCH_FROXEL_MASK_WORDS];
     let camera_position = raymarch.camera_position.truncate();
     let depth_near = raymarch.depth_near;
     let depth_span = raymarch.depth_span;
     let mut count = 0usize;
-    for (transform, body) in bodies.iter().take(MAX_RAYMARCH_BODIES) {
+    let mut body_entries: Vec<_> = bodies.iter().collect();
+    body_entries.sort_by(|(_, left), (_, right)| left.body_id.cmp(&right.body_id));
+    for (transform, body) in body_entries.into_iter().take(MAX_RAYMARCH_BODIES) {
         let self_flag = if body.class == BodyClass::LivingSelf {
             1.0
         } else {
@@ -1504,10 +1509,11 @@ fn update_raymarch_uniforms(
             radius,
         );
         raymarch.colors[count] = body_color(body.class).extend(self_flag);
+        raymarch.body_seeds[count] = body_seed_uniform(body);
         bin_body_into_froxels(
             &mut raymarch.froxel_masks,
             count,
-            radius * (1.18 + self_flag * 0.18),
+            radius * (1.20 + self_flag * 0.16),
             depth_near,
             depth_span,
             transform.translation - camera_position,
@@ -1523,6 +1529,27 @@ fn update_raymarch_uniforms(
     lighting_history.previous_center = grid_frame.center;
     lighting_history.previous_half_extent = grid_frame.half_extent;
     lighting_history.initialized = true;
+}
+
+fn body_seed_uniform(body: &CelestialBody) -> Vec4 {
+    let mut hash = 0x811c_9dc5_u32;
+    for byte in body.body_id.as_bytes() {
+        hash ^= *byte as u32;
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    let h0 = hash01(hash);
+    let h1 = hash01(hash.rotate_left(11) ^ 0x9e37_79b9);
+    let h2 = hash01(hash.rotate_left(23) ^ 0x85eb_ca6b);
+    Vec4::new(
+        12.0 + h0 * 71.0 + body.phase * 0.13,
+        27.0 + h1 * 83.0 + body.mass * 0.07,
+        43.0 + h2 * 97.0 + body.phase * 0.19,
+        0.0,
+    )
+}
+
+fn hash01(value: u32) -> f32 {
+    (value as f32) * (1.0 / u32::MAX as f32)
 }
 
 fn bin_body_into_froxels(

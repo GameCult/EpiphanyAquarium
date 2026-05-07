@@ -20,6 +20,7 @@ struct AquariumRaymarch {
     ray11: vec4f,
     bodies: array<vec4f, 8>,
     colors: array<vec4f, 8>,
+    body_seeds: array<vec4f, 8>,
     froxel_masks: array<vec4u, 576>,
 };
 
@@ -632,48 +633,57 @@ struct SurfaceSample {
     t: f32,
 };
 
-fn body_displacement(body: vec4f, color: vec4f, point: vec3f) -> f32 {
+fn body_seed(body: vec4f, color: vec4f, body_index: u32) -> vec3f {
+    return field.body_seeds[body_index].xyz + color.rgb * vec3f(3.7, 4.3, 5.1) + body.www * vec3f(0.31, 0.47, 0.59);
+}
+
+fn body_displacement(body: vec4f, color: vec4f, point: vec3f, body_index: u32) -> f32 {
     let radius = max(body.w, 0.001);
     let self_flag = color.w;
     let local = (point - body.xyz) / radius;
-    let seed = vec3f(
-        dot(body.xyz, vec3f(0.071, 0.113, 0.047)) + color.r * 3.7,
-        dot(body.yzx, vec3f(0.097, -0.061, 0.083)) + color.g * 4.3,
-        dot(body.zxy, vec3f(-0.053, 0.089, 0.127)) + color.b * 5.1
-    );
-    let low_domain = local * mix(0.74, 0.92, self_flag) + seed + vec3f(0.0, field.time * mix(0.018, 0.045, self_flag), 0.0);
+    let direction = normalize(local);
+    let seed = body_seed(body, color, body_index);
+    let body_time = field.time * self_flag;
+    let low_domain = local * mix(0.36, 0.92, self_flag) + seed + vec3f(0.0, body_time * 0.045, 0.0);
     let low = noised3(low_domain);
-    let warp = low.yzw * mix(0.10, 0.18, self_flag);
+    let warp = low.yzw * mix(0.22, 0.18, self_flag);
     let warped = local + warp;
-    let first = noised3(warped * mix(1.18, 1.42, self_flag) + seed.yzx + vec3f(field.time * mix(0.012, 0.035, self_flag), 0.0, 0.0)).x;
-    let second = noised3(warped * mix(2.05, 2.46, self_flag) + seed.zxy - vec3f(0.0, 0.0, field.time * mix(0.022, 0.052, self_flag))).x;
+    let first = noised3(warped * mix(0.62, 1.42, self_flag) + seed.yzx + vec3f(body_time * 0.035, 0.0, 0.0)).x;
+    let second = noised3(warped * mix(1.15, 2.46, self_flag) + seed.zxy - vec3f(0.0, 0.0, body_time * 0.052)).x;
+    let fine_a = noised3(warped * mix(4.8, 3.4, self_flag) + seed * 1.7 + vec3f(0.0, body_time * 0.06, 0.0)).x;
+    let fine_b = noised3(warped * mix(9.2, 5.8, self_flag) + seed.zxy * 2.3 - vec3f(body_time * 0.074, 0.0, 0.0)).x;
+    let ridged_detail = (1.0 - abs(fine_a)) * mix(0.16, 0.08, self_flag) + fine_b * mix(0.045, 0.035, self_flag);
+    let lobe_a = pow(abs(dot(direction, normalize(vec3f(0.73, -0.22, 0.64) + seed * 0.03))), 2.7);
+    let lobe_b = pow(abs(dot(direction, normalize(vec3f(-0.31, 0.86, 0.41) + seed.yzx * 0.03))), 3.2);
+    let lobe_c = pow(abs(dot(direction, normalize(vec3f(0.18, 0.44, -0.88) + seed.zxy * 0.03))), 2.3);
+    let macro_lobes = (lobe_a - lobe_b * 0.82 + lobe_c * 0.58) * mix(0.42, 0.12, self_flag);
     let amplitude = body_displacement_amplitude(color);
-    return clamp(first * 0.68 + second * 0.32, -1.0, 1.0) * amplitude;
+    return clamp(macro_lobes + first * mix(0.56, 0.66, self_flag) + second * mix(0.18, 0.28, self_flag) + ridged_detail, -1.0, 1.0) * amplitude;
 }
 
 fn body_displacement_amplitude(color: vec4f) -> f32 {
-    return mix(0.035, 0.14, color.w);
+    return mix(0.18, 0.14, color.w);
 }
 
 fn body_bound_radius(body: vec4f, color: vec4f) -> f32 {
     return max(body.w, 0.001) * (1.0 + body_displacement_amplitude(color) + 0.02);
 }
 
-fn body_sdf(body: vec4f, color: vec4f, point: vec3f) -> f32 {
+fn body_sdf(body: vec4f, color: vec4f, body_index: u32, point: vec3f) -> f32 {
     let radius = max(body.w, 0.001);
-    let displaced_radius = radius * (1.0 + body_displacement(body, color, point));
+    let displaced_radius = radius * (1.0 + body_displacement(body, color, point, body_index));
     return length(point - body.xyz) - displaced_radius;
 }
 
-fn body_normal(body: vec4f, color: vec4f, point: vec3f) -> vec3f {
+fn body_normal(body: vec4f, color: vec4f, body_index: u32, point: vec3f) -> vec3f {
     let epsilon = max(body.w * 0.012, 0.006);
     let dx = vec3f(epsilon, 0.0, 0.0);
     let dy = vec3f(0.0, epsilon, 0.0);
     let dz = vec3f(0.0, 0.0, epsilon);
     return normalize(vec3f(
-        body_sdf(body, color, point + dx) - body_sdf(body, color, point - dx),
-        body_sdf(body, color, point + dy) - body_sdf(body, color, point - dy),
-        body_sdf(body, color, point + dz) - body_sdf(body, color, point - dz)
+        body_sdf(body, color, body_index, point + dx) - body_sdf(body, color, body_index, point - dx),
+        body_sdf(body, color, body_index, point + dy) - body_sdf(body, color, body_index, point - dy),
+        body_sdf(body, color, body_index, point + dz) - body_sdf(body, color, body_index, point - dz)
     ));
 }
 
@@ -736,14 +746,14 @@ fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> 
             }
 
             var previous_t = start_t;
-            var previous_sdf = body_sdf(body, color, ray_origin + ray_dir * previous_t);
+            var previous_sdf = body_sdf(body, color, i, ray_origin + ray_dir * previous_t);
             var hit_low = start_t;
             var hit_high = end_t + 1.0;
             for (var trace_step = 1u; trace_step <= 14u; trace_step = trace_step + 1u) {
                 let progress = (f32(trace_step) - 0.35 + jitter * 0.35) / 14.0;
                 let t = mix(start_t, end_t, clamp(progress, 0.0, 1.0));
                 let point = ray_origin + ray_dir * t;
-                let sdf = body_sdf(body, color, point);
+                let sdf = body_sdf(body, color, i, point);
                 if (previous_sdf > 0.0 && sdf <= 0.0) {
                     hit_low = previous_t;
                     hit_high = t;
@@ -760,7 +770,7 @@ fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> 
             for (var refine = 0u; refine < 6u; refine = refine + 1u) {
                 let mid_t = (hit_low + hit_high) * 0.5;
                 let mid_point = ray_origin + ray_dir * mid_t;
-                let mid_sdf = body_sdf(body, color, mid_point);
+                let mid_sdf = body_sdf(body, color, i, mid_point);
                 if (mid_sdf > 0.0) {
                     hit_low = mid_t;
                 } else {
@@ -770,7 +780,7 @@ fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> 
 
             let displaced_t = hit_high;
             let point = ray_origin + ray_dir * displaced_t;
-            let normal = body_normal(body, color, point);
+            let normal = body_normal(body, color, i, point);
             let local = (point - body.xyz) / max(radius, 0.001);
             let plasma = pow(max(fbm4(vec4f(local * mix(1.35, 2.15, self_flag), field.time * 0.24)) * 0.5 + 0.5, 0.0), mix(2.4, 5.4, self_flag));
             let view_dir = normalize(ray_origin - point);
