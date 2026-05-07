@@ -2173,6 +2173,7 @@ pub struct PatchPlayer {
     patch: SynthPatch,
     voices: Vec<VoiceState>,
     control_modulators: [Vec<RuntimeModulator>; MOD_TARGET_COUNT],
+    control_active: [bool; MOD_TARGET_COUNT],
     sample_rate: f32,
     sample_index: u64,
     seed: u64,
@@ -2183,6 +2184,7 @@ impl PatchPlayer {
         let mut player = Self {
             voices: Vec::new(),
             control_modulators: grouped_control_modulators(&patch.controls),
+            control_active: active_control_targets(&patch.controls),
             patch,
             sample_rate,
             sample_index: 0,
@@ -2221,8 +2223,14 @@ impl PatchPlayer {
         let sample_rate = self.sample_rate;
         let patch_mods = self.patch_modulation(repeat_age);
         for (voice, state) in self.patch.voices.iter().zip(self.voices.iter_mut()) {
-            value += state.next_sample(voice, &patch_mods, repeat_age, sample_rate, self.seed)
-                * voice.gain;
+            value += state.next_sample(
+                voice,
+                &patch_mods,
+                &self.control_active,
+                repeat_age,
+                sample_rate,
+                self.seed,
+            ) * voice.gain;
         }
         value *= self.patch.gain;
         self.sample_index = self.sample_index.saturating_add(1);
@@ -2288,6 +2296,22 @@ fn grouped_voice_modulators(modulators: &[Modulator]) -> [Vec<RuntimeModulator>;
     grouped
 }
 
+fn active_control_targets(controls: &[ControlLane]) -> [bool; MOD_TARGET_COUNT] {
+    let mut active = [false; MOD_TARGET_COUNT];
+    for control in controls {
+        active[control.modulator.target.index()] = true;
+    }
+    active
+}
+
+fn active_voice_mod_targets(modulators: &[Modulator]) -> [bool; MOD_TARGET_COUNT] {
+    let mut active = [false; MOD_TARGET_COUNT];
+    for modulator in modulators {
+        active[modulator.target.index()] = true;
+    }
+    active
+}
+
 fn empty_runtime_modulator_groups() -> [Vec<RuntimeModulator>; MOD_TARGET_COUNT] {
     std::array::from_fn(|_| Vec::new())
 }
@@ -2305,6 +2329,12 @@ struct VoiceState {
     phaser_buffer: Vec<f32>,
     formants: Vec<FormantState>,
     modulators: [Vec<RuntimeModulator>; MOD_TARGET_COUNT],
+    mod_active: [bool; MOD_TARGET_COUNT],
+    dynamic_pitch: bool,
+    dynamic_duty: bool,
+    fm_enabled: bool,
+    color_enabled: bool,
+    phaser_enabled: bool,
 }
 
 impl VoiceState {
@@ -2325,6 +2355,19 @@ impl VoiceState {
                 .map(|formant| FormantState::new(*formant))
                 .collect(),
             modulators: grouped_voice_modulators(&voice.modulators),
+            mod_active: active_voice_mod_targets(&voice.modulators),
+            dynamic_pitch: voice.pitch.ramp_per_second != 0.0
+                || voice.pitch.delta_ramp_per_second != 0.0
+                || voice.pitch.vibrato_depth != 0.0
+                || voice.pitch.min_frequency_hz > voice.oscillator.frequency_hz,
+            dynamic_duty: voice.duty.ramp_per_second != 0.0,
+            fm_enabled: voice.fm.index > 0.0 && voice.fm.ratio > 0.0,
+            color_enabled: voice.color.noise_mix > 0.0
+                || voice.color.drive > 0.0
+                || voice.color.fold > 0.0
+                || (voice.color.tremolo_depth > 0.0 && voice.color.tremolo_hz > 0.0),
+            phaser_enabled: voice.phaser.offset_seconds.abs() > 0.00001
+                || voice.phaser.ramp_seconds_per_second != 0.0,
         }
     }
 
@@ -2332,6 +2375,7 @@ impl VoiceState {
         &mut self,
         voice: &Voice,
         patch_mods: &[f32; MOD_TARGET_COUNT],
+        patch_active: &[bool; MOD_TARGET_COUNT],
         age: f32,
         sample_rate: f32,
         seed: u64,
@@ -2342,44 +2386,84 @@ impl VoiceState {
             return 0.0;
         }
 
-        let pitch_mod = self.mod_amount(patch_mods, ModTarget::Pitch, age, seed);
-        let mut frequency = frequency_at(voice, age) * 2.0_f32.powf(pitch_mod);
+        let mut frequency = if self.dynamic_pitch {
+            frequency_at(voice, age)
+        } else {
+            voice
+                .oscillator
+                .frequency_hz
+                .max(voice.pitch.min_frequency_hz)
+                .clamp(10.0, 22_000.0)
+        };
+        if self.target_active(patch_active, ModTarget::Pitch) {
+            let pitch_mod = self.mod_amount(patch_mods, ModTarget::Pitch, age, seed);
+            frequency *= 2.0_f32.powf(pitch_mod);
+        }
         if let Some(arpeggio) = voice.arpeggio {
             if age >= arpeggio.delay_seconds {
                 frequency *= arpeggio.multiplier;
             }
         }
-        let duty = (voice.oscillator.duty
-            + voice.duty.ramp_per_second * age
-            + self.mod_amount(patch_mods, ModTarget::Duty, age, seed))
-        .clamp(0.02, 0.98);
+        let duty = if self.dynamic_duty || self.target_active(patch_active, ModTarget::Duty) {
+            (voice.oscillator.duty
+                + voice.duty.ramp_per_second * age
+                + self.mod_amount(patch_mods, ModTarget::Duty, age, seed))
+            .clamp(0.02, 0.98)
+        } else {
+            voice.oscillator.duty.clamp(0.02, 0.98)
+        };
         let previous_phase = self.phase;
         self.phase = (self.phase + frequency / sample_rate).fract();
-        self.fm_phase = (self.fm_phase + frequency * voice.fm.ratio.max(0.0) / sample_rate).fract();
         if self.phase < previous_phase {
             self.noise_epoch = self.noise_epoch.wrapping_add(1);
         }
-        let fm_index_mod = self
-            .mod_amount(patch_mods, ModTarget::FmIndex, age, seed)
-            .max(0.0);
-        let mut fm = voice.fm;
-        fm.index += fm_index_mod;
-        let phase = self.phase + voice.oscillator.phase + fm_phase_offset(fm, self.fm_phase, age);
+        let phase = if self.fm_enabled || self.target_active(patch_active, ModTarget::FmIndex) {
+            self.fm_phase =
+                (self.fm_phase + frequency * voice.fm.ratio.max(0.0) / sample_rate).fract();
+            let fm_index_mod = self
+                .mod_amount(patch_mods, ModTarget::FmIndex, age, seed)
+                .max(0.0);
+            let mut fm = voice.fm;
+            fm.index += fm_index_mod;
+            self.phase + voice.oscillator.phase + fm_phase_offset(fm, self.fm_phase, age)
+        } else {
+            self.phase + voice.oscillator.phase
+        };
         let mut sample = oscillator_sample(
             voice.oscillator.waveform,
             phase,
             duty,
             seed ^ self.noise_epoch as u64,
         );
-        sample = self.color(voice, patch_mods, sample, age, seed);
+        if self.color_enabled
+            || self.target_active(patch_active, ModTarget::Noise)
+            || self.target_active(patch_active, ModTarget::Drive)
+            || self.target_active(patch_active, ModTarget::Fold)
+        {
+            sample = self.color(voice, patch_mods, patch_active, sample, age, seed);
+        }
         sample = self.filter(
-            self.modulated_filter(voice, patch_mods, age, seed),
+            self.modulated_filter(voice, patch_mods, patch_active, age, seed),
             sample,
             age,
         );
-        sample = self.formants(voice, patch_mods, sample, sample_rate, age, seed);
-        sample = self.phaser(voice.phaser, sample, age, sample_rate);
-        let gain_mod = (1.0 + self.mod_amount(patch_mods, ModTarget::Gain, age, seed)).max(0.0);
+        sample = self.formants(
+            voice,
+            patch_mods,
+            patch_active,
+            sample,
+            sample_rate,
+            age,
+            seed,
+        );
+        if self.phaser_enabled {
+            sample = self.phaser(voice.phaser, sample, age, sample_rate);
+        }
+        let gain_mod = if self.target_active(patch_active, ModTarget::Gain) {
+            (1.0 + self.mod_amount(patch_mods, ModTarget::Gain, age, seed)).max(0.0)
+        } else {
+            1.0
+        };
         sample * envelope * gain_mod
     }
 
@@ -2387,28 +2471,38 @@ impl VoiceState {
         &self,
         voice: &Voice,
         patch_mods: &[f32; MOD_TARGET_COUNT],
+        patch_active: &[bool; MOD_TARGET_COUNT],
         sample: f32,
         age: f32,
         seed: u64,
     ) -> f32 {
         let mut value = sample;
-        let noise_mix = (voice.color.noise_mix
-            + self.mod_amount(patch_mods, ModTarget::Noise, age, seed))
-        .clamp(0.0, 1.0);
+        let noise_mix = if self.target_active(patch_active, ModTarget::Noise) {
+            (voice.color.noise_mix + self.mod_amount(patch_mods, ModTarget::Noise, age, seed))
+                .clamp(0.0, 1.0)
+        } else {
+            voice.color.noise_mix.clamp(0.0, 1.0)
+        };
         if noise_mix > 0.0 {
             let noise = hash_noise(seed ^ self.sample_counter, self.noise_epoch);
             value = value * (1.0 - noise_mix) + noise * noise_mix;
         }
-        let drive_amount = (voice.color.drive
-            + self.mod_amount(patch_mods, ModTarget::Drive, age, seed))
-        .clamp(0.0, 1.0);
+        let drive_amount = if self.target_active(patch_active, ModTarget::Drive) {
+            (voice.color.drive + self.mod_amount(patch_mods, ModTarget::Drive, age, seed))
+                .clamp(0.0, 1.0)
+        } else {
+            voice.color.drive.clamp(0.0, 1.0)
+        };
         if drive_amount > 0.0 {
             let drive = 1.0 + drive_amount * 12.0;
             value = (value * drive).tanh() / drive.tanh();
         }
-        let fold_amount = (voice.color.fold
-            + self.mod_amount(patch_mods, ModTarget::Fold, age, seed))
-        .clamp(0.0, 1.0);
+        let fold_amount = if self.target_active(patch_active, ModTarget::Fold) {
+            (voice.color.fold + self.mod_amount(patch_mods, ModTarget::Fold, age, seed))
+                .clamp(0.0, 1.0)
+        } else {
+            voice.color.fold.clamp(0.0, 1.0)
+        };
         if fold_amount > 0.0 {
             value = wavefold(value * (1.0 + fold_amount * 3.5));
         }
@@ -2461,14 +2555,19 @@ impl VoiceState {
         &mut self,
         voice: &Voice,
         patch_mods: &[f32; MOD_TARGET_COUNT],
+        patch_active: &[bool; MOD_TARGET_COUNT],
         sample: f32,
         sample_rate: f32,
         age: f32,
         seed: u64,
     ) -> f32 {
-        let mix = (voice.color.formant_mix
-            + self.mod_amount(patch_mods, ModTarget::FormantMix, age, seed))
-        .clamp(0.0, 1.0);
+        let mix = if self.target_active(patch_active, ModTarget::FormantMix) {
+            (voice.color.formant_mix
+                + self.mod_amount(patch_mods, ModTarget::FormantMix, age, seed))
+            .clamp(0.0, 1.0)
+        } else {
+            voice.color.formant_mix.clamp(0.0, 1.0)
+        };
         if mix <= 0.0 || self.formants.is_empty() {
             return sample;
         }
@@ -2486,17 +2585,27 @@ impl VoiceState {
         &self,
         voice: &Voice,
         patch_mods: &[f32; MOD_TARGET_COUNT],
+        patch_active: &[bool; MOD_TARGET_COUNT],
         age: f32,
         seed: u64,
     ) -> Filter {
         let mut filter = voice.filter;
-        filter.low_pass = (filter.low_pass
-            + self.mod_amount(patch_mods, ModTarget::LowPass, age, seed))
-        .clamp(0.0, 1.0);
-        filter.high_pass = (filter.high_pass
-            + self.mod_amount(patch_mods, ModTarget::HighPass, age, seed))
-        .clamp(0.0, 1.0);
+        if self.target_active(patch_active, ModTarget::LowPass) {
+            filter.low_pass = (filter.low_pass
+                + self.mod_amount(patch_mods, ModTarget::LowPass, age, seed))
+            .clamp(0.0, 1.0);
+        }
+        if self.target_active(patch_active, ModTarget::HighPass) {
+            filter.high_pass = (filter.high_pass
+                + self.mod_amount(patch_mods, ModTarget::HighPass, age, seed))
+            .clamp(0.0, 1.0);
+        }
         filter
+    }
+
+    fn target_active(&self, patch_active: &[bool; MOD_TARGET_COUNT], target: ModTarget) -> bool {
+        let index = target.index();
+        self.mod_active[index] || patch_active[index]
     }
 
     fn mod_amount(

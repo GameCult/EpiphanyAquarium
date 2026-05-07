@@ -467,11 +467,14 @@ Current slice:
   as a release-mode benchmark for preallocated `PatchPlayer::render_mono`
   buffer filling, then optimized the hot path by compiling modulators into
   target-indexed groups and evaluating patch-level control buses once per
-  sample instead of once per voice per target. Warmed local single-thread result
-  at 44.1 kHz for two-second buffers: simple plucks now sit around 900-1100
-  estimated realtime voices, colored formant voices around 350-450, and heavy
-  wobble/FM/formant basses around 240-290. Practical game budgets should stay
-  well below parity and keep fills off the audio callback thread.
+  sample instead of once per voice per target. Follow-up graph pruning added
+  per-voice flags for inactive modulation targets and DSP stages, skipping
+  dead FM/color/phaser/gain-mod work where the patch graph cannot reach it.
+  Warmed local single-thread result at 44.1 kHz for two-second buffers: simple
+  plucks now sit around 1400-1700 estimated realtime voices, colored formant
+  voices around 400-475, and heavy wobble/FM/formant basses around 260-320.
+  Practical game budgets should stay well below parity and keep fills off the
+  audio callback thread.
 - Current renderer post pass: Bevy camera now has explicit `Hdr`,
   `Tonemapping::AcesFitted`, and thresholded additive `Bloom`. The renderer
   should now let the sun's HDR emissive values bloom while keeping planet/grid
