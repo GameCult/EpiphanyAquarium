@@ -10,7 +10,7 @@ const DEFAULT_SAMPLE_RATE: f32 = 44_100.0;
 pub const PATCH_SCRIPT_EXAMPLE: &str = r#"
 # One command per line. Comments start with #.
 patch gain=0.7 soft_clip=true
-voice wave=sine freq=220 gain=0.12 attack=0.002 sustain=0.03 decay=0.2 vibrato=0.02 vibrato_hz=5
+voice wave=sine freq=220 gain=0.12 attack=0.002 sustain=0.03 decay=0.2 vibrato=0.02 vibrato_hz=5 formants=620:90:1,1040:150:0.8 formant_mix=0.45
 voice wave=triangle freq=440 gain=0.04 attack=0 sustain=0.02 decay=0.18 lpf=0.7 hpf=0.02
 sfxr preset=laser mutate_seed=9 mutate=0.01
 "#;
@@ -464,6 +464,36 @@ pub struct Arpeggio {
     pub multiplier: f32,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct Formant {
+    pub frequency_hz: f32,
+    pub bandwidth_hz: f32,
+    pub gain: f32,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct VoiceColor {
+    pub noise_mix: f32,
+    pub drive: f32,
+    pub fold: f32,
+    pub tremolo_depth: f32,
+    pub tremolo_hz: f32,
+    pub formant_mix: f32,
+}
+
+impl Default for VoiceColor {
+    fn default() -> Self {
+        Self {
+            noise_mix: 0.0,
+            drive: 0.0,
+            fold: 0.0,
+            tremolo_depth: 0.0,
+            tremolo_hz: 0.0,
+            formant_mix: 0.0,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Voice {
     pub oscillator: Oscillator,
@@ -473,6 +503,8 @@ pub struct Voice {
     pub filter: Filter,
     pub phaser: Phaser,
     pub arpeggio: Option<Arpeggio>,
+    pub color: VoiceColor,
+    pub formants: Vec<Formant>,
     pub gain: f32,
 }
 
@@ -486,6 +518,8 @@ impl Voice {
             filter: Filter::default(),
             phaser: Phaser::default(),
             arpeggio: None,
+            color: VoiceColor::default(),
+            formants: Vec::new(),
             gain,
         }
     }
@@ -783,6 +817,19 @@ impl SfxrParams {
             } else {
                 None
             },
+            color: VoiceColor {
+                noise_mix: if self.wave_type == Waveform::Noise {
+                    0.35
+                } else {
+                    0.0
+                },
+                drive: 0.12 + self.env_punch.max(0.0) * 0.18,
+                fold: 0.0,
+                tremolo_depth: self.vib_strength.clamp(0.0, 1.0) * 0.12,
+                tremolo_hz: 8.0 + self.vib_speed.clamp(0.0, 1.0) * 18.0,
+                formant_mix: 0.0,
+            },
+            formants: Vec::new(),
             gain: 0.22,
         };
         let mut patch = SynthPatch::new(vec![voice]);
@@ -947,6 +994,18 @@ fn voice_from_fields(fields: &[(&str, &str)], line: usize) -> Result<Voice, Patc
             ));
         }
     };
+    let color = VoiceColor {
+        noise_mix: parse_optional_f32(fields, "noise", line)?.unwrap_or(0.0),
+        drive: parse_optional_f32(fields, "drive", line)?.unwrap_or(0.0),
+        fold: parse_optional_f32(fields, "fold", line)?.unwrap_or(0.0),
+        tremolo_depth: parse_optional_f32(fields, "tremolo", line)?.unwrap_or(0.0),
+        tremolo_hz: parse_optional_f32(fields, "tremolo_hz", line)?.unwrap_or(0.0),
+        formant_mix: parse_optional_f32(fields, "formant_mix", line)?.unwrap_or(0.0),
+    };
+    let formants = match field_value(fields, "formants") {
+        Some(value) => parse_formants(value, line)?,
+        None => Vec::new(),
+    };
     let voice = Voice {
         oscillator: Oscillator {
             waveform,
@@ -980,6 +1039,8 @@ fn voice_from_fields(fields: &[(&str, &str)], line: usize) -> Result<Voice, Patc
                 .unwrap_or(0.0),
         },
         arpeggio,
+        color,
+        formants,
         gain: parse_optional_f32(fields, "gain", line)?.unwrap_or(0.2),
     };
     for (key, _) in fields {
@@ -987,11 +1048,51 @@ fn voice_from_fields(fields: &[(&str, &str)], line: usize) -> Result<Voice, Patc
             "wave" | "freq" | "duty" | "phase" | "attack" | "sustain" | "decay" | "punch"
             | "min_freq" | "pitch_ramp" | "pitch_dramp" | "vibrato" | "vibrato_hz"
             | "vibrato_delay" | "duty_ramp" | "lpf" | "lpf_ramp" | "resonance" | "hpf"
-            | "hpf_ramp" | "phaser" | "phaser_ramp" | "arp_delay" | "arp_mult" | "gain" => {}
+            | "hpf_ramp" | "phaser" | "phaser_ramp" | "arp_delay" | "arp_mult" | "noise"
+            | "drive" | "fold" | "tremolo" | "tremolo_hz" | "formant_mix" | "formants" | "gain" => {
+            }
             unknown => return Err(unknown_field(line, "voice", unknown)),
         }
     }
     Ok(voice)
+}
+
+fn parse_formants(value: &str, line: usize) -> Result<Vec<Formant>, PatchScriptError> {
+    if value.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    value
+        .split(',')
+        .map(|spec| {
+            let mut parts = spec.split(':');
+            let frequency_hz = parts
+                .next()
+                .ok_or_else(|| PatchScriptError::new(line, "formant needs frequency"))?
+                .parse::<f32>()
+                .map_err(|_| PatchScriptError::new(line, "formant frequency must be a number"))?;
+            let bandwidth_hz = parts
+                .next()
+                .ok_or_else(|| PatchScriptError::new(line, "formant needs bandwidth"))?
+                .parse::<f32>()
+                .map_err(|_| PatchScriptError::new(line, "formant bandwidth must be a number"))?;
+            let gain = parts
+                .next()
+                .unwrap_or("1")
+                .parse::<f32>()
+                .map_err(|_| PatchScriptError::new(line, "formant gain must be a number"))?;
+            if parts.next().is_some() {
+                return Err(PatchScriptError::new(
+                    line,
+                    "formant format is frequency:bandwidth[:gain]",
+                ));
+            }
+            Ok(Formant {
+                frequency_hz,
+                bandwidth_hz,
+                gain,
+            })
+        })
+        .collect()
 }
 
 fn apply_sfxr_fields(
@@ -1209,28 +1310,37 @@ impl PatchPlayer {
 #[derive(Clone, Debug)]
 struct VoiceState {
     phase: f32,
+    sample_counter: u64,
     noise_epoch: u32,
     low_pass_position: f32,
     low_pass_delta: f32,
     high_pass_position: f32,
     phaser_cursor: usize,
     phaser_buffer: Vec<f32>,
+    formants: Vec<FormantState>,
 }
 
 impl VoiceState {
-    fn new(_voice: &Voice) -> Self {
+    fn new(voice: &Voice) -> Self {
         Self {
             phase: 0.0,
+            sample_counter: 0,
             noise_epoch: 0,
             low_pass_position: 0.0,
             low_pass_delta: 0.0,
             high_pass_position: 0.0,
             phaser_cursor: 0,
             phaser_buffer: vec![0.0; 2048],
+            formants: voice
+                .formants
+                .iter()
+                .map(|formant| FormantState::new(*formant))
+                .collect(),
         }
     }
 
     fn next_sample(&mut self, voice: &Voice, age: f32, sample_rate: f32, seed: u64) -> f32 {
+        self.sample_counter = self.sample_counter.wrapping_add(1);
         let envelope = voice.envelope.amplitude(age);
         if envelope <= 0.0 {
             return 0.0;
@@ -1254,9 +1364,32 @@ impl VoiceState {
             duty,
             seed ^ self.noise_epoch as u64,
         );
+        sample = self.color(voice, sample, age, seed);
         sample = self.filter(voice.filter, sample, age);
+        sample = self.formants(voice, sample, sample_rate);
         sample = self.phaser(voice.phaser, sample, age, sample_rate);
         sample * envelope
+    }
+
+    fn color(&self, voice: &Voice, sample: f32, age: f32, seed: u64) -> f32 {
+        let mut value = sample;
+        let noise_mix = voice.color.noise_mix.clamp(0.0, 1.0);
+        if noise_mix > 0.0 {
+            let noise = hash_noise(seed ^ self.sample_counter, self.noise_epoch);
+            value = value * (1.0 - noise_mix) + noise * noise_mix;
+        }
+        if voice.color.drive > 0.0 {
+            let drive = 1.0 + voice.color.drive.clamp(0.0, 1.0) * 12.0;
+            value = (value * drive).tanh() / drive.tanh();
+        }
+        if voice.color.fold > 0.0 {
+            value = wavefold(value * (1.0 + voice.color.fold.clamp(0.0, 1.0) * 3.5));
+        }
+        if voice.color.tremolo_depth > 0.0 && voice.color.tremolo_hz > 0.0 {
+            let lfo = 0.5 + 0.5 * (age * voice.color.tremolo_hz * TAU).sin();
+            value *= 1.0 - voice.color.tremolo_depth.clamp(0.0, 1.0) * lfo;
+        }
+        value
     }
 
     fn filter(&mut self, filter: Filter, sample: f32, age: f32) -> f32 {
@@ -1295,6 +1428,89 @@ impl VoiceState {
         self.phaser_buffer[self.phaser_cursor] = sample;
         self.phaser_cursor = (self.phaser_cursor + 1) % self.phaser_buffer.len();
         (sample + delayed) * 0.5
+    }
+
+    fn formants(&mut self, voice: &Voice, sample: f32, sample_rate: f32) -> f32 {
+        let mix = voice.color.formant_mix.clamp(0.0, 1.0);
+        if mix <= 0.0 || self.formants.is_empty() {
+            return sample;
+        }
+        let mut resonant = 0.0;
+        let mut gain_sum = 0.0;
+        for (state, formant) in self.formants.iter_mut().zip(&voice.formants) {
+            resonant += state.process(sample, *formant, sample_rate) * formant.gain;
+            gain_sum += formant.gain.abs();
+        }
+        let resonant = resonant / gain_sum.max(0.001);
+        sample * (1.0 - mix) + resonant * mix
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FormantState {
+    source: Formant,
+    sample_rate: f32,
+    b0: f32,
+    b1: f32,
+    b2: f32,
+    a1: f32,
+    a2: f32,
+    x1: f32,
+    x2: f32,
+    y1: f32,
+    y2: f32,
+}
+
+impl FormantState {
+    fn new(source: Formant) -> Self {
+        Self {
+            source,
+            sample_rate: 0.0,
+            b0: 1.0,
+            b1: 0.0,
+            b2: 0.0,
+            a1: 0.0,
+            a2: 0.0,
+            x1: 0.0,
+            x2: 0.0,
+            y1: 0.0,
+            y2: 0.0,
+        }
+    }
+
+    fn process(&mut self, input: f32, formant: Formant, sample_rate: f32) -> f32 {
+        if self.source.frequency_hz != formant.frequency_hz
+            || self.source.bandwidth_hz != formant.bandwidth_hz
+            || self.source.gain != formant.gain
+            || self.sample_rate != sample_rate
+        {
+            self.source = formant;
+            self.sample_rate = sample_rate;
+            self.update_coefficients(formant, sample_rate);
+        }
+        let output = self.b0 * input + self.b1 * self.x1 + self.b2 * self.x2
+            - self.a1 * self.y1
+            - self.a2 * self.y2;
+        self.x2 = self.x1;
+        self.x1 = input;
+        self.y2 = self.y1;
+        self.y1 = output;
+        output
+    }
+
+    fn update_coefficients(&mut self, formant: Formant, sample_rate: f32) {
+        let frequency = formant.frequency_hz.clamp(20.0, sample_rate * 0.45);
+        let bandwidth = formant.bandwidth_hz.max(10.0);
+        let q = (frequency / bandwidth).clamp(0.2, 40.0);
+        let omega = TAU * frequency / sample_rate.max(1.0);
+        let alpha = omega.sin() / (2.0 * q);
+        let cos = omega.cos();
+        let a0 = 1.0 + alpha;
+        self.b0 = alpha / a0;
+        self.b1 = 0.0;
+        self.b2 = -alpha / a0;
+        self.a1 = -2.0 * cos / a0;
+        self.a2 = (1.0 - alpha) / a0;
     }
 }
 
@@ -1346,6 +1562,58 @@ pub mod presets {
             soft_clip: true,
         }
     }
+
+    pub fn aquarium_voice() -> SynthPatch {
+        let envelope = Envelope {
+            attack_seconds: 0.018,
+            sustain_seconds: 0.34,
+            decay_seconds: 0.28,
+            punch: 0.08,
+        };
+        let mut voice = Voice::simple(
+            Oscillator {
+                waveform: Waveform::Triangle,
+                frequency_hz: 220.0,
+                duty: 0.5,
+                phase: 0.0,
+            },
+            envelope,
+            0.18,
+        );
+        voice.pitch.vibrato_depth = 0.018;
+        voice.pitch.vibrato_hz = 5.6;
+        voice.color = VoiceColor {
+            noise_mix: 0.035,
+            drive: 0.18,
+            fold: 0.04,
+            tremolo_depth: 0.12,
+            tremolo_hz: 4.2,
+            formant_mix: 0.68,
+        };
+        voice.formants = vec![
+            Formant {
+                frequency_hz: 520.0,
+                bandwidth_hz: 85.0,
+                gain: 0.9,
+            },
+            Formant {
+                frequency_hz: 1380.0,
+                bandwidth_hz: 180.0,
+                gain: 1.0,
+            },
+            Formant {
+                frequency_hz: 2550.0,
+                bandwidth_hz: 300.0,
+                gain: 0.42,
+            },
+        ];
+        SynthPatch {
+            voices: vec![voice],
+            repeat: None,
+            gain: 0.95,
+            soft_clip: true,
+        }
+    }
 }
 
 fn frequency_at(voice: &Voice, age: f32) -> f32 {
@@ -1382,6 +1650,15 @@ fn oscillator_sample(waveform: Waveform, phase: f32, duty: f32, seed: u64) -> f3
         }
         Waveform::Triangle => 1.0 - 4.0 * (phase - 0.5).abs(),
         Waveform::Noise => hash_noise(seed, (phase * 32.0) as u32),
+    }
+}
+
+fn wavefold(value: f32) -> f32 {
+    let folded = (value + 1.0).rem_euclid(4.0);
+    if folded <= 2.0 {
+        folded - 1.0
+    } else {
+        3.0 - folded
     }
 }
 
@@ -1647,5 +1924,43 @@ mod tests {
         assert!(comparison.score > 0.95);
         assert!(comparison.log_mel_distance < 0.001);
         assert!(comparison.envelope_distance < 0.001);
+    }
+
+    #[test]
+    fn voice_color_and_formants_change_spectrum() {
+        let dry = SynthPatch::from_script(
+            "voice wave=triangle freq=220 gain=0.2 attack=0.01 sustain=0.25 decay=0.2",
+        )
+        .unwrap();
+        let singing = SynthPatch::from_script(
+            "voice wave=triangle freq=220 gain=0.2 attack=0.01 sustain=0.25 decay=0.2 drive=0.22 fold=0.08 noise=0.04 tremolo=0.12 tremolo_hz=4.4 formant_mix=0.7 formants=520:85:0.9,1380:180:1,2550:300:0.42",
+        )
+        .unwrap();
+        let mut dry_player = PatchPlayer::new(dry, 44_100.0);
+        let mut singing_player = PatchPlayer::new(singing, 44_100.0);
+        let dry_buffer: Vec<f32> = (0..16_384).map(|_| dry_player.next_sample()).collect();
+        let singing_buffer: Vec<f32> = (0..16_384).map(|_| singing_player.next_sample()).collect();
+        let comparison = compare_audio(
+            &dry_buffer,
+            &singing_buffer,
+            &AudioAnalysisConfig {
+                fft_size: 256,
+                hop_size: 256,
+                mel_band_count: 18,
+                ..AudioAnalysisConfig::default()
+            },
+        );
+        assert!(comparison.log_mel_distance > 0.08);
+        assert!(comparison.score < 0.9);
+    }
+
+    #[test]
+    fn aquarium_voice_preset_generates_audible_formant_sound() {
+        let mut player = PatchPlayer::new(presets::aquarium_voice(), 44_100.0);
+        let buffer: Vec<f32> = (0..22_050).map(|_| player.next_sample()).collect();
+        let analysis = analyze_audio(&buffer, &AudioAnalysisConfig::default());
+        assert!(analysis.features.peak > 0.01);
+        assert!(analysis.features.rms > 0.001);
+        assert!(!analysis.log_mel_spectrogram.values.is_empty());
     }
 }
