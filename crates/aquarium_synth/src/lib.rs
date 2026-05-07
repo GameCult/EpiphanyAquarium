@@ -815,6 +815,35 @@ impl SynthPatch {
     pub fn from_script(script: &str) -> Result<Self, PatchScriptError> {
         parse_patch_script(script)
     }
+
+    pub fn compile(self) -> CompiledPatch {
+        CompiledPatch::new(self)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct CompiledPatch {
+    patch: SynthPatch,
+    control_modulators: [Vec<RuntimeModulator>; MOD_TARGET_COUNT],
+    control_active: [bool; MOD_TARGET_COUNT],
+}
+
+impl CompiledPatch {
+    pub fn new(patch: SynthPatch) -> Self {
+        Self {
+            control_modulators: grouped_control_modulators(&patch.controls),
+            control_active: active_control_targets(&patch.controls),
+            patch,
+        }
+    }
+
+    pub fn patch(&self) -> &SynthPatch {
+        &self.patch
+    }
+
+    pub fn into_patch(self) -> SynthPatch {
+        self.patch
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -897,9 +926,13 @@ impl Default for RenderOptions {
 }
 
 pub fn render_patch_mono(patch: SynthPatch, options: RenderOptions) -> Vec<f32> {
+    render_compiled_patch_mono(patch.compile(), options)
+}
+
+pub fn render_compiled_patch_mono(patch: CompiledPatch, options: RenderOptions) -> Vec<f32> {
     let sample_count =
         (options.sample_rate.max(1.0) * options.duration_seconds.max(0.0)).ceil() as usize;
-    let mut player = PatchPlayer::new(patch, options.sample_rate);
+    let mut player = PatchPlayer::from_compiled(patch, options.sample_rate);
     player.set_seed(options.seed);
     let mut output = vec![0.0; sample_count];
     player.render_mono(&mut output);
@@ -2170,10 +2203,8 @@ impl AudioUnit for PatchUnit {
 
 #[derive(Clone, Debug)]
 pub struct PatchPlayer {
-    patch: SynthPatch,
+    patch: CompiledPatch,
     voices: Vec<VoiceState>,
-    control_modulators: [Vec<RuntimeModulator>; MOD_TARGET_COUNT],
-    control_active: [bool; MOD_TARGET_COUNT],
     sample_rate: f32,
     sample_index: u64,
     seed: u64,
@@ -2181,10 +2212,12 @@ pub struct PatchPlayer {
 
 impl PatchPlayer {
     pub fn new(patch: SynthPatch, sample_rate: f32) -> Self {
+        Self::from_compiled(patch.compile(), sample_rate)
+    }
+
+    pub fn from_compiled(patch: CompiledPatch, sample_rate: f32) -> Self {
         let mut player = Self {
             voices: Vec::new(),
-            control_modulators: grouped_control_modulators(&patch.controls),
-            control_active: active_control_targets(&patch.controls),
             patch,
             sample_rate,
             sample_index: 0,
@@ -2196,7 +2229,13 @@ impl PatchPlayer {
 
     pub fn reset(&mut self) {
         self.sample_index = 0;
-        self.voices = self.patch.voices.iter().map(VoiceState::new).collect();
+        self.voices = self
+            .patch
+            .patch
+            .voices
+            .iter()
+            .map(VoiceState::new)
+            .collect();
     }
 
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
@@ -2215,26 +2254,26 @@ impl PatchPlayer {
 
     pub fn next_sample(&mut self) -> f32 {
         let age = self.sample_index as f32 / self.sample_rate;
-        let repeat_age = match self.patch.repeat {
+        let repeat_age = match self.patch.patch.repeat {
             Some(repeat) => age % repeat.interval_seconds.max(1.0 / self.sample_rate),
             None => age,
         };
         let mut value = 0.0;
         let sample_rate = self.sample_rate;
         let patch_mods = self.patch_modulation(repeat_age);
-        for (voice, state) in self.patch.voices.iter().zip(self.voices.iter_mut()) {
+        for (voice, state) in self.patch.patch.voices.iter().zip(self.voices.iter_mut()) {
             value += state.next_sample(
                 voice,
                 &patch_mods,
-                &self.control_active,
+                &self.patch.control_active,
                 repeat_age,
                 sample_rate,
                 self.seed,
             ) * voice.gain;
         }
-        value *= self.patch.gain;
+        value *= self.patch.patch.gain;
         self.sample_index = self.sample_index.saturating_add(1);
-        if self.patch.soft_clip {
+        if self.patch.patch.soft_clip {
             (value * 1.35).tanh()
         } else {
             value.clamp(-1.0, 1.0)
@@ -2259,7 +2298,7 @@ impl PatchPlayer {
 
     fn patch_modulation(&self, age: f32) -> [f32; MOD_TARGET_COUNT] {
         let mut values = [0.0; MOD_TARGET_COUNT];
-        for (target_index, modulators) in self.control_modulators.iter().enumerate() {
+        for (target_index, modulators) in self.patch.control_modulators.iter().enumerate() {
             values[target_index] = modulator_sum(modulators, age, self.seed);
         }
         values
@@ -2335,6 +2374,34 @@ struct VoiceState {
     fm_enabled: bool,
     color_enabled: bool,
     phaser_enabled: bool,
+    static_filter: Option<RuntimeFilter>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RuntimeFilter {
+    low_pass_width: f32,
+    damping: f32,
+    high_pass_width: f32,
+}
+
+impl RuntimeFilter {
+    fn for_static_filter(filter: Filter) -> Option<Self> {
+        if filter.low_pass_ramp != 0.0 || filter.high_pass_ramp != 0.0 {
+            return None;
+        }
+        let low_pass = filter.low_pass.clamp(0.0, 1.0);
+        let high_pass = filter.high_pass.clamp(0.0, 1.0);
+        let low_pass_width = low_pass.powi(3) * 0.1;
+        let damping = (5.0 / (1.0 + filter.low_pass_resonance.powi(2) * 20.0)
+            * (0.01 + low_pass_width))
+            .min(0.8);
+        let high_pass_width = (high_pass.powi(2) * 0.1).clamp(0.00001, 0.1);
+        Some(Self {
+            low_pass_width,
+            damping,
+            high_pass_width,
+        })
+    }
 }
 
 impl VoiceState {
@@ -2368,6 +2435,7 @@ impl VoiceState {
                 || (voice.color.tremolo_depth > 0.0 && voice.color.tremolo_hz > 0.0),
             phaser_enabled: voice.phaser.offset_seconds.abs() > 0.00001
                 || voice.phaser.ramp_seconds_per_second != 0.0,
+            static_filter: RuntimeFilter::for_static_filter(voice.filter),
         }
     }
 
@@ -2442,11 +2510,7 @@ impl VoiceState {
         {
             sample = self.color(voice, patch_mods, patch_active, sample, age, seed);
         }
-        sample = self.filter(
-            self.modulated_filter(voice, patch_mods, patch_active, age, seed),
-            sample,
-            age,
-        );
+        sample = self.filter_for_voice(voice, patch_mods, patch_active, sample, age, seed);
         sample = self.formants(
             voice,
             patch_mods,
@@ -2513,7 +2577,30 @@ impl VoiceState {
         value
     }
 
-    fn filter(&mut self, filter: Filter, sample: f32, age: f32) -> f32 {
+    fn filter_for_voice(
+        &mut self,
+        voice: &Voice,
+        patch_mods: &[f32; MOD_TARGET_COUNT],
+        patch_active: &[bool; MOD_TARGET_COUNT],
+        sample: f32,
+        age: f32,
+        seed: u64,
+    ) -> f32 {
+        if !self.target_active(patch_active, ModTarget::LowPass)
+            && !self.target_active(patch_active, ModTarget::HighPass)
+        {
+            if let Some(filter) = self.static_filter {
+                return self.filter_static(filter, sample);
+            }
+        }
+        self.filter_dynamic(
+            self.modulated_filter(voice, patch_mods, patch_active, age, seed),
+            sample,
+            age,
+        )
+    }
+
+    fn filter_dynamic(&mut self, filter: Filter, sample: f32, age: f32) -> f32 {
         let low_pass = (filter.low_pass * (1.0 + filter.low_pass_ramp * age * 1.8)).clamp(0.0, 1.0);
         let high_pass =
             (filter.high_pass * (1.0 + filter.high_pass_ramp * age * 2.0)).clamp(0.0, 1.0);
@@ -2533,6 +2620,21 @@ impl VoiceState {
         let high_pass_width = (high_pass.powi(2) * 0.1).clamp(0.00001, 0.1);
         self.high_pass_position += self.low_pass_position - previous;
         self.high_pass_position -= self.high_pass_position * high_pass_width;
+        self.high_pass_position
+    }
+
+    fn filter_static(&mut self, filter: RuntimeFilter, sample: f32) -> f32 {
+        let previous = self.low_pass_position;
+        if filter.low_pass_width > 0.0 {
+            self.low_pass_delta += (sample - self.low_pass_position) * filter.low_pass_width;
+            self.low_pass_delta -= self.low_pass_delta * filter.damping;
+        } else {
+            self.low_pass_position = sample;
+            self.low_pass_delta = 0.0;
+        }
+        self.low_pass_position += self.low_pass_delta;
+        self.high_pass_position += self.low_pass_position - previous;
+        self.high_pass_position -= self.high_pass_position * filter.high_pass_width;
         self.high_pass_position
     }
 

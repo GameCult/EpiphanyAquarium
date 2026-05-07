@@ -185,7 +185,7 @@
       ,
       "The synth language's real Serum-style affordance is oscillator-to-anything routing. Use neutral `mod`/`bus` commands, e.g. `mod n=wob hz=4 w=tri g=.4 l=.5 fmi=1.2` or `bus n=sway to=g:.1,l:-.2,fmix:.3`; `wob` is only an alias over the same primitive bus. Voice `fm` means FM ratio; use `fmix` for formant mix in terse scripts."
       ,
-      "Current `aquarium_synth` release performance on the local single thread: `PatchPlayer::render_mono` into a preallocated buffer reaches realtime parity at about 1400-1700 simple pluck voices, 400-475 colored/formant voices, and 260-320 heavy wobble/FM/formant voices after grouped modulation routing and inactive-stage pruning. Keep callback work much lower than parity; generate queued chunks off-thread and use `cargo run --release --manifest-path crates/aquarium_synth/Cargo.toml --example voice_capacity` when this needs rechecking."
+      "Current `aquarium_synth` release performance on the local single thread: `PatchPlayer::render_mono` into a preallocated buffer reaches realtime parity at about 1800-2000 simple pluck voices, 400-480 colored/formant voices, and 280-320 heavy wobble/FM/formant voices after grouped modulation routing, inactive-stage pruning, static filter coefficient hoisting, and reusable `CompiledPatch`. Keep callback work much lower than parity; generate queued chunks off-thread and use `cargo run --release --manifest-path crates/aquarium_synth/Cargo.toml --example voice_capacity` when this needs rechecking."
     ],
     "interaction_design": [
       "Progressive disclosure is the core grammar: vibes first, object second, surface third.",

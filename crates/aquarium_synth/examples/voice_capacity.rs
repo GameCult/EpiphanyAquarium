@@ -14,11 +14,11 @@ fn main() {
     let cases = [
         Case {
             name: "simple_pluck",
-            patch: stack_patch(presets::aquarium_pluck(), 1),
+            patch: presets::aquarium_pluck(),
         },
         Case {
             name: "colored_voice",
-            patch: stack_patch(presets::aquarium_voice(), 1),
+            patch: presets::aquarium_voice(),
         },
         Case {
             name: "mod_bus_wobble",
@@ -84,7 +84,7 @@ fn bench_patch(patch: &SynthPatch) -> BenchResult {
     let mut elapsed = Duration::ZERO;
     let frame_count = (SAMPLE_RATE * DURATION_SECONDS).ceil() as usize;
     let mut output = vec![0.0; frame_count];
-    let mut player = PatchPlayer::new(patch.clone(), SAMPLE_RATE);
+    let mut player = PatchPlayer::from_compiled(patch.clone().compile(), SAMPLE_RATE);
     let mut samples = Vec::new();
     while elapsed.as_secs_f32() < MIN_BENCH_SECONDS {
         player.reset();
