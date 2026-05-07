@@ -176,7 +176,8 @@
       "`aquarium_synth` exposes public analysis tools: `analyze_audio` and `compare_audio` return envelope, audio features, normalized log-mel spectrogram data, distances, ratios, and a score so tests and tools can judge passability without bespoke private metrics.",
       "For game use, hold and reuse `AudioAnalyzer` so FFT plans and buffers are cached. Analysis is fast enough for background/buffer tooling, but it still allocates reports and must not run on the realtime audio callback thread.",
       "`PatchPlayer::render_mono` and `render_interleaved_stereo` are the realtime-facing synth fill APIs. Use them to generate queued audio chunks off the callback path; `next_sample` remains useful for tests and small adapters.",
-      "The synth script supports `mods=target:wave:hz:depth[:phase[:bias]]` on `voice` lines. Current targets are gain, pitch, duty, lpf, hpf, noise, drive, fold, and formant/formant_mix; current waves are sine, triangle, square, and sample-hold."
+      "The synth script supports `mods=target:wave:hz:depth[:phase[:bias]]` on `voice` lines. Current targets are gain, pitch, duty, lpf, hpf, noise, drive, fold, and formant/formant_mix; current waves are sine, triangle, square, and sample-hold.",
+      "Patch-level control lanes are scriptable with `lfo`/`control` commands (`name`, `target`, `wave`, `hz`, `depth`, optional `phase`/`bias`) and apply across voices. For Rust callers, prefer `PatchBuilder`, `ControlLane::new`, `Modulator::lfo`, and `render_patch_mono`/`render_script_mono` for buffer-generation jobs."
     ],
     "interaction_design": [
       "Progressive disclosure is the core grammar: vibes first, object second, surface third.",

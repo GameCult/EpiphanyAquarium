@@ -10,6 +10,8 @@ const DEFAULT_SAMPLE_RATE: f32 = 44_100.0;
 pub const PATCH_SCRIPT_EXAMPLE: &str = r#"
 # One command per line. Comments start with #.
 patch gain=0.7 soft_clip=true
+lfo name=wobble target=pitch wave=sine hz=5 depth=0.01
+lfo name=shimmer target=formant wave=triangle hz=2 depth=0.08
 voice wave=sine freq=220 gain=0.12 attack=0.002 sustain=0.03 decay=0.2 vibrato=0.02 vibrato_hz=5 formants=620:90:1,1040:150:0.8 formant_mix=0.45 mods=formant:sine:2:0.12,pitch:triangle:3:0.015
 voice wave=triangle freq=440 gain=0.04 attack=0 sustain=0.02 decay=0.18 lpf=0.7 hpf=0.02 mods=gain:sine:8:0.18,lpf:hold:12:0.08
 sfxr preset=laser mutate_seed=9 mutate=0.01
@@ -525,6 +527,44 @@ pub struct Modulator {
     pub bias: f32,
 }
 
+impl Modulator {
+    pub fn lfo(target: ModTarget, waveform: ModWaveform, frequency_hz: f32, depth: f32) -> Self {
+        Self {
+            target,
+            waveform,
+            frequency_hz,
+            depth,
+            phase: 0.0,
+            bias: 0.0,
+        }
+    }
+
+    pub fn with_phase(mut self, phase: f32) -> Self {
+        self.phase = phase;
+        self
+    }
+
+    pub fn with_bias(mut self, bias: f32) -> Self {
+        self.bias = bias;
+        self
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ControlLane {
+    pub name: String,
+    pub modulator: Modulator,
+}
+
+impl ControlLane {
+    pub fn new(name: impl Into<String>, modulator: Modulator) -> Self {
+        Self {
+            name: name.into(),
+            modulator,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Voice {
     pub oscillator: Oscillator,
@@ -556,11 +596,22 @@ impl Voice {
             gain,
         }
     }
+
+    pub fn with_modulator(mut self, modulator: Modulator) -> Self {
+        self.modulators.push(modulator);
+        self
+    }
+
+    pub fn with_formant(mut self, formant: Formant) -> Self {
+        self.formants.push(formant);
+        self
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SynthPatch {
     pub voices: Vec<Voice>,
+    pub controls: Vec<ControlLane>,
     pub repeat: Option<Repeat>,
     pub gain: f32,
     pub soft_clip: bool,
@@ -570,6 +621,7 @@ impl SynthPatch {
     pub fn new(voices: Vec<Voice>) -> Self {
         Self {
             voices,
+            controls: Vec::new(),
             repeat: None,
             gain: 1.0,
             soft_clip: true,
@@ -586,6 +638,112 @@ impl SynthPatch {
     pub fn from_script(script: &str) -> Result<Self, PatchScriptError> {
         parse_patch_script(script)
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct PatchBuilder {
+    patch: SynthPatch,
+}
+
+impl Default for PatchBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PatchBuilder {
+    pub fn new() -> Self {
+        Self {
+            patch: SynthPatch::new(Vec::new()),
+        }
+    }
+
+    pub fn gain(mut self, gain: f32) -> Self {
+        self.patch.gain = gain;
+        self
+    }
+
+    pub fn soft_clip(mut self, soft_clip: bool) -> Self {
+        self.patch.soft_clip = soft_clip;
+        self
+    }
+
+    pub fn repeat(mut self, interval_seconds: f32) -> Self {
+        self.patch.repeat = (interval_seconds > 0.0).then_some(Repeat { interval_seconds });
+        self
+    }
+
+    pub fn control(mut self, lane: ControlLane) -> Self {
+        self.patch.controls.push(lane);
+        self
+    }
+
+    pub fn lfo(
+        self,
+        name: impl Into<String>,
+        target: ModTarget,
+        waveform: ModWaveform,
+        frequency_hz: f32,
+        depth: f32,
+    ) -> Self {
+        self.control(ControlLane::new(
+            name,
+            Modulator::lfo(target, waveform, frequency_hz, depth),
+        ))
+    }
+
+    pub fn voice(mut self, voice: Voice) -> Self {
+        self.patch.voices.push(voice);
+        self
+    }
+
+    pub fn build(self) -> SynthPatch {
+        self.patch
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct RenderOptions {
+    pub sample_rate: f32,
+    pub duration_seconds: f32,
+    pub seed: u64,
+}
+
+impl Default for RenderOptions {
+    fn default() -> Self {
+        Self {
+            sample_rate: DEFAULT_SAMPLE_RATE,
+            duration_seconds: 1.0,
+            seed: 0x8a5c_51f7_d15c_a11d,
+        }
+    }
+}
+
+pub fn render_patch_mono(patch: SynthPatch, options: RenderOptions) -> Vec<f32> {
+    let sample_count =
+        (options.sample_rate.max(1.0) * options.duration_seconds.max(0.0)).ceil() as usize;
+    let mut player = PatchPlayer::new(patch, options.sample_rate);
+    player.set_seed(options.seed);
+    let mut output = vec![0.0; sample_count];
+    player.render_mono(&mut output);
+    output
+}
+
+pub fn render_patch_interleaved_stereo(patch: SynthPatch, options: RenderOptions) -> Vec<f32> {
+    let frame_count =
+        (options.sample_rate.max(1.0) * options.duration_seconds.max(0.0)).ceil() as usize;
+    let mut player = PatchPlayer::new(patch, options.sample_rate);
+    player.set_seed(options.seed);
+    let mut output = vec![0.0; frame_count * 2];
+    player.render_interleaved_stereo(&mut output);
+    output
+}
+
+pub fn render_script_mono(
+    script: &str,
+    options: RenderOptions,
+) -> Result<Vec<f32>, PatchScriptError> {
+    Ok(render_patch_mono(SynthPatch::from_script(script)?, options))
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -920,6 +1078,9 @@ pub fn parse_patch_script(script: &str) -> Result<SynthPatch, PatchScriptError> 
         let fields = parse_fields(parts, line_number)?;
         match command {
             "patch" => apply_patch_fields(&mut patch, &fields, line_number)?,
+            "lfo" | "control" => patch
+                .controls
+                .push(control_lane_from_fields(&fields, line_number)?),
             "voice" => patch.voices.push(voice_from_fields(&fields, line_number)?),
             "sfxr" => {
                 let mut params = if let Some(name) = field_value(&fields, "preset") {
@@ -989,6 +1150,45 @@ fn apply_patch_fields(
         }
     }
     Ok(())
+}
+
+fn control_lane_from_fields(
+    fields: &[(&str, &str)],
+    line: usize,
+) -> Result<ControlLane, PatchScriptError> {
+    let name = field_value(fields, "name")
+        .ok_or_else(|| PatchScriptError::new(line, "control lane needs name"))?
+        .to_owned();
+    if name.is_empty() {
+        return Err(PatchScriptError::new(line, "control lane name is empty"));
+    }
+    let target = parse_mod_target(
+        field_value(fields, "target")
+            .ok_or_else(|| PatchScriptError::new(line, "control lane needs target"))?,
+        line,
+    )?;
+    let waveform = parse_mod_waveform(field_value(fields, "wave").unwrap_or("sine"), line)?;
+    let frequency_hz = parse_optional_f32(fields, "hz", line)?.unwrap_or(1.0);
+    let depth = parse_optional_f32(fields, "depth", line)?.unwrap_or(0.0);
+    let phase = parse_optional_f32(fields, "phase", line)?.unwrap_or(0.0);
+    let bias = parse_optional_f32(fields, "bias", line)?.unwrap_or(0.0);
+    for (key, _) in fields {
+        match *key {
+            "name" | "target" | "wave" | "hz" | "depth" | "phase" | "bias" => {}
+            unknown => return Err(unknown_field(line, "lfo", unknown)),
+        }
+    }
+    Ok(ControlLane {
+        name,
+        modulator: Modulator {
+            target,
+            waveform,
+            frequency_hz,
+            depth,
+            phase,
+            bias,
+        },
+    })
 }
 
 fn voice_from_fields(fields: &[(&str, &str)], line: usize) -> Result<Voice, PatchScriptError> {
@@ -1433,7 +1633,13 @@ impl PatchPlayer {
         let mut value = 0.0;
         let sample_rate = self.sample_rate;
         for (voice, state) in self.patch.voices.iter().zip(self.voices.iter_mut()) {
-            value += state.next_sample(voice, repeat_age, sample_rate, self.seed) * voice.gain;
+            value += state.next_sample(
+                voice,
+                &self.patch.controls,
+                repeat_age,
+                sample_rate,
+                self.seed,
+            ) * voice.gain;
         }
         value *= self.patch.gain;
         self.sample_index = self.sample_index.saturating_add(1);
@@ -1493,14 +1699,21 @@ impl VoiceState {
         }
     }
 
-    fn next_sample(&mut self, voice: &Voice, age: f32, sample_rate: f32, seed: u64) -> f32 {
+    fn next_sample(
+        &mut self,
+        voice: &Voice,
+        controls: &[ControlLane],
+        age: f32,
+        sample_rate: f32,
+        seed: u64,
+    ) -> f32 {
         self.sample_counter = self.sample_counter.wrapping_add(1);
         let envelope = voice.envelope.amplitude(age);
         if envelope <= 0.0 {
             return 0.0;
         }
 
-        let pitch_mod = mod_amount(&voice.modulators, ModTarget::Pitch, age, seed);
+        let pitch_mod = mod_amount(&voice.modulators, controls, ModTarget::Pitch, age, seed);
         let mut frequency = frequency_at(voice, age) * 2.0_f32.powf(pitch_mod);
         if let Some(arpeggio) = voice.arpeggio {
             if age >= arpeggio.delay_seconds {
@@ -1509,7 +1722,7 @@ impl VoiceState {
         }
         let duty = (voice.oscillator.duty
             + voice.duty.ramp_per_second * age
-            + mod_amount(&voice.modulators, ModTarget::Duty, age, seed))
+            + mod_amount(&voice.modulators, controls, ModTarget::Duty, age, seed))
         .clamp(0.02, 0.98);
         let previous_phase = self.phase;
         self.phase = (self.phase + frequency / sample_rate).fract();
@@ -1522,32 +1735,40 @@ impl VoiceState {
             duty,
             seed ^ self.noise_epoch as u64,
         );
-        sample = self.color(voice, sample, age, seed);
-        sample = self.filter(modulated_filter(voice, age, seed), sample, age);
-        sample = self.formants(voice, sample, sample_rate, age, seed);
+        sample = self.color(voice, controls, sample, age, seed);
+        sample = self.filter(modulated_filter(voice, controls, age, seed), sample, age);
+        sample = self.formants(voice, controls, sample, sample_rate, age, seed);
         sample = self.phaser(voice.phaser, sample, age, sample_rate);
-        let gain_mod = (1.0 + mod_amount(&voice.modulators, ModTarget::Gain, age, seed)).max(0.0);
+        let gain_mod =
+            (1.0 + mod_amount(&voice.modulators, controls, ModTarget::Gain, age, seed)).max(0.0);
         sample * envelope * gain_mod
     }
 
-    fn color(&self, voice: &Voice, sample: f32, age: f32, seed: u64) -> f32 {
+    fn color(
+        &self,
+        voice: &Voice,
+        controls: &[ControlLane],
+        sample: f32,
+        age: f32,
+        seed: u64,
+    ) -> f32 {
         let mut value = sample;
         let noise_mix = (voice.color.noise_mix
-            + mod_amount(&voice.modulators, ModTarget::Noise, age, seed))
+            + mod_amount(&voice.modulators, controls, ModTarget::Noise, age, seed))
         .clamp(0.0, 1.0);
         if noise_mix > 0.0 {
             let noise = hash_noise(seed ^ self.sample_counter, self.noise_epoch);
             value = value * (1.0 - noise_mix) + noise * noise_mix;
         }
         let drive_amount = (voice.color.drive
-            + mod_amount(&voice.modulators, ModTarget::Drive, age, seed))
+            + mod_amount(&voice.modulators, controls, ModTarget::Drive, age, seed))
         .clamp(0.0, 1.0);
         if drive_amount > 0.0 {
             let drive = 1.0 + drive_amount * 12.0;
             value = (value * drive).tanh() / drive.tanh();
         }
         let fold_amount = (voice.color.fold
-            + mod_amount(&voice.modulators, ModTarget::Fold, age, seed))
+            + mod_amount(&voice.modulators, controls, ModTarget::Fold, age, seed))
         .clamp(0.0, 1.0);
         if fold_amount > 0.0 {
             value = wavefold(value * (1.0 + fold_amount * 3.5));
@@ -1600,13 +1821,20 @@ impl VoiceState {
     fn formants(
         &mut self,
         voice: &Voice,
+        controls: &[ControlLane],
         sample: f32,
         sample_rate: f32,
         age: f32,
         seed: u64,
     ) -> f32 {
         let mix = (voice.color.formant_mix
-            + mod_amount(&voice.modulators, ModTarget::FormantMix, age, seed))
+            + mod_amount(
+                &voice.modulators,
+                controls,
+                ModTarget::FormantMix,
+                age,
+                seed,
+            ))
         .clamp(0.0, 1.0);
         if mix <= 0.0 || self.formants.is_empty() {
             return sample;
@@ -1715,6 +1943,7 @@ pub mod presets {
                 ),
                 Voice::simple(Oscillator::sine(1760.0), envelope, 0.018),
             ],
+            controls: Vec::new(),
             repeat: None,
             gain: 0.95,
             soft_clip: true,
@@ -1733,6 +1962,7 @@ pub mod presets {
                 Voice::simple(Oscillator::sine(72.0), envelope, 0.22),
                 Voice::simple(Oscillator::sine(116.0), envelope, 0.09),
             ],
+            controls: Vec::new(),
             repeat: None,
             gain: 0.9,
             soft_clip: true,
@@ -1785,6 +2015,7 @@ pub mod presets {
         ];
         SynthPatch {
             voices: vec![voice],
+            controls: Vec::new(),
             repeat: None,
             gain: 0.95,
             soft_clip: true,
@@ -1806,23 +2037,39 @@ fn frequency_at(voice: &Voice, age: f32) -> f32 {
         .clamp(10.0, 22_000.0)
 }
 
-fn modulated_filter(voice: &Voice, age: f32, seed: u64) -> Filter {
+fn modulated_filter(voice: &Voice, controls: &[ControlLane], age: f32, seed: u64) -> Filter {
     let mut filter = voice.filter;
     filter.low_pass = (filter.low_pass
-        + mod_amount(&voice.modulators, ModTarget::LowPass, age, seed))
+        + mod_amount(&voice.modulators, controls, ModTarget::LowPass, age, seed))
     .clamp(0.0, 1.0);
     filter.high_pass = (filter.high_pass
-        + mod_amount(&voice.modulators, ModTarget::HighPass, age, seed))
+        + mod_amount(&voice.modulators, controls, ModTarget::HighPass, age, seed))
     .clamp(0.0, 1.0);
     filter
 }
 
-fn mod_amount(modulators: &[Modulator], target: ModTarget, age: f32, seed: u64) -> f32 {
-    modulators
+fn mod_amount(
+    modulators: &[Modulator],
+    controls: &[ControlLane],
+    target: ModTarget,
+    age: f32,
+    seed: u64,
+) -> f32 {
+    let local: f32 = modulators
         .iter()
         .filter(|modulator| modulator.target == target)
         .map(|modulator| modulator.bias + modulator.depth * modulator_value(*modulator, age, seed))
-        .sum()
+        .sum();
+    let patch: f32 = controls
+        .iter()
+        .filter(|control| control.modulator.target == target)
+        .map(|control| {
+            let salt = stable_name_hash(&control.name);
+            control.modulator.bias
+                + control.modulator.depth * modulator_value(control.modulator, age, seed ^ salt)
+        })
+        .sum();
+    local + patch
 }
 
 fn modulator_value(modulator: Modulator, age: f32, seed: u64) -> f32 {
@@ -1842,6 +2089,12 @@ fn modulator_value(modulator: Modulator, age: f32, seed: u64) -> f32 {
             hash_noise(seed ^ 0x4d6f_6475_6c61_7465, slot)
         }
     }
+}
+
+fn stable_name_hash(name: &str) -> u64 {
+    name.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ byte as u64).wrapping_mul(0x0000_0100_0000_01b3)
+    })
 }
 
 fn oscillator_sample(waveform: Waveform, phase: f32, duty: f32, seed: u64) -> f32 {
@@ -2129,6 +2382,88 @@ mod tests {
     }
 
     #[test]
+    fn patch_script_parses_patch_level_control_lanes() {
+        let patch = SynthPatch::from_script(
+            "lfo name=wobble target=pitch wave=sine hz=6 depth=0.04\nvoice wave=sine freq=330 attack=0.01 sustain=0.1 decay=0.1",
+        )
+        .unwrap();
+        assert_eq!(patch.controls.len(), 1);
+        assert_eq!(patch.controls[0].name, "wobble");
+        assert_eq!(patch.controls[0].modulator.target, ModTarget::Pitch);
+        assert_eq!(patch.controls[0].modulator.waveform, ModWaveform::Sine);
+    }
+
+    #[test]
+    fn patch_level_control_lanes_modulate_all_voices() {
+        let dry = SynthPatch::from_script(
+            "voice wave=triangle freq=220 gain=0.16 attack=0.01 sustain=0.35 decay=0.2\nvoice wave=sine freq=440 gain=0.08 attack=0.01 sustain=0.35 decay=0.2",
+        )
+        .unwrap();
+        let moving = SynthPatch::from_script(
+            "lfo name=shared_target target=pitch wave=sine hz=7 depth=0.05\nvoice wave=triangle freq=220 gain=0.16 attack=0.01 sustain=0.35 decay=0.2\nvoice wave=sine freq=440 gain=0.08 attack=0.01 sustain=0.35 decay=0.2",
+        )
+        .unwrap();
+        let options = RenderOptions {
+            duration_seconds: 0.38,
+            ..RenderOptions::default()
+        };
+        let dry_buffer = render_patch_mono(dry, options);
+        let moving_buffer = render_patch_mono(moving, options);
+        let comparison = compare_audio(
+            &dry_buffer,
+            &moving_buffer,
+            &AudioAnalysisConfig {
+                fft_size: 256,
+                hop_size: 256,
+                mel_band_count: 18,
+                ..AudioAnalysisConfig::default()
+            },
+        );
+        assert!(comparison.log_mel_distance > 0.04);
+        assert!(comparison.score < 0.96);
+    }
+
+    #[test]
+    fn patch_builder_creates_renderable_modular_patch() {
+        let voice = Voice::simple(
+            Oscillator::sine(330.0),
+            Envelope {
+                attack_seconds: 0.004,
+                sustain_seconds: 0.08,
+                decay_seconds: 0.12,
+                punch: 0.2,
+            },
+            0.18,
+        )
+        .with_modulator(Modulator::lfo(
+            ModTarget::Duty,
+            ModWaveform::Triangle,
+            9.0,
+            0.08,
+        ))
+        .with_formant(Formant {
+            frequency_hz: 740.0,
+            bandwidth_hz: 120.0,
+            gain: 0.7,
+        });
+        let patch = PatchBuilder::new()
+            .gain(0.8)
+            .lfo("breath", ModTarget::Gain, ModWaveform::Sine, 5.0, 0.12)
+            .voice(voice)
+            .build();
+        assert_eq!(patch.controls.len(), 1);
+        let buffer = render_patch_mono(
+            patch,
+            RenderOptions {
+                duration_seconds: 0.25,
+                ..RenderOptions::default()
+            },
+        );
+        let peak = buffer.iter().map(|sample| sample.abs()).fold(0.0, f32::max);
+        assert!(peak > 0.01);
+    }
+
+    #[test]
     fn render_mono_matches_next_sample_sequence() {
         let patch = presets::aquarium_voice();
         let mut sampled = PatchPlayer::new(patch.clone(), 44_100.0);
@@ -2147,6 +2482,42 @@ mod tests {
         let mut output = vec![0.0; 1025];
         player.render_interleaved_stereo(&mut output);
         for frame in output.chunks(2).take(output.len() / 2) {
+            assert_eq!(frame[0], frame[1]);
+        }
+    }
+
+    #[test]
+    fn render_script_mono_uses_requested_duration_and_seed() {
+        let options = RenderOptions {
+            sample_rate: 22_050.0,
+            duration_seconds: 0.125,
+            seed: 42,
+        };
+        let first = render_script_mono(
+            "lfo name=shake target=gain wave=hold hz=30 depth=0.2\nvoice wave=saw freq=330 gain=0.15 attack=0.005 sustain=0.08 decay=0.08",
+            options,
+        )
+        .unwrap();
+        let second = render_script_mono(
+            "lfo name=shake target=gain wave=hold hz=30 depth=0.2\nvoice wave=saw freq=330 gain=0.15 attack=0.005 sustain=0.08 decay=0.08",
+            options,
+        )
+        .unwrap();
+        assert_eq!(first.len(), 2757);
+        assert_eq!(first, second);
+        assert!(first.iter().any(|sample| sample.abs() > 0.001));
+    }
+
+    #[test]
+    fn render_patch_interleaved_stereo_returns_frame_pairs() {
+        let options = RenderOptions {
+            sample_rate: 8_000.0,
+            duration_seconds: 0.25,
+            seed: 7,
+        };
+        let output = render_patch_interleaved_stereo(presets::aquarium_pluck(), options);
+        assert_eq!(output.len(), 4000);
+        for frame in output.chunks(2) {
             assert_eq!(frame[0], frame[1]);
         }
     }

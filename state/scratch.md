@@ -420,3 +420,9 @@ Current slice:
   pass, noise, drive, fold, and formant mix with sine/triangle/square/sample-hold
   LFOs. Tests prove chunk rendering matches sample iteration exactly and that
   modulators change envelope/spectrogram motion.
+- Current modular synth pass: patches now carry named patch-level control lanes.
+  `lfo`/`control` script commands define shared modulators that apply across
+  voices, while per-voice `mods=` still handles local motion. Rust callers can
+  build patches with `PatchBuilder`, `ControlLane::new`, and `Modulator::lfo`,
+  then render whole buffers with `render_patch_mono`,
+  `render_patch_interleaved_stereo`, or `render_script_mono`.
