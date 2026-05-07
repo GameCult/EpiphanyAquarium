@@ -18,8 +18,6 @@ struct AquariumRaymarch {
     ray10: vec4f,
     ray01: vec4f,
     ray11: vec4f,
-    clip_from_world: mat4x4f,
-    previous_clip_from_world: mat4x4f,
     bodies: array<vec4f, 8>,
     colors: array<vec4f, 8>,
     froxel_masks: array<vec4u, 576>,
@@ -546,20 +544,8 @@ struct SurfaceSample {
     point: vec3f,
     normal: vec3f,
     color: vec3f,
-    emissive: vec3f,
-    unlit: bool,
-    roughness: f32,
-    metallic: f32,
     t: f32,
 };
-
-fn motion_vector(point: vec3f) -> vec2f {
-    let clip = field.clip_from_world * vec4f(point, 1.0);
-    let previous_clip = field.previous_clip_from_world * vec4f(point, 1.0);
-    let current_position = clip.xy / max(clip.w, 0.0001);
-    let previous_position = previous_clip.xy / max(previous_clip.w, 0.0001);
-    return (current_position - previous_position) * vec2f(0.5, -0.5);
-}
 
 fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> SurfaceSample {
     let terrain = terrain_hit(ray_origin, ray_dir, jitter);
@@ -569,10 +555,6 @@ fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> 
         vec3f(0.0),
         vec3f(0.0, 0.0, 1.0),
         vec3f(0.0),
-        vec3f(0.0),
-        false,
-        0.72,
-        0.0,
         field.depth_far + 1.0,
     );
 
@@ -587,9 +569,6 @@ fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> 
         let albedo = clamp(terrain.color + vec3f(0.82, 0.92, 0.84) * lines * 0.12, vec3f(0.0), vec3f(0.82));
         let shaded = shade_diegetic(albedo, point, sample.normal, 0.82);
         sample.color = shaded;
-        sample.emissive = shaded;
-        sample.unlit = true;
-        sample.roughness = 0.82;
         sample.t = terrain.t;
     }
 
@@ -652,10 +631,6 @@ fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> 
             sample.normal = normal;
             let shaded = shade_diegetic(albedo, point, normal, 0.74);
             sample.color = mix(shaded, solar, self_flag);
-            sample.emissive = mix(shaded, solar, self_flag);
-            sample.unlit = true;
-            sample.roughness = mix(0.74, 0.42, self_flag);
-            sample.metallic = 0.0;
             sample.t = displaced_t;
         }
     }
@@ -697,14 +672,10 @@ fn debug_color(sample: SurfaceSample, uv: vec2f) -> vec3f {
         return sample.normal * 0.5 + vec3f(0.5);
     }
     if (mode == 4u) {
-        let velocity = length(motion_vector(sample.point)) * 32.0;
-        return mix(vec3f(0.02, 0.05, 0.18), vec3f(1.0, 0.22, 0.04), clamp(velocity, 0.0, 1.0));
-    }
-    if (mode == 5u) {
         let occupancy = debug_froxel_occupancy(uv, sample.t);
         return mix(vec3f(0.02, 0.02, 0.04), vec3f(0.12, 0.95, 0.48), occupancy);
     }
-    if (mode == 6u) {
+    if (mode == 5u) {
         let luminance = debug_sh_luminance(sample);
         return mix(vec3f(0.01, 0.015, 0.04), vec3f(1.0, 0.76, 0.18), luminance);
     }
@@ -718,10 +689,6 @@ fn debug_surface_sample(sample: SurfaceSample, uv: vec2f) -> SurfaceSample {
     var debug_sample = sample;
     let color = debug_color(sample, uv);
     debug_sample.color = color;
-    debug_sample.emissive = color;
-    debug_sample.unlit = true;
-    debug_sample.roughness = 1.0;
-    debug_sample.metallic = 0.0;
     return debug_sample;
 }
 

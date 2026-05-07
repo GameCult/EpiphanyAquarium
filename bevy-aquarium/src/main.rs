@@ -444,18 +444,16 @@ enum RendererDebugMode {
     HitCoverage,
     Depth,
     Normals,
-    Motion,
     BrickOccupancy,
     ShLuminance,
 }
 
 impl RendererDebugMode {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 6] = [
         Self::Final,
         Self::HitCoverage,
         Self::Depth,
         Self::Normals,
-        Self::Motion,
         Self::BrickOccupancy,
         Self::ShLuminance,
     ];
@@ -466,7 +464,6 @@ impl RendererDebugMode {
             Self::HitCoverage => "hit-coverage",
             Self::Depth => "depth",
             Self::Normals => "normals",
-            Self::Motion => "motion",
             Self::BrickOccupancy => "brick-occupancy",
             Self::ShLuminance => "sh-luminance",
         }
@@ -477,7 +474,6 @@ impl RendererDebugMode {
             "hit-coverage" => Self::HitCoverage,
             "depth" => Self::Depth,
             "normals" => Self::Normals,
-            "motion" => Self::Motion,
             "brick-occupancy" => Self::BrickOccupancy,
             "sh-luminance" => Self::ShLuminance,
             _ => Self::Final,
@@ -490,9 +486,8 @@ impl RendererDebugMode {
             Self::HitCoverage => 1.0,
             Self::Depth => 2.0,
             Self::Normals => 3.0,
-            Self::Motion => 4.0,
-            Self::BrickOccupancy => 5.0,
-            Self::ShLuminance => 6.0,
+            Self::BrickOccupancy => 4.0,
+            Self::ShLuminance => 5.0,
         }
     }
 
@@ -629,7 +624,6 @@ impl Default for AquariumAudioState {
 struct LightingGridHistory {
     previous_center: Vec2,
     previous_half_extent: f32,
-    previous_clip_from_world: Mat4,
     initialized: bool,
 }
 
@@ -638,7 +632,6 @@ impl Default for LightingGridHistory {
         Self {
             previous_center: Vec2::ZERO,
             previous_half_extent: GRID_BASE_HALF_EXTENT,
-            previous_clip_from_world: Mat4::IDENTITY,
             initialized: false,
         }
     }
@@ -663,8 +656,6 @@ struct AquariumRaymarch {
     ray10: Vec4,
     ray01: Vec4,
     ray11: Vec4,
-    clip_from_world: Mat4,
-    previous_clip_from_world: Mat4,
     bodies: [Vec4; MAX_RAYMARCH_BODIES],
     colors: [Vec4; MAX_RAYMARCH_BODIES],
     froxel_masks: [UVec4; RAYMARCH_FROXEL_MASK_WORDS],
@@ -690,8 +681,6 @@ impl Default for AquariumRaymarch {
             ray10: Vec4::new(0.5, 0.5, -0.7, 0.0),
             ray01: Vec4::new(-0.5, 0.8, -0.28, 0.0),
             ray11: Vec4::new(0.5, 0.8, -0.28, 0.0),
-            clip_from_world: Mat4::IDENTITY,
-            previous_clip_from_world: Mat4::IDENTITY,
             bodies: [Vec4::ZERO; MAX_RAYMARCH_BODIES],
             colors: [Vec4::ZERO; MAX_RAYMARCH_BODIES],
             froxel_masks: [UVec4::ZERO; RAYMARCH_FROXEL_MASK_WORDS],
@@ -1449,7 +1438,6 @@ fn update_raymarch_uniforms(
         return;
     };
     let transform = camera_transform.compute_transform();
-    let clip_from_world = projection.get_clip_from_view() * camera_transform.affine().inverse();
     let aspect = match projection {
         Projection::Perspective(perspective) => perspective.aspect_ratio,
         _ => 16.0 / 9.0,
@@ -1477,11 +1465,9 @@ fn update_raymarch_uniforms(
     if lighting_history.initialized {
         raymarch.previous_grid_center = lighting_history.previous_center;
         raymarch.previous_grid_half_extent = lighting_history.previous_half_extent;
-        raymarch.previous_clip_from_world = lighting_history.previous_clip_from_world;
     } else {
         raymarch.previous_grid_center = grid_frame.center;
         raymarch.previous_grid_half_extent = grid_frame.half_extent;
-        raymarch.previous_clip_from_world = clip_from_world;
     }
     raymarch.delta_time = time.delta_secs().clamp(1.0 / 240.0, 1.0 / 15.0);
     raymarch.depth_near = 1.0;
@@ -1492,7 +1478,6 @@ fn update_raymarch_uniforms(
     raymarch.ray10 = ray(1.0, 1.0);
     raymarch.ray01 = ray(-1.0, -1.0);
     raymarch.ray11 = ray(1.0, -1.0);
-    raymarch.clip_from_world = clip_from_world;
 
     raymarch.bodies = [Vec4::ZERO; MAX_RAYMARCH_BODIES];
     raymarch.colors = [Vec4::ZERO; MAX_RAYMARCH_BODIES];
@@ -1537,7 +1522,6 @@ fn update_raymarch_uniforms(
     raymarch.body_count = count as f32;
     lighting_history.previous_center = grid_frame.center;
     lighting_history.previous_half_extent = grid_frame.half_extent;
-    lighting_history.previous_clip_from_world = clip_from_world;
     lighting_history.initialized = true;
 }
 
