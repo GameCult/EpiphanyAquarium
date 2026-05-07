@@ -4,6 +4,8 @@ use bevy::audio::{AudioPlayer, PlaybackSettings, SpatialListener, Volume};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::core_pipeline::{FullscreenShader, core_3d::graph::Core3d, core_3d::graph::Node3d};
 use bevy::ecs::query::QueryItem;
+use bevy::input::ButtonState;
+use bevy::input::keyboard::KeyboardInput;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::post_process::bloom::{Bloom, BloomCompositeMode, BloomPrefilter};
 use bevy::prelude::*;
@@ -43,6 +45,7 @@ use cultnet_rs::{
 use std::f32::consts::{FRAC_PI_2, TAU};
 use std::mem::size_of;
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
@@ -94,6 +97,7 @@ fn main() {
             TimerMode::Repeating,
         )))
         .insert_resource(AquariumAudioState::default())
+        .insert_resource(DebugUiState::default())
         .insert_resource(runtime_bridge)
         .add_plugins(
             DefaultPlugins
@@ -129,6 +133,9 @@ fn main() {
                 autosave_live_state,
                 billboard_labels,
                 aquarium_audio,
+                debug_ui_buttons,
+                debug_terminal_input,
+                sync_debug_ui,
                 reload_domain_input,
                 renderer_debug_input,
             ),
@@ -197,6 +204,35 @@ struct AquariumRendererSettings {
     schema_version: String,
     #[cultcache(key = 1)]
     debug_mode: String,
+}
+
+#[derive(Resource, Clone, Debug)]
+struct DebugUiState {
+    open: bool,
+    active_tab: DebugTab,
+    terminal_focused: bool,
+    terminal_input: String,
+    terminal_lines: Vec<String>,
+}
+
+impl Default for DebugUiState {
+    fn default() -> Self {
+        Self {
+            open: false,
+            active_tab: DebugTab::Terminal,
+            terminal_focused: false,
+            terminal_input: String::new(),
+            terminal_lines: vec![
+                "Epiphany Aquarium debug terminal".to_string(),
+                "Type `help`; commands execute through PowerShell.".to_string(),
+            ],
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DebugTab {
+    Terminal,
 }
 
 impl Default for AquariumRendererSettings {
@@ -996,6 +1032,33 @@ struct AquariumDomainRoot;
 struct BodyLabel;
 
 #[derive(Component)]
+struct DebugUiRoot;
+
+#[derive(Component)]
+struct DebugUiPanel;
+
+#[derive(Component)]
+struct DebugUiTabRail;
+
+#[derive(Component)]
+struct DebugTriggerButton;
+
+#[derive(Component)]
+struct DebugTerminalTabButton;
+
+#[derive(Component)]
+struct DebugTerminalPanel;
+
+#[derive(Component)]
+struct DebugTerminalOutput;
+
+#[derive(Component)]
+struct DebugTerminalInput;
+
+#[derive(Component)]
+struct DebugTerminalInputText;
+
+#[derive(Component)]
 #[allow(dead_code)]
 struct OrbitGuide {
     center: Vec3,
@@ -1087,7 +1150,9 @@ fn setup(mut commands: Commands, bridge: Res<CultRuntimeBridge>, grid_frame: Res
         SpatialListener::default(),
         AquariumRaymarch::default(),
         AquariumCamera,
+        IsDefaultUiCamera,
     ));
+    spawn_debug_ui(&mut commands);
 
     spawn_domain(
         &mut commands,
@@ -1095,6 +1160,342 @@ fn setup(mut commands: Commands, bridge: Res<CultRuntimeBridge>, grid_frame: Res
         *grid_frame,
         bridge.load_body_states().ok(),
     );
+}
+
+fn spawn_debug_ui(commands: &mut Commands) {
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                top: Val::Px(0.0),
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                ..default()
+            },
+            ZIndex(20),
+            DebugUiRoot,
+        ))
+        .with_children(|root| {
+            root.spawn((
+                Button,
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(10.0),
+                    top: Val::Px(10.0),
+                    width: Val::Px(34.0),
+                    height: Val::Px(34.0),
+                    border: UiRect::all(Val::Px(1.0)),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.015, 0.022, 0.025, 0.64)),
+                BorderColor::all(Color::srgba(0.58, 0.82, 0.76, 0.34)),
+                DebugTriggerButton,
+            ))
+            .with_children(|button| {
+                button.spawn((
+                    Text::new(">_"),
+                    TextFont {
+                        font_size: 16.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgba(0.76, 0.96, 0.88, 0.9)),
+                ));
+            });
+
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(54.0),
+                    top: Val::Px(10.0),
+                    width: Val::Percent(46.0),
+                    height: Val::Px(34.0),
+                    display: Display::None,
+                    flex_direction: FlexDirection::Row,
+                    column_gap: Val::Px(8.0),
+                    ..default()
+                },
+                DebugUiTabRail,
+            ))
+            .with_children(|tabs| {
+                tabs.spawn((
+                    Button,
+                    Node {
+                        width: Val::Px(34.0),
+                        height: Val::Px(34.0),
+                        border: UiRect::all(Val::Px(1.0)),
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::Center,
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.03, 0.05, 0.048, 0.72)),
+                    BorderColor::all(Color::srgba(0.58, 0.82, 0.76, 0.38)),
+                    DebugTerminalTabButton,
+                ))
+                .with_children(|tab| {
+                    tab.spawn((
+                        Text::new(">_"),
+                        TextFont {
+                            font_size: 15.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgba(0.78, 0.98, 0.9, 0.9)),
+                    ));
+                });
+            });
+
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(54.0),
+                    top: Val::Px(54.0),
+                    width: Val::Percent(46.0),
+                    height: Val::Percent(88.0),
+                    border: UiRect::all(Val::Px(1.0)),
+                    display: Display::None,
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(8.0),
+                    padding: UiRect::all(Val::Px(14.0)),
+                    overflow: Overflow::clip(),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.006, 0.012, 0.013, 0.82)),
+                BorderColor::all(Color::srgba(0.58, 0.82, 0.76, 0.25)),
+                DebugUiPanel,
+                DebugTerminalPanel,
+            ))
+            .with_children(|panel| {
+                panel.spawn((
+                    Text::new("DEBUG / TERMINAL"),
+                    TextFont {
+                        font_size: 13.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgba(0.58, 0.82, 0.76, 0.72)),
+                ));
+                panel.spawn((
+                    Text::new(""),
+                    TextFont {
+                        font_size: 14.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgba(0.82, 0.96, 0.88, 0.92)),
+                    Node {
+                        flex_grow: 1.0,
+                        width: Val::Percent(100.0),
+                        overflow: Overflow::clip(),
+                        ..default()
+                    },
+                    DebugTerminalOutput,
+                ));
+                panel
+                    .spawn((
+                        Button,
+                        Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Px(38.0),
+                            border: UiRect::all(Val::Px(1.0)),
+                            align_items: AlignItems::Center,
+                            padding: UiRect::horizontal(Val::Px(10.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.02, 0.03, 0.03, 0.92)),
+                        BorderColor::all(Color::srgba(0.58, 0.82, 0.76, 0.28)),
+                        DebugTerminalInput,
+                    ))
+                    .with_children(|input| {
+                        input.spawn((
+                            Text::new("> "),
+                            TextFont {
+                                font_size: 15.0,
+                                ..default()
+                            },
+                            TextColor(Color::srgba(0.82, 1.0, 0.9, 0.95)),
+                            DebugTerminalInputText,
+                        ));
+                    });
+            });
+        });
+}
+
+fn debug_ui_buttons(
+    mut debug: ResMut<DebugUiState>,
+    trigger: Query<&Interaction, (Changed<Interaction>, With<DebugTriggerButton>)>,
+    terminal_tab: Query<&Interaction, (Changed<Interaction>, With<DebugTerminalTabButton>)>,
+    terminal_input: Query<&Interaction, (Changed<Interaction>, With<DebugTerminalInput>)>,
+) {
+    for interaction in &trigger {
+        if *interaction == Interaction::Pressed {
+            debug.open = !debug.open;
+            debug.terminal_focused = debug.open;
+        }
+    }
+    for interaction in &terminal_tab {
+        if *interaction == Interaction::Pressed {
+            debug.open = true;
+            debug.active_tab = DebugTab::Terminal;
+            debug.terminal_focused = true;
+        }
+    }
+    for interaction in &terminal_input {
+        if *interaction == Interaction::Pressed {
+            debug.open = true;
+            debug.active_tab = DebugTab::Terminal;
+            debug.terminal_focused = true;
+        }
+    }
+}
+
+fn debug_terminal_input(
+    mut debug: ResMut<DebugUiState>,
+    mut keyboard_events: MessageReader<KeyboardInput>,
+) {
+    if !debug.open || debug.active_tab != DebugTab::Terminal || !debug.terminal_focused {
+        return;
+    }
+
+    for event in keyboard_events.read() {
+        if event.state != ButtonState::Pressed || event.repeat {
+            continue;
+        }
+        match event.key_code {
+            KeyCode::Escape => {
+                debug.terminal_focused = false;
+            }
+            KeyCode::Enter | KeyCode::NumpadEnter => {
+                let command = debug.terminal_input.trim().to_string();
+                debug.terminal_input.clear();
+                if command.is_empty() {
+                    continue;
+                }
+                debug.terminal_lines.push(format!("> {command}"));
+                if command == "clear" {
+                    debug.terminal_lines.clear();
+                } else {
+                    let output = run_debug_terminal_command(&command);
+                    for line in output.lines() {
+                        debug.terminal_lines.push(line.to_string());
+                    }
+                }
+                let keep = 28;
+                if debug.terminal_lines.len() > keep {
+                    let drain = debug.terminal_lines.len() - keep;
+                    debug.terminal_lines.drain(0..drain);
+                }
+            }
+            KeyCode::Backspace => {
+                debug.terminal_input.pop();
+            }
+            _ => {
+                if let Some(text) = &event.text {
+                    for character in text.chars() {
+                        if !character.is_control() {
+                            debug.terminal_input.push(character);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn run_debug_terminal_command(command: &str) -> String {
+    match command.trim() {
+        "help" => "builtins: help, clear\nshell: any other line is sent to PowerShell".to_string(),
+        "clear" => String::new(),
+        command => match Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                command,
+            ])
+            .output()
+        {
+            Ok(output) => {
+                let mut text = String::new();
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if !stdout.trim().is_empty() {
+                    text.push_str(stdout.trim_end());
+                }
+                if !stderr.trim().is_empty() {
+                    if !text.is_empty() {
+                        text.push('\n');
+                    }
+                    text.push_str(stderr.trim_end());
+                }
+                if text.is_empty() {
+                    format!("exit {}", output.status.code().unwrap_or_default())
+                } else {
+                    text
+                }
+            }
+            Err(err) => format!("failed to run PowerShell: {err}"),
+        },
+    }
+}
+
+fn sync_debug_ui(
+    debug: Res<DebugUiState>,
+    mut tab_rails: Query<&mut Node, (With<DebugUiTabRail>, Without<DebugUiPanel>)>,
+    mut panels: Query<&mut Node, (With<DebugUiPanel>, Without<DebugUiTabRail>)>,
+    mut output_text: Query<&mut Text, (With<DebugTerminalOutput>, Without<DebugTerminalInput>)>,
+    mut input_text: Query<&mut Text, (With<DebugTerminalInputText>, Without<DebugTerminalOutput>)>,
+    mut trigger_color: Query<&mut BackgroundColor, With<DebugTriggerButton>>,
+    mut tab_color: Query<
+        &mut BackgroundColor,
+        (With<DebugTerminalTabButton>, Without<DebugTriggerButton>),
+    >,
+    mut input_color: Query<
+        &mut BackgroundColor,
+        (
+            With<DebugTerminalInput>,
+            Without<DebugTriggerButton>,
+            Without<DebugTerminalTabButton>,
+        ),
+    >,
+) {
+    let display = if debug.open {
+        Display::Flex
+    } else {
+        Display::None
+    };
+    for mut node in &mut tab_rails {
+        node.display = display;
+    }
+    for mut node in &mut panels {
+        node.display = display;
+    }
+    for mut text in &mut output_text {
+        text.0 = debug.terminal_lines.join("\n");
+    }
+    for mut text in &mut input_text {
+        let caret = if debug.terminal_focused { "_" } else { "" };
+        text.0 = format!("> {}{}", debug.terminal_input, caret);
+    }
+    for mut color in &mut trigger_color {
+        color.0 = if debug.open {
+            Color::srgba(0.06, 0.14, 0.12, 0.84)
+        } else {
+            Color::srgba(0.015, 0.022, 0.025, 0.64)
+        };
+    }
+    for mut color in &mut tab_color {
+        color.0 = Color::srgba(0.045, 0.10, 0.086, 0.82);
+    }
+    for mut color in &mut input_color {
+        color.0 = if debug.terminal_focused {
+            Color::srgba(0.025, 0.07, 0.058, 0.94)
+        } else {
+            Color::srgba(0.02, 0.03, 0.03, 0.92)
+        };
+    }
 }
 
 fn spawn_domain(
@@ -1347,10 +1748,15 @@ fn camera_input(
     keys: Res<ButtonInput<KeyCode>>,
     motion: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
+    debug: Res<DebugUiState>,
     mut rig: ResMut<CameraRig>,
     mut dirty: ResMut<GridDirty>,
     camera: Query<&Transform, With<AquariumCamera>>,
 ) {
+    if debug.open && debug.terminal_focused {
+        return;
+    }
+
     let previous_target = rig.target;
     let previous_distance = rig.distance;
     let drag = motion.delta;

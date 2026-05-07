@@ -49,6 +49,10 @@ Current renderer truth:
   `libaquarium_synth` have reproduced as stale incremental package artifacts.
   `scripts/repair-bevy-link.ps1` performs the narrow recovery: `cargo clean -p
   aquarium_synth`, then rebuilds the Bevy hotpatch target.
+- Debug UI exists as a native Bevy UI escape hatch, not the main aquarium
+  grammar: a tiny top-left `>_` button opens square tab buttons and a left-half
+  terminal panel. The first tab is a focused PowerShell terminal; camera input
+  yields while the terminal owns keyboard focus.
 
 Current next cut:
 
@@ -56,3 +60,6 @@ Current next cut:
   layout only, not shader entrypoint correctness.
 - Inspect the live image and tune irradiance strength/visibility if planets go
   too black or the Grid starts emitting square ghosts again.
+- Move the debug terminal command runner off the main thread before using it
+  for long-running commands. The current pass is intentionally sharp but
+  blocking.
