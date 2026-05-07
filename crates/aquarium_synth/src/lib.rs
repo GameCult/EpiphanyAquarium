@@ -10,8 +10,8 @@ const DEFAULT_SAMPLE_RATE: f32 = 44_100.0;
 pub const PATCH_SCRIPT_EXAMPLE: &str = r#"
 # One command per line. Comments start with #.
 patch gain=0.7 soft_clip=true
-lfo name=wobble target=pitch wave=sine hz=5 depth=0.01
-lfo name=shimmer target=formant wave=triangle hz=2 depth=0.08
+mod name=wobble wave=sine hz=5 pitch=0.01 formant=0.08
+bus n=shimmer w=triangle hz=2 to=gain:0.08,lpf:-0.04,fmix:0.12
 voice wave=sine freq=220 gain=0.12 attack=0.002 sustain=0.03 decay=0.2 vibrato=0.02 vibrato_hz=5 formants=620:90:1,1040:150:0.8 formant_mix=0.45 mods=formant:sine:2:0.12,pitch:triangle:3:0.015
 voice wave=triangle freq=440 gain=0.04 attack=0 sustain=0.02 decay=0.18 lpf=0.7 hpf=0.02 mods=gain:sine:8:0.18,lpf:hold:12:0.08
 sfxr preset=laser mutate_seed=9 mutate=0.01
@@ -127,19 +127,19 @@ pub const WOBBLE_BASS_NAMES: [&str; 4] = ["talker", "growl", "yoy", "neuro"];
 pub const WOBBLE_BASS_PRIMITIVE_GOLF_SCRIPTS: [(&str, &str); 4] = [
     (
         "talker",
-        "d w=saw f=55 g=.18 s=.8 d=.25 l=.34 h=.02 drv=.3 fl=.08 fm=2 fmi=.8 fmd=.7 fs=520:90:.7,1250:170:1,2600:320:.45 fmix=.35;wob hz=4 w=tri g=.42 l=.48 fmix=.38 fmi=1.6 drv=.2 fl=.14;v;v f=110 g=.08 du=.42",
+        "d w=saw f=55 g=.18 s=.8 d=.25 l=.34 h=.02 drv=.3 fl=.08 fm=2 fmi=.8 fmd=.7 fs=520:90:.7,1250:170:1,2600:320:.45 fmix=.35;mod n=wob hz=4 w=tri g=.42 l=.48 fmix=.38 fmi=1.6 drv=.2 fl=.14;v;v f=110 g=.08 du=.42",
     ),
     (
         "growl",
-        "d w=saw f=44 g=.2 s=.7 d=.3 l=.28 h=.01 drv=.42 fl=.18 fm=1.5 fmi=1.2 fmd=.45 nz=.05;wob hz=6 w=sin g=.32 l=.55 p=.035 drv=.28 fl=.22 nz=.08 fmi=2.2;v;v w=sq f=88 g=.09 du=.36",
+        "d w=saw f=44 g=.2 s=.7 d=.3 l=.28 h=.01 drv=.42 fl=.18 fm=1.5 fmi=1.2 fmd=.45 nz=.05;mod n=wob hz=6 w=sin g=.32 l=.55 p=.035 drv=.28 fl=.22 nz=.08 fmi=2.2;v;v w=sq f=88 g=.09 du=.36",
     ),
     (
         "yoy",
-        "d w=sq f=62 g=.16 s=.65 d=.22 l=.3 h=.03 drv=.25 fm=3 fmi=.7 fmd=.5 fs=400:80:.6,900:120:1,2100:260:.4 fmix=.28;wob hz=5 w=sq g=.5 l=.5 fmix=.45 p=.025 du=.08;v;v w=saw f=124 g=.07",
+        "d w=sq f=62 g=.16 s=.65 d=.22 l=.3 h=.03 drv=.25 fm=3 fmi=.7 fmd=.5 fs=400:80:.6,900:120:1,2100:260:.4 fmix=.28;mod n=wob hz=5 w=sq g=.5 l=.5 fmix=.45 p=.025 du=.08;v;v w=saw f=124 g=.07",
     ),
     (
         "neuro",
-        "d w=saw f=49 g=.16 s=.75 d=.28 l=.25 h=.04 drv=.38 fl=.24 fm=2.7 fmi=1.5 fmd=.35 nz=.04;wob hz=7 w=hold g=.28 l=.52 p=.04 drv=.25 fl=.3 nz=.1 fmi=2.8;v;v w=tri f=147 g=.06",
+        "d w=saw f=49 g=.16 s=.75 d=.28 l=.25 h=.04 drv=.38 fl=.24 fm=2.7 fmi=1.5 fmd=.35 nz=.04;mod n=wob hz=7 w=hold g=.28 l=.52 p=.04 drv=.25 fl=.3 nz=.1 fmi=2.8;v;v w=tri f=147 g=.06",
     ),
 ];
 
@@ -652,6 +652,19 @@ pub enum ModTarget {
     FormantMix,
     FmIndex,
 }
+
+pub const MOD_TARGET_NAMES: [(&str, ModTarget); 10] = [
+    ("gain", ModTarget::Gain),
+    ("pitch", ModTarget::Pitch),
+    ("duty", ModTarget::Duty),
+    ("lpf", ModTarget::LowPass),
+    ("hpf", ModTarget::HighPass),
+    ("noise", ModTarget::Noise),
+    ("drive", ModTarget::Drive),
+    ("fold", ModTarget::Fold),
+    ("formant_mix", ModTarget::FormantMix),
+    ("fm_index", ModTarget::FmIndex),
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ModWaveform {
@@ -1339,6 +1352,12 @@ struct PatchScriptCompiler {
     voice_templates: Vec<(String, Vec<(String, String)>)>,
 }
 
+#[derive(Clone, Copy)]
+struct ModBusOptions {
+    default_name: &'static str,
+    command_name: &'static str,
+}
+
 impl Default for PatchScriptCompiler {
     fn default() -> Self {
         Self {
@@ -1369,7 +1388,22 @@ impl PatchScriptCompiler {
             "patch" | "p" => apply_patch_fields(&mut self.patch, &fields, line_number)?,
             "defaults" | "default" | "d" => self.apply_voice_defaults(&fields),
             "def" | "template" | "t" => self.define_voice_template(&fields, line_number)?,
-            "wobble" | "wob" | "wb" => self.apply_wobble_bus(&fields, line_number)?,
+            "mod" | "modulate" | "bus" | "o" => self.apply_mod_bus(
+                &fields,
+                line_number,
+                ModBusOptions {
+                    default_name: "mod",
+                    command_name: "mod",
+                },
+            )?,
+            "wobble" | "wob" | "wb" => self.apply_mod_bus(
+                &fields,
+                line_number,
+                ModBusOptions {
+                    default_name: "wob",
+                    command_name: "wobble",
+                },
+            )?,
             "lfo" | "control" | "l" => self
                 .patch
                 .controls
@@ -1404,29 +1438,48 @@ impl PatchScriptCompiler {
         Ok(())
     }
 
-    fn apply_wobble_bus(
+    fn apply_mod_bus(
         &mut self,
         fields: &[(&str, &str)],
         line: usize,
+        options: ModBusOptions,
     ) -> Result<(), PatchScriptError> {
         let frequency_hz = parse_optional_f32_any(fields, &["hz", "rate"], line)?.unwrap_or(4.0);
         let waveform = parse_mod_waveform(
             field_value_any(fields, &["wave", "w"]).unwrap_or("sine"),
             line,
         )?;
-        let phase = parse_optional_f32(fields, "phase", line)?.unwrap_or(0.0);
-        let bus = field_value_any(fields, &["name", "n"]).unwrap_or("wob");
+        let phase = parse_optional_f32_any(fields, &["phase", "ph"], line)?.unwrap_or(0.0);
+        let bias = parse_optional_f32_any(fields, &["bias", "b"], line)?.unwrap_or(0.0);
+        let bus = field_value_any(fields, &["name", "n"]).unwrap_or(options.default_name);
+        let mut targets = Vec::new();
+        if let Some(routes) = field_value_any(fields, &["to", "targets"]) {
+            targets.extend(parse_mod_bus_routes(routes, line)?);
+        }
         for (key, value) in fields {
-            if matches!(*key, "hz" | "rate" | "wave" | "w" | "phase" | "name" | "n") {
+            if matches!(
+                *key,
+                "hz" | "rate" | "wave" | "w" | "phase" | "ph" | "bias" | "b" | "name" | "n"
+                    | "to" | "targets"
+            ) {
                 continue;
             }
-            let Some(target) = wobble_target(key) else {
-                return Err(unknown_field(line, "wobble", key));
-            };
+            let target = parse_mod_target(key, line)?;
             let depth = parse_f32(value, line, key)?;
+            targets.push((*key, target, depth));
+        }
+        if targets.is_empty() {
+            return Err(PatchScriptError::new(
+                line,
+                format!("{} bus needs at least one target", options.command_name),
+            ));
+        }
+        for (label, target, depth) in targets {
             self.patch.controls.push(ControlLane::new(
-                format!("{bus}_{key}"),
-                Modulator::lfo(target, waveform, frequency_hz, depth).with_phase(phase),
+                format!("{bus}_{label}"),
+                Modulator::lfo(target, waveform, frequency_hz, depth)
+                    .with_phase(phase)
+                    .with_bias(bias),
             ));
         }
         Ok(())
@@ -1591,25 +1644,27 @@ fn control_lane_from_fields(
     fields: &[(&str, &str)],
     line: usize,
 ) -> Result<ControlLane, PatchScriptError> {
-    let name = field_value(fields, "name")
+    let name = field_value_any(fields, &["name", "n"])
         .ok_or_else(|| PatchScriptError::new(line, "control lane needs name"))?
         .to_owned();
     if name.is_empty() {
         return Err(PatchScriptError::new(line, "control lane name is empty"));
     }
     let target = parse_mod_target(
-        field_value(fields, "target")
+        field_value_any(fields, &["target", "t"])
             .ok_or_else(|| PatchScriptError::new(line, "control lane needs target"))?,
         line,
     )?;
-    let waveform = parse_mod_waveform(field_value(fields, "wave").unwrap_or("sine"), line)?;
-    let frequency_hz = parse_optional_f32(fields, "hz", line)?.unwrap_or(1.0);
-    let depth = parse_optional_f32(fields, "depth", line)?.unwrap_or(0.0);
-    let phase = parse_optional_f32(fields, "phase", line)?.unwrap_or(0.0);
-    let bias = parse_optional_f32(fields, "bias", line)?.unwrap_or(0.0);
+    let waveform =
+        parse_mod_waveform(field_value_any(fields, &["wave", "w"]).unwrap_or("sine"), line)?;
+    let frequency_hz = parse_optional_f32_any(fields, &["hz", "rate"], line)?.unwrap_or(1.0);
+    let depth = parse_optional_f32_any(fields, &["depth", "d"], line)?.unwrap_or(0.0);
+    let phase = parse_optional_f32_any(fields, &["phase", "ph"], line)?.unwrap_or(0.0);
+    let bias = parse_optional_f32_any(fields, &["bias", "b"], line)?.unwrap_or(0.0);
     for (key, _) in fields {
         match *key {
-            "name" | "target" | "wave" | "hz" | "depth" | "phase" | "bias" => {}
+            "name" | "n" | "target" | "t" | "wave" | "w" | "hz" | "rate" | "depth" | "d"
+            | "phase" | "ph" | "bias" | "b" => {}
             unknown => return Err(unknown_field(line, "lfo", unknown)),
         }
     }
@@ -1847,16 +1902,16 @@ fn parse_modulators(value: &str, line: usize) -> Result<Vec<Modulator>, PatchScr
 
 fn parse_mod_target(value: &str, line: usize) -> Result<ModTarget, PatchScriptError> {
     match value {
-        "gain" => Ok(ModTarget::Gain),
-        "pitch" => Ok(ModTarget::Pitch),
-        "duty" => Ok(ModTarget::Duty),
-        "lpf" => Ok(ModTarget::LowPass),
-        "hpf" => Ok(ModTarget::HighPass),
-        "noise" => Ok(ModTarget::Noise),
-        "drive" => Ok(ModTarget::Drive),
-        "fold" => Ok(ModTarget::Fold),
-        "formant" | "formant_mix" => Ok(ModTarget::FormantMix),
-        "fm" | "fm_index" => Ok(ModTarget::FmIndex),
+        "gain" | "g" => Ok(ModTarget::Gain),
+        "pitch" | "p" => Ok(ModTarget::Pitch),
+        "duty" | "du" => Ok(ModTarget::Duty),
+        "lpf" | "l" => Ok(ModTarget::LowPass),
+        "hpf" | "h" => Ok(ModTarget::HighPass),
+        "noise" | "nz" => Ok(ModTarget::Noise),
+        "drive" | "drv" => Ok(ModTarget::Drive),
+        "fold" | "fl" => Ok(ModTarget::Fold),
+        "formant" | "formant_mix" | "fmix" => Ok(ModTarget::FormantMix),
+        "fm" | "fmi" | "fm_index" => Ok(ModTarget::FmIndex),
         other => Err(PatchScriptError::new(
             line,
             format!("unknown modulator target `{other}`"),
@@ -1864,20 +1919,31 @@ fn parse_mod_target(value: &str, line: usize) -> Result<ModTarget, PatchScriptEr
     }
 }
 
-fn wobble_target(value: &str) -> Option<ModTarget> {
-    Some(match value {
-        "gain" | "g" => ModTarget::Gain,
-        "pitch" | "p" => ModTarget::Pitch,
-        "duty" | "du" => ModTarget::Duty,
-        "lpf" | "l" => ModTarget::LowPass,
-        "hpf" | "h" => ModTarget::HighPass,
-        "noise" | "nz" => ModTarget::Noise,
-        "drive" | "drv" => ModTarget::Drive,
-        "fold" | "fl" => ModTarget::Fold,
-        "formant" | "formant_mix" | "fmix" => ModTarget::FormantMix,
-        "fm" | "fmi" | "fm_index" => ModTarget::FmIndex,
-        _ => return None,
-    })
+fn parse_mod_bus_routes(
+    value: &str,
+    line: usize,
+) -> Result<Vec<(&str, ModTarget, f32)>, PatchScriptError> {
+    if value.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    value
+        .split(',')
+        .map(|route| {
+            let (target_name, depth) = route.split_once(':').ok_or_else(|| {
+                PatchScriptError::new(line, "mod bus route format is target:depth")
+            })?;
+            let target_name = target_name.trim();
+            let depth = depth.trim();
+            if target_name.is_empty() {
+                return Err(PatchScriptError::new(line, "mod bus target is empty"));
+            }
+            let target = parse_mod_target(target_name, line)?;
+            let depth = depth
+                .parse::<f32>()
+                .map_err(|_| PatchScriptError::new(line, "mod bus depth must be a number"))?;
+            Ok((target_name, target, depth))
+        })
+        .collect()
 }
 
 fn parse_mod_waveform(value: &str, line: usize) -> Result<ModWaveform, PatchScriptError> {
@@ -3299,6 +3365,47 @@ mod tests {
     }
 
     #[test]
+    fn mod_bus_routes_one_oscillator_to_arbitrary_targets() {
+        let patch = SynthPatch::from_script(
+            "mod n=macro hz=3 w=sin g=.2 p=.01 du=.04 l=-.15 h=.05 nz=.1 drv=.2 fl=.08 fmix=.25 fmi=1.1;v w=saw f=110 s=.4 d=.2",
+        )
+        .unwrap();
+        assert_eq!(patch.controls.len(), MOD_TARGET_NAMES.len());
+        for (_, target) in MOD_TARGET_NAMES {
+            assert!(
+                patch
+                    .controls
+                    .iter()
+                    .any(|lane| lane.modulator.target == target),
+                "missing target {target:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn mod_bus_accepts_target_depth_route_lists() {
+        let patch = SynthPatch::from_script(
+            "bus n=sway w=tri hz=2 to=g:.12,l:-.2,fmix:.35,fmi:1.4;v w=tri f=220 s=.3 d=.2",
+        )
+        .unwrap();
+        assert_eq!(patch.controls.len(), 4);
+        assert_eq!(patch.controls[0].name, "sway_g");
+        assert_eq!(patch.controls[1].name, "sway_l");
+        assert!(
+            patch
+                .controls
+                .iter()
+                .any(|lane| lane.modulator.target == ModTarget::FormantMix)
+        );
+        assert!(
+            patch
+                .controls
+                .iter()
+                .any(|lane| lane.modulator.target == ModTarget::FmIndex)
+        );
+    }
+
+    #[test]
     fn wobble_bass_scripts_use_only_graph_primitives() {
         for (name, script) in WOBBLE_BASS_PRIMITIVE_GOLF_SCRIPTS {
             let patch = SynthPatch::from_script(script).unwrap();
@@ -3327,6 +3434,10 @@ mod tests {
                             | "l"
                             | "lfo"
                             | "control"
+                            | "mod"
+                            | "modulate"
+                            | "bus"
+                            | "o"
                             | "wob"
                             | "wobble"
                             | "wb"

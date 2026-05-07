@@ -184,7 +184,7 @@
       "`CLASSIC_808_PRIMITIVE_GOLF_SCRIPTS` is the next non-sfxr synth golf target: kick, snare, clap, hat, tom, and cowbell built from primitive statements only. Recognition tests currently use duration, centroid, zero-crossing, and peak heuristics rather than external 808 sample ground truth.",
       "FM bell/chime/gong synthesis is now a primitive voice capability, not a preset trick. Use `fm` for modulator frequency ratio, `fmi` for index, and `fmd` for index decay seconds; `FM_BELL_PRIMITIVE_GOLF_SCRIPTS` proves the target with primitive-only scripts and bright inharmonic feature tests."
       ,
-      "Wobble bass is represented as compiler-level modulation-bus abstraction, not a baked instrument. `wob hz=... w=... g=... l=... fmi=...` expands into ordinary `ControlLane`s over primitive targets. Voice `fm` now means FM ratio; use `fmix` for formant mix in terse scripts."
+      "The synth language's real Serum-style affordance is oscillator-to-anything routing. Use neutral `mod`/`bus` commands, e.g. `mod n=wob hz=4 w=tri g=.4 l=.5 fmi=1.2` or `bus n=sway to=g:.1,l:-.2,fmix:.3`; `wob` is only an alias over the same primitive bus. Voice `fm` means FM ratio; use `fmix` for formant mix in terse scripts."
     ],
     "interaction_design": [
       "Progressive disclosure is the core grammar: vibes first, object second, surface third.",
