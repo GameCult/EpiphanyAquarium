@@ -17,6 +17,18 @@ voice wave=triangle freq=440 gain=0.04 attack=0 sustain=0.02 decay=0.18 lpf=0.7 
 sfxr preset=laser mutate_seed=9 mutate=0.01
 "#;
 
+pub const CLASSIC_SFXR_NAMES: [&str; 7] = [
+    "pickup",
+    "laser",
+    "explosion",
+    "powerup",
+    "hit",
+    "jump",
+    "blip",
+];
+
+pub const CLASSIC_SFXR_GOLF_SCRIPT: &str = "pickup;laser;explosion;powerup;hit;jump;blip";
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AudioAnalysisConfig {
     pub sample_rate: f32,
@@ -1071,43 +1083,69 @@ pub fn parse_patch_script(script: &str) -> Result<SynthPatch, PatchScriptError> 
         if line.is_empty() {
             continue;
         }
-        let mut parts = line.split_whitespace();
-        let Some(command) = parts.next() else {
-            continue;
-        };
-        let fields = parse_fields(parts, line_number)?;
-        match command {
-            "patch" => apply_patch_fields(&mut patch, &fields, line_number)?,
-            "lfo" | "control" => patch
-                .controls
-                .push(control_lane_from_fields(&fields, line_number)?),
-            "voice" => patch.voices.push(voice_from_fields(&fields, line_number)?),
-            "sfxr" => {
-                let mut params = if let Some(name) = field_value(&fields, "preset") {
-                    SfxrParams::named(name).ok_or_else(|| {
-                        PatchScriptError::new(line_number, format!("unknown sfxr preset `{name}`"))
-                    })?
-                } else {
-                    SfxrParams::default()
-                };
-                apply_sfxr_fields(&mut params, &fields, line_number)?;
-                let mapped = params.to_patch();
-                patch.voices.extend(mapped.voices);
-                patch.repeat = mapped.repeat;
-                patch.gain *= mapped.gain;
-            }
-            unknown => {
-                return Err(PatchScriptError::new(
-                    line_number,
-                    format!("unknown command `{unknown}`"),
-                ));
-            }
+        for statement in line
+            .split(';')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+        {
+            parse_patch_statement(&mut patch, statement, line_number)?;
         }
     }
     if patch.voices.is_empty() {
         return Err(PatchScriptError::new(0, "script produced no voices"));
     }
     Ok(patch)
+}
+
+fn parse_patch_statement(
+    patch: &mut SynthPatch,
+    statement: &str,
+    line_number: usize,
+) -> Result<(), PatchScriptError> {
+    let mut parts = statement.split_whitespace();
+    let Some(command) = parts.next() else {
+        return Ok(());
+    };
+    let fields = parse_fields(parts, line_number)?;
+    match command {
+        name if SfxrParams::named(name).is_some() => {
+            let mut params = SfxrParams::named(name).expect("checked by match guard");
+            apply_sfxr_fields(&mut params, &fields, line_number)?;
+            append_sfxr_patch(patch, params);
+        }
+        "patch" | "p" => apply_patch_fields(patch, &fields, line_number)?,
+        "lfo" | "control" | "l" => patch
+            .controls
+            .push(control_lane_from_fields(&fields, line_number)?),
+        "voice" | "v" => patch.voices.push(voice_from_fields(&fields, line_number)?),
+        "sfxr" | "s" => {
+            let mut params = if let Some(name) =
+                field_value(&fields, "preset").or_else(|| field_value(&fields, "p"))
+            {
+                SfxrParams::named(name).ok_or_else(|| {
+                    PatchScriptError::new(line_number, format!("unknown sfxr preset `{name}`"))
+                })?
+            } else {
+                SfxrParams::default()
+            };
+            apply_sfxr_fields(&mut params, &fields, line_number)?;
+            append_sfxr_patch(patch, params);
+        }
+        unknown => {
+            return Err(PatchScriptError::new(
+                line_number,
+                format!("unknown command `{unknown}`"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn append_sfxr_patch(patch: &mut SynthPatch, params: SfxrParams) {
+    let mapped = params.to_patch();
+    patch.voices.extend(mapped.voices);
+    patch.repeat = mapped.repeat;
+    patch.gain *= mapped.gain;
 }
 
 fn parse_fields<'a>(
@@ -1429,19 +1467,22 @@ fn apply_sfxr_fields(
     fields: &[(&str, &str)],
     line: usize,
 ) -> Result<(), PatchScriptError> {
-    if let Some(seed) = field_value(fields, "mutate_seed") {
+    if let Some(seed) = field_value(fields, "mutate_seed").or_else(|| field_value(fields, "ms")) {
         let seed = seed
             .parse::<u64>()
             .map_err(|_| PatchScriptError::new(line, "mutate_seed must be an integer"))?;
-        let amount = parse_optional_f32(fields, "mutate", line)?.unwrap_or(0.05);
+        let amount = parse_optional_f32(fields, "mutate", line)?
+            .or(parse_optional_f32(fields, "m", line)?)
+            .unwrap_or(0.05);
         params.mutate(seed, amount);
     }
     for (key, value) in fields {
         match *key {
-            "preset" | "mutate_seed" | "mutate" => {}
-            "wave" => {
+            "preset" | "p" | "mutate_seed" | "ms" | "mutate" | "m" => {}
+            "wave" | "w" => {
                 params.wave_type = match *value {
                     "sine" => Waveform::Sine,
+                    "sin" => Waveform::Sine,
                     "square" => Waveform::Square,
                     "saw" | "sawtooth" => Waveform::Sawtooth,
                     "tri" | "triangle" => Waveform::Triangle,
@@ -1454,29 +1495,33 @@ fn apply_sfxr_fields(
                     }
                 };
             }
-            "base" => params.base_freq = parse_f32(value, line, key)?.clamp(0.0, 1.0),
-            "limit" => params.freq_limit = parse_f32(value, line, key)?.clamp(0.0, 1.0),
-            "ramp" => params.freq_ramp = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
-            "dramp" => params.freq_dramp = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
-            "duty" => params.duty = parse_f32(value, line, key)?.clamp(0.0, 1.0),
-            "duty_ramp" => params.duty_ramp = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
-            "vib" => params.vib_strength = parse_f32(value, line, key)?.clamp(0.0, 1.0),
-            "vib_speed" => params.vib_speed = parse_f32(value, line, key)?.clamp(0.0, 1.0),
-            "vib_delay" => params.vib_delay = parse_f32(value, line, key)?.clamp(0.0, 1.0),
-            "attack" => params.env_attack = parse_f32(value, line, key)?.clamp(0.0, 1.0),
-            "sustain" => params.env_sustain = parse_f32(value, line, key)?.clamp(0.0, 1.0),
-            "decay" => params.env_decay = parse_f32(value, line, key)?.clamp(0.0, 1.0),
-            "punch" => params.env_punch = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
-            "resonance" => params.lpf_resonance = parse_f32(value, line, key)?.clamp(0.0, 1.0),
+            "base" | "b" => params.base_freq = parse_f32(value, line, key)?.clamp(0.0, 1.0),
+            "limit" | "lim" => params.freq_limit = parse_f32(value, line, key)?.clamp(0.0, 1.0),
+            "ramp" | "r" => params.freq_ramp = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
+            "dramp" | "dr" => params.freq_dramp = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
+            "duty" | "du" => params.duty = parse_f32(value, line, key)?.clamp(0.0, 1.0),
+            "duty_ramp" | "dur" => params.duty_ramp = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
+            "vib" | "vi" => params.vib_strength = parse_f32(value, line, key)?.clamp(0.0, 1.0),
+            "vib_speed" | "vs" => params.vib_speed = parse_f32(value, line, key)?.clamp(0.0, 1.0),
+            "vib_delay" | "vd" => params.vib_delay = parse_f32(value, line, key)?.clamp(0.0, 1.0),
+            "attack" | "a" => params.env_attack = parse_f32(value, line, key)?.clamp(0.0, 1.0),
+            "sustain" | "s" => params.env_sustain = parse_f32(value, line, key)?.clamp(0.0, 1.0),
+            "decay" | "d" => params.env_decay = parse_f32(value, line, key)?.clamp(0.0, 1.0),
+            "punch" | "pu" => params.env_punch = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
+            "resonance" | "res" => {
+                params.lpf_resonance = parse_f32(value, line, key)?.clamp(0.0, 1.0)
+            }
             "lpf" => params.lpf_freq = parse_f32(value, line, key)?.clamp(0.0, 1.0),
-            "lpf_ramp" => params.lpf_ramp = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
+            "lpf_ramp" | "lpfr" => params.lpf_ramp = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
             "hpf" => params.hpf_freq = parse_f32(value, line, key)?.clamp(0.0, 1.0),
-            "hpf_ramp" => params.hpf_ramp = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
-            "phaser" => params.pha_offset = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
-            "phaser_ramp" => params.pha_ramp = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
-            "repeat" => params.repeat_speed = parse_f32(value, line, key)?.clamp(0.0, 1.0),
+            "hpf_ramp" | "hpfr" => params.hpf_ramp = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
+            "phaser" | "ph" => params.pha_offset = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
+            "phaser_ramp" | "phr" => {
+                params.pha_ramp = parse_f32(value, line, key)?.clamp(-1.0, 1.0)
+            }
+            "repeat" | "rep" => params.repeat_speed = parse_f32(value, line, key)?.clamp(0.0, 1.0),
             "arp" => params.arp_speed = parse_f32(value, line, key)?.clamp(0.0, 1.0),
-            "arp_mod" => params.arp_mod = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
+            "arp_mod" | "am" => params.arp_mod = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
             unknown => return Err(unknown_field(line, "sfxr", unknown)),
         }
     }
@@ -2341,15 +2386,7 @@ mod tests {
 
     #[test]
     fn all_classic_sfxr_presets_map_to_sound() {
-        for name in [
-            "pickup",
-            "laser",
-            "explosion",
-            "powerup",
-            "hit",
-            "jump",
-            "blip",
-        ] {
+        for name in CLASSIC_SFXR_NAMES {
             let patch = SfxrParams::named(name).unwrap().to_patch();
             let mut player = PatchPlayer::new(patch, 44_100.0);
             let peak = (0..8192)
@@ -2357,6 +2394,43 @@ mod tests {
                 .fold(0.0, f32::max);
             assert!(peak > 0.001, "{name} was silent");
         }
+    }
+
+    #[test]
+    fn classic_sfxr_golf_script_expands_all_presets() {
+        let patch = SynthPatch::from_script(CLASSIC_SFXR_GOLF_SCRIPT).unwrap();
+        assert_eq!(patch.voices.len(), CLASSIC_SFXR_NAMES.len());
+        let mut player = PatchPlayer::new(patch, 44_100.0);
+        let peak = (0..16_384)
+            .map(|_| player.next_sample().abs())
+            .fold(0.0, f32::max);
+        assert!(peak > 0.01);
+        assert!(CLASSIC_SFXR_GOLF_SCRIPT.lines().count() == 1);
+    }
+
+    #[test]
+    fn bare_sfxr_atoms_match_named_preset_outputs() {
+        for name in CLASSIC_SFXR_NAMES {
+            let script_patch = SynthPatch::from_script(name).unwrap();
+            let named_patch = SfxrParams::named(name).unwrap().to_patch();
+            let mut script_player = PatchPlayer::new(script_patch, 44_100.0);
+            let mut named_player = PatchPlayer::new(named_patch, 44_100.0);
+            let script_buffer: Vec<f32> = (0..8192).map(|_| script_player.next_sample()).collect();
+            let named_buffer: Vec<f32> = (0..8192).map(|_| named_player.next_sample()).collect();
+            assert_eq!(script_buffer, named_buffer, "{name} did not round trip");
+        }
+    }
+
+    #[test]
+    fn golfed_sfxr_atoms_accept_short_input_overrides() {
+        let golfed = SynthPatch::from_script("laser ms=9 m=0.01").unwrap();
+        let verbose =
+            SynthPatch::from_script("sfxr preset=laser mutate_seed=9 mutate=0.01").unwrap();
+        let mut golfed_player = PatchPlayer::new(golfed, 44_100.0);
+        let mut verbose_player = PatchPlayer::new(verbose, 44_100.0);
+        let golfed_buffer: Vec<f32> = (0..4096).map(|_| golfed_player.next_sample()).collect();
+        let verbose_buffer: Vec<f32> = (0..4096).map(|_| verbose_player.next_sample()).collect();
+        assert_eq!(golfed_buffer, verbose_buffer);
     }
 
     #[test]

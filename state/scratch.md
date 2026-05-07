@@ -426,3 +426,9 @@ Current slice:
   build patches with `PatchBuilder`, `ControlLane::new`, and `Modulator::lfo`,
   then render whole buffers with `render_patch_mono`,
   `render_patch_interleaved_stereo`, or `render_script_mono`.
+- Current patch-script golf pass: classic sfxr names are now executable script
+  atoms, and statements can be separated with semicolons. The full classic
+  suite is one line: `pickup;laser;explosion;powerup;hit;jump;blip`. Tests prove
+  each atom renders exactly the same buffer as the corresponding named
+  `SfxrParams` patch, and shorthand overrides like `laser ms=9 m=0.01` match the
+  verbose `sfxr preset=laser mutate_seed=9 mutate=0.01` form.
