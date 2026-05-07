@@ -498,3 +498,6 @@ Current slice:
   raymarcher sampling scene-painted Grid-space source fields, then using
   phase-paired flowing triangle noise inside the density function. Borrow that
   architecture and confidence without turning Aquarium into an Aetheria clone.
+- Current fog texture lesson: add domain warping to the Bevy rebuild. Sample a
+  low-frequency noise/flow field, use it as the coordinate offset for another
+  density noise sample, and let that bent domain carry the apparent complexity.

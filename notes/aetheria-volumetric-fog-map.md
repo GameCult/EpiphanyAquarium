@@ -53,6 +53,9 @@ The flow is mostly procedural sampling, not stored 3D advection:
 - The density function samples two low-frequency triangle-noise phases half a
   period apart, weights them with triangular phase windows, and displaces the
   raymarch sample height by their sum.
+- Domain warping is part of the texture grammar: a low-frequency noise/flow
+  field should offset the sampling coordinates of the next noise field, so the
+  density detail bends through space instead of reading as layered wallpaper.
 - It also samples two faster phases at 8x spatial frequency and half the period,
   subtracting them at half amplitude. The result is a cheap layered turbulence
   illusion with continuity across phase handoff.

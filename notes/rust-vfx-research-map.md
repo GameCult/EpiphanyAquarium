@@ -103,6 +103,8 @@ visual flourish to a field:
 - `_NebulaTint` provides material color and density-driven LOD;
 - global and slope flow vectors advect procedural triangle noise;
 - phase-paired noise crossfades continuity through time;
+- domain warping lets one low-frequency noise/flow sample offset the domain of
+  another, turning cheap layered noise into bent volumetric structure;
 - quadratic steps, blue-noise offsets, temporal reprojection, and AABB clipping
   make cheap sampling look expensive.
 
