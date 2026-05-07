@@ -1,9 +1,4 @@
 #import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput
-#import bevy_pbr::{
-    pbr_deferred_types as deferred_types,
-    rgb9e5,
-    utils::octahedral_encode,
-}
 
 struct AquariumRaymarch {
     time: f32,
@@ -545,14 +540,6 @@ fn cs_grid_lighting(@builtin(global_invocation_id) id: vec3u) {
     write_sh(index, l0, l1x, l1y, l1z);
 }
 
-struct DeferredPrepassOutput {
-    @location(0) normal: vec4f,
-    @location(1) motion_vector: vec2f,
-    @location(2) deferred: vec4u,
-    @location(3) deferred_lighting_pass_id: u32,
-    @builtin(frag_depth) depth: f32,
-};
-
 struct SurfaceSample {
     hit: bool,
     kind: f32,
@@ -566,35 +553,12 @@ struct SurfaceSample {
     t: f32,
 };
 
-fn clip_depth(point: vec3f) -> f32 {
-    let clip = field.clip_from_world * vec4f(point, 1.0);
-    return clamp(clip.z / max(clip.w, 0.0001), 0.0, 1.0);
-}
-
 fn motion_vector(point: vec3f) -> vec2f {
     let clip = field.clip_from_world * vec4f(point, 1.0);
     let previous_clip = field.previous_clip_from_world * vec4f(point, 1.0);
     let current_position = clip.xy / max(clip.w, 0.0001);
     let previous_position = previous_clip.xy / max(previous_clip.w, 0.0001);
     return (current_position - previous_position) * vec2f(0.5, -0.5);
-}
-
-fn deferred_flags(unlit: bool) -> u32 {
-    return select(0u, 1u, unlit);
-}
-
-fn pack_deferred_gbuffer(sample: SurfaceSample) -> vec4u {
-    let base_color_srgb = pow(clamp(sample.color, vec3f(0.0), vec3f(1.0)), vec3f(1.0 / 2.2));
-    let base_rough = deferred_types::pack_unorm4x8_(vec4f(base_color_srgb, sample.roughness));
-    var visible_payload = sample.emissive;
-    if (sample.unlit) {
-        visible_payload = max(sample.color, sample.emissive);
-    }
-    let emissive = rgb9e5::vec3_to_rgb9e5_(visible_payload);
-    let props = deferred_types::pack_unorm4x8_(vec4f(0.5, sample.metallic, 1.0, 0.0));
-    let oct_normal = octahedral_encode(normalize(sample.normal));
-    let normal_flags = deferred_types::pack_24bit_normal_and_flags(oct_normal, deferred_flags(sample.unlit));
-    return vec4u(base_rough, emissive, props, normal_flags);
 }
 
 fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> SurfaceSample {
@@ -761,34 +725,6 @@ fn debug_surface_sample(sample: SurfaceSample, uv: vec2f) -> SurfaceSample {
     return debug_sample;
 }
 
-@fragment
-fn fs_deferred_prepass(input: FullscreenVertexOutput) -> DeferredPrepassOutput {
-    let jitter = interleaved_noise(input.position.xy + field.time);
-    let ray_origin = field.camera_position.xyz;
-    let ray_dir = camera_ray(input.uv);
-    let sample = debug_surface_sample(surface_sample(ray_origin, ray_dir, input.uv, jitter), input.uv);
-    if (!sample.hit) {
-        discard;
-    }
-
-    return DeferredPrepassOutput(
-        vec4f(sample.normal * 0.5 + vec3f(0.5), 1.0),
-        motion_vector(sample.point),
-        pack_deferred_gbuffer(sample),
-        1u,
-        clip_depth(sample.point),
-    );
-}
-
-fn aces(color: vec3f) -> vec3f {
-    let a = 2.51;
-    let b = 0.03;
-    let c = 2.43;
-    let d = 0.59;
-    let e = 0.14;
-    return clamp((color * (a * color + b)) / (color * (c * color + d) + e), vec3f(0.0), vec3f(1.0));
-}
-
 fn terrain_hit(ray_origin: vec3f, ray_dir: vec3f, jitter: f32) -> TerrainHit {
     var previous_t = field.depth_near;
     var previous_point = ray_origin + ray_dir * previous_t;
@@ -866,78 +802,10 @@ fn fs_main(input: FullscreenVertexOutput) -> @location(0) vec4f {
     let jitter = interleaved_noise(pixel + field.time);
     let ray_origin = field.camera_position.xyz;
     let ray_dir = camera_ray(input.uv);
-    let terrain = terrain_hit(ray_origin, ray_dir, jitter);
-
-    var best_t = field.depth_far;
-    var best_color = vec3f(0.0);
-    var best_alpha = 0.0;
-    var tested_mask = 0u;
-
-    for (var step = 0u; step < FROXEL_DEPTH; step = step + 1u) {
-        let progress = (f32(step) + 0.5) / f32(FROXEL_DEPTH);
-        let mask = froxel_mask(input.uv, progress) & ~tested_mask;
-        tested_mask |= mask;
-        if (mask == 0u) {
-            continue;
-        }
-        for (var i = 0u; i < 8u; i = i + 1u) {
-            if (f32(i) >= field.body_count || (mask & (1u << i)) == 0u) {
-                continue;
-            }
-            let body = field.bodies[i];
-            let color = field.colors[i];
-            let self_flag = color.w;
-            let radius = body.w;
-            let oc = ray_origin - body.xyz;
-            let b = dot(oc, ray_dir);
-            let c = dot(oc, oc) - radius * radius;
-            let h = b * b - c;
-            if (h < 0.0) {
-                continue;
-            }
-            let root = sqrt(h);
-            let t0 = -b - root;
-            let t1 = -b + root;
-            let hit_t = select(t1, t0, t0 > field.depth_near);
-            if (hit_t <= field.depth_near || hit_t >= best_t || hit_t > field.depth_far) {
-                continue;
-            }
-            let hit = ray_origin + ray_dir * hit_t;
-            let local = (hit - body.xyz) / max(radius, 0.001);
-            let displacement = fbm4(vec4f(local * mix(0.72, 1.12, self_flag), field.time * mix(0.06, 0.16, self_flag))) * mix(0.035, 0.14, self_flag);
-            let displaced_radius = radius * (1.0 + displacement);
-            let displaced_c = dot(oc, oc) - displaced_radius * displaced_radius;
-            let displaced_h = b * b - displaced_c;
-            if (displaced_h < 0.0) {
-                continue;
-            }
-            let displaced_root = sqrt(displaced_h);
-            let displaced_t0 = -b - displaced_root;
-            let displaced_t1 = -b + displaced_root;
-            let displaced_t = select(displaced_t1, displaced_t0, displaced_t0 > field.depth_near);
-            if (displaced_t <= field.depth_near || displaced_t >= best_t || displaced_t > field.depth_far) {
-                continue;
-            }
-            let displaced_hit = ray_origin + ray_dir * displaced_t;
-            let normal = normalize((displaced_hit - body.xyz) / max(displaced_radius, 0.001));
-            let view_dir = normalize(ray_origin - displaced_hit);
-            let fresnel = pow(1.0 - clamp(dot(normal, view_dir), 0.0, 1.0), 4.0);
-            let plasma = pow(max(fbm4(vec4f(local * mix(1.35, 2.15, self_flag), field.time * 0.24)) * 0.5 + 0.5, 0.0), mix(2.4, 5.4, self_flag));
-            let light = sample_sh_lighting(normal, displaced_hit);
-            let chrome = color.rgb * (0.025 + light * (0.36 + fresnel * 0.42)) + light * fresnel * 0.45;
-            let solar = vec3f(4.2, 2.1, 0.55) * (0.8 + plasma * 1.5);
-            best_color = mix(chrome, solar, self_flag) * depth_window_fade(displaced_t);
-            best_alpha = 0.96 * depth_window_fade(displaced_t);
-            best_t = displaced_t;
-        }
+    let sample = debug_surface_sample(surface_sample(ray_origin, ray_dir, input.uv, jitter), input.uv);
+    if (!sample.hit) {
+        return base;
     }
-
-    var field_color = terrain.color * terrain.alpha;
-    var field_alpha = terrain.alpha;
-    if (best_alpha > 0.0 && best_t <= terrain.t) {
-        field_color = best_color * best_alpha;
-        field_alpha = best_alpha;
-    }
-    let mapped = aces(field_color);
-    return vec4f(mix(base.rgb, mapped, clamp(field_alpha, 0.0, 0.96)), 1.0);
+    let alpha = select(0.92, 0.98, sample.kind > 1.5);
+    return vec4f(mix(base.rgb, sample.color, alpha), 1.0);
 }

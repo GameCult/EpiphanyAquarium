@@ -523,3 +523,9 @@ Current slice:
   readable pass. The shader now computes direct lighting from Self's actual
   world position and writes that diegetic shaded result through the unlit
   visible payload, so terminators should radiate away from Self.
+- Current pipeline purge: removed the Bevy deferred/prepass impersonation.
+  The aquarium render node now runs compute for Grid height, brick occupancy,
+  and SH state, then renders `fs_main` straight into the HDR `ViewTarget`
+  before Bevy Bloom and ACES tonemapping. Bevy no longer receives synthetic
+  G-buffer/deferred-lighting data for raymarched surfaces, and no Bevy light
+  components remain in the live aquarium lighting path.

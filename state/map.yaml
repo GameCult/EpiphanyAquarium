@@ -21,9 +21,9 @@ current_model:
     renderer_doctrine: >
       The live renderer is a Rust/WGPU field machine. ECS state feeds custom
       Bevy render graph nodes, compute/storage resources carry Grid-space
-      lighting and occupancy, and raymarched surfaces write Bevy deferred
-      prepass data. Legacy React/WebGL/Tauri surfaces are migration fallback,
-      not the architecture center.
+      lighting and occupancy, and the aquarium raymarch node owns the visible
+      HDR color pass before Bevy bloom/tonemapping. Legacy React/WebGL/Tauri
+      surfaces are migration fallback, not the architecture center.
   legacy_frontend:
     framework: React + Vite + Tauri v2
     status: migration fallback and historical interaction prototype
@@ -85,9 +85,9 @@ interaction_laws:
   - The fitted grid/fog volume is the visibility window: solid bodies, atmospheres, and fog fade at its near/far bounds instead of rendering outside the current grid area of interest.
   - In the Bevy renderer, the Grid remains a solid raymarched heightfield terrain surface. Fog can return later as a separate field pass, but this lean path marches terrain and body solids only.
   - The Bevy visible world must not use traditional mesh geometry for terrain, planets, or cursor probes. Source entities may carry transforms, labels, cache state, and simulation components, but the fullscreen raymarcher owns the visible Grid and bodies.
-  - The Bevy raymarcher must feed Bevy's deferred prepass, not only final color. Raymarched terrain/body hits write depth, normal, motion vector, deferred material data, and deferred lighting pass id into Bevy prepass textures before deferred lighting and TAA consume them.
-  - Surface raymarching must run once per frame. Lighting/brick compute may prepare fields first, but terrain/body raymarching belongs in `fs_deferred_prepass`; final composition consumes stored Bevy prepass/G-buffer data instead of running a second fullscreen raymarch.
-  - In the Bevy raymarcher, non-Self surfaces should not use fake environment fullbright. Self injects radiance into a compact SH froxel cache; previous coefficients decay and propagate through neighbors, and surfaces/atmosphere sample that local lighting field.
+  - The Bevy raymarcher owns the aquarium's visible HDR pass directly. Do not write synthetic raymarched geometry into Bevy's deferred prepass/G-buffer until the contract is deliberately rebuilt and proven; Bevy may host bloom, tonemapping, windowing, and graph scheduling.
+  - Surface raymarching must run once per frame. Lighting/brick compute may prepare fields first, then `fs_main` composites the raymarched Grid/bodies into the HDR view target before Bloom and ACES tonemapping.
+  - In the Bevy raymarcher, non-Self surfaces should not use fake environment fullbright. Self provides the coherent direct-light vector now; future volumetric lighting should come from the aquarium's own Grid/SH/field caches, not Bevy global lights.
   - The Grid atmosphere exists only inside the current radial Grid domain. It uses exponential falloff above the heightfield, fades through a circular mask around the Grid center and near/far volume bounds, and integrates in-scatter/transmittance along the same camera ray before the solid terrain/body composite.
   - SH lighting must be filtered before it reaches fog or surfaces. The compact Bevy path uses trilinear SH sampling, a 32x32x12 Grid-space light volume, softened radial fade, and stable per-pixel march jitter to avoid visible lattice columns.
   - Bevy volumetric lighting is GPU-owned and Grid-space. A custom render node dispatches a compute shader before the fullscreen raymarch; ping-pong storage buffers carry first-order SH coefficients over the moving Grid volume, reproject history through previous Grid center/scale in XY, scatter through neighbors, and receive Self radiance injection.
@@ -95,7 +95,7 @@ interaction_laws:
   - Self solar flare work is parked while sun/planet readability is the target. Keep lighting steady unless a deliberate field-simulation event is being tested behind diagnostics.
   - The Bevy light brick map is dynamic GPU state, not static topology. Rebuild occupancy every frame from current Grid terrain contact, moving body bounds, and Self influence before SH lighting decides which cells get detailed flow.
   - Renderer diagnostics are part of the renderer, not optional developer garnish. Persist a debug mode through CultCache and expose hit coverage, brick occupancy, SH lighting, density, temporal rejection, transmittance, and in-scatter before adding more field complexity.
-  - The current Bevy deferred-prepass raymarch path is the renderer spine. Do not add new fog/beauty passes until that path can prove depth, normals, motion vectors, deferred payload, brick occupancy, SH luminance, and terrain/body hit coverage on demand.
+  - The current Bevy raymarch HDR path is the renderer spine. Do not add new fog/beauty passes until that path can prove hit coverage, brick occupancy, SH luminance, terrain/body shading, and post-stack behavior on demand.
   - The Bevy camera must stay HDR with bloom before ACES tonemapping while body readability is the target; solar emissive energy should spread softly in HDR instead of being clamped or blurred in SDR.
   - Grid terrain and weather are not default HDR emitters. They should enter the deferred payload as lit material/albedo with zero emissive unless a diagnostic mode is deliberately testing glow; otherwise bloom turns the Grid domain into a bright square.
   - Aquarium lighting should be diegetic. The default Bevy world has no global ambient or directional light; Self owns the primary point light and solar emissive output, while ordinary planets and Grid terrain enter the deferred path as non-emissive materials.
@@ -169,7 +169,8 @@ landed:
   - Reduced Bevy atmosphere sampling artifacts by trilinear-filtering SH froxel reads, increasing the compact light grid to 12x7x8, widening the radial domain fade, and jittering terrain/atmosphere ray steps.
   - Moved Bevy SH froxel lighting from CPU/uniform updates to GPU compute. The old fullscreen-material helper was replaced by an Aquarium-specific render node with storage buffers, compute dispatch, and fullscreen raymarch composition in one graph slot.
   - Added the first Bevy renderer truth mode. CultCache persists `epiphany.aquarium.renderer-settings`; F3 cycles final, hit coverage, depth, normals, motion, brick occupancy, and SH luminance modes; WGSL routes those colors through the deferred prepass payload so the debug view validates the real G-buffer path. Bevy `RenderDiagnosticsPlugin` is enabled, with custom scoped pass timings still next.
-  - Added scoped Bevy render diagnostics and the first GPU Grid source field. The render node now records spans for Grid-height generation, light brick occupancy, SH propagation, and deferred raymarch. A 128x128 storage-buffer field stores Grid height, slope, and edge coverage before brick/lighting/raymarch consumers sample it.
+  - Added scoped Bevy render diagnostics and the first GPU Grid source field. The render node now records spans for Grid-height generation, light brick occupancy, SH propagation, and raymarch rendering. A 128x128 storage-buffer field stores Grid height, slope, and edge coverage before brick/lighting/raymarch consumers sample it.
+  - Purged the Bevy deferred-prepass integration from the aquarium renderer. The custom node now computes Grid height, brick occupancy, and SH state, then renders `fs_main` into the HDR `ViewTarget` before Bloom/Tonemapping; no prepass textures, deferred material data, lighting-pass id, or Bevy light components remain in the live path.
   - Removed the Bevy Grid density-history experiment. The renderer no longer allocates that 64x64 buffer, dispatches its compute pass, exposes its debug mode, or feeds it into the prepass; current focus is sun/planet readability.
   - Enabled the Bevy HDR post stack for the native renderer camera: explicit `Hdr`, gentle wide `Bloom`, and `Tonemapping::AcesFitted`.
   - Added `crates/aquarium_synth` as the isolated Rust-native modular synth crate. It owns serializable oscillator/envelope/pitch/filter/phaser/repeat/arpeggio patch primitives, an sfxr-parameter compatibility mapper, and a FunDSP `AudioUnit` adapter; Bevy now calls crate presets for pluck and heartbeat sounds instead of embedding DSP graphs in `main.rs`.
