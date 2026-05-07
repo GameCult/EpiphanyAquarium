@@ -451,3 +451,9 @@ Current slice:
   sfxr-ish voice defaults and a reusable noise template, with tests proving the
   abstracted form renders identically to explicit primitive fields and reduces
   field/byte count versus flat primitive scripts.
+- Current 808 mini-kit target: added `CLASSIC_808_PRIMITIVE_GOLF_SCRIPTS` for
+  kick, snare, clap, closed hat, tom, and cowbell. These scripts use only
+  primitive patch/default/template/voice forms and lean on existing sine/noise/
+  square, pitch ramps, filters, phaser smear, drive, and templates. Tests check
+  primitive-only syntax, recognizable feature heuristics, and readability/golf
+  scores.

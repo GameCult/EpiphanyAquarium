@@ -72,6 +72,35 @@ pub const CLASSIC_SFXR_ABSTRACT_GOLF_SCRIPT: &str = concat!(
     "v w=sin f=78.2334 s=.03832199546 d=.01451247166 h=.1"
 );
 
+pub const CLASSIC_808_NAMES: [&str; 6] = ["kick", "snare", "clap", "hat", "tom", "cowbell"];
+
+pub const CLASSIC_808_PRIMITIVE_GOLF_SCRIPTS: [(&str, &str); 6] = [
+    (
+        "kick",
+        "d w=sin g=.8 drv=.18;v f=58 s=.045 d=.42 pu=.65 pr=-3.8 min=32 l=.85",
+    ),
+    (
+        "snare",
+        "d drv=.12;def n=N w=n nz=.85 h=.45 l=.55;v w=sin f=180 g=.08 s=.02 d=.12 pr=-1.2;v u=N f=140 g=.55 s=.035 d=.2",
+    ),
+    (
+        "clap",
+        "d w=n nz=.95 h=.55 l=.42 g=.22 d=.11 drv=.1;v f=1800 s=.018 ph=.004;v f=2200 s=.022 ph=.008;v f=2600 s=.028 ph=.012",
+    ),
+    (
+        "hat",
+        "d h=.9 l=.24 drv=.05;v w=n f=9000 g=.16 s=.006 d=.055 nz=1;v w=sq f=6800 g=.045 s=.005 d=.04",
+    ),
+    (
+        "tom",
+        "d w=sin g=.55 drv=.12;v f=115 s=.055 d=.34 pu=.28 pr=-1.45 min=62 l=.78",
+    ),
+    (
+        "cowbell",
+        "d w=sq h=.18 l=.82 drv=.16;v f=540 g=.16 s=.05 d=.18 du=.43;v f=800 g=.12 s=.045 d=.16 du=.47",
+    ),
+];
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AudioAnalysisConfig {
     pub sample_rate: f32,
@@ -2856,6 +2885,119 @@ mod tests {
         assert!(abstracted.byte_count < flat.byte_count);
         assert!(CLASSIC_SFXR_ABSTRACT_GOLF_SCRIPT.contains("def "));
         assert!(CLASSIC_SFXR_ABSTRACT_GOLF_SCRIPT.contains("u=N"));
+    }
+
+    #[test]
+    fn classic_808_scripts_use_only_graph_primitives() {
+        for (name, script) in CLASSIC_808_PRIMITIVE_GOLF_SCRIPTS {
+            let patch = SynthPatch::from_script(script).unwrap();
+            assert!(!patch.voices.is_empty(), "{name} produced no voices");
+            for statement in script
+                .split(';')
+                .map(str::trim)
+                .filter(|part| !part.is_empty())
+            {
+                let command = statement.split_whitespace().next().unwrap();
+                assert!(
+                    matches!(
+                        command,
+                        "p" | "patch"
+                            | "d"
+                            | "defaults"
+                            | "def"
+                            | "template"
+                            | "t"
+                            | "v"
+                            | "voice"
+                            | "l"
+                            | "lfo"
+                            | "control"
+                    ),
+                    "{name} used non-primitive command `{command}`"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn classic_808_scripts_have_recognizable_audio_shapes() {
+        for (name, script) in CLASSIC_808_PRIMITIVE_GOLF_SCRIPTS {
+            let buffer = render_script_mono(
+                script,
+                RenderOptions {
+                    duration_seconds: 0.6,
+                    ..RenderOptions::default()
+                },
+            )
+            .unwrap();
+            let analysis = analyze_audio(
+                &buffer,
+                &AudioAnalysisConfig {
+                    fft_size: 256,
+                    hop_size: 256,
+                    mel_band_count: 18,
+                    ..AudioAnalysisConfig::default()
+                },
+            );
+            assert!(analysis.features.peak > 0.01, "{name} was too quiet");
+            assert!(
+                analysis.features.duration_seconds < 0.58,
+                "{name} rang too long"
+            );
+            match name {
+                "kick" => {
+                    assert!(analysis.features.duration_seconds > 0.25);
+                    assert!(analysis.features.spectral_centroid_hz < 450.0);
+                }
+                "snare" | "clap" => {
+                    assert!(
+                        analysis.features.spectral_centroid_hz > 500.0,
+                        "{name} centroid was {}",
+                        analysis.features.spectral_centroid_hz
+                    );
+                    assert!(
+                        analysis.features.zero_crossing_rate > 800.0,
+                        "{name} zcr was {}",
+                        analysis.features.zero_crossing_rate
+                    );
+                }
+                "hat" => {
+                    assert!(analysis.features.duration_seconds < 0.12);
+                    assert!(
+                        analysis.features.zero_crossing_rate > 1200.0,
+                        "{name} zcr was {}",
+                        analysis.features.zero_crossing_rate
+                    );
+                }
+                "tom" => {
+                    assert!(analysis.features.duration_seconds > 0.18);
+                    assert!(analysis.features.spectral_centroid_hz < 650.0);
+                }
+                "cowbell" => {
+                    assert!(analysis.features.zero_crossing_rate > 500.0);
+                    assert!(analysis.features.spectral_centroid_hz > 350.0);
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    #[test]
+    fn classic_808_scripts_score_as_golfable_but_readable() {
+        for (name, script) in CLASSIC_808_PRIMITIVE_GOLF_SCRIPTS {
+            let metrics = patch_script_metrics(script);
+            assert!(metrics.terse_score > 0.35, "{name} was not terse enough");
+            assert!(
+                metrics.readability_score > 0.14,
+                "{name} readability was {}",
+                metrics.readability_score
+            );
+            assert!(
+                metrics.balanced_score > 0.22,
+                "{name} balanced score was {}",
+                metrics.balanced_score
+            );
+        }
     }
 
     #[test]
