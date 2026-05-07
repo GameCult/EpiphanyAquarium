@@ -96,6 +96,51 @@ fn fbm4(p0: vec4f) -> f32 {
     return clamp(value, -1.0, 1.0);
 }
 
+fn hash31(p0: vec3f) -> f32 {
+    var p = fract(p0 * 0.1031);
+    p += dot(p, p.yzx + vec3f(33.33));
+    return fract((p.x + p.y) * p.z) * 2.0 - 1.0;
+}
+
+fn noised3(x: vec3f) -> vec4f {
+    let p = floor(x);
+    let w = fract(x);
+    let u = w * w * w * (w * (w * 6.0 - 15.0) + vec3f(10.0));
+    let du = 30.0 * w * w * (w * (w - vec3f(2.0)) + vec3f(1.0));
+
+    let a = hash31(p + vec3f(0.0, 0.0, 0.0));
+    let b = hash31(p + vec3f(1.0, 0.0, 0.0));
+    let c = hash31(p + vec3f(0.0, 1.0, 0.0));
+    let d = hash31(p + vec3f(1.0, 1.0, 0.0));
+    let e = hash31(p + vec3f(0.0, 0.0, 1.0));
+    let f = hash31(p + vec3f(1.0, 0.0, 1.0));
+    let g = hash31(p + vec3f(0.0, 1.0, 1.0));
+    let h = hash31(p + vec3f(1.0, 1.0, 1.0));
+
+    let k0 = a;
+    let k1 = b - a;
+    let k2 = c - a;
+    let k3 = e - a;
+    let k4 = a - b - c + d;
+    let k5 = a - c - e + g;
+    let k6 = a - b - e + f;
+    let k7 = -a + b + c - d + e - f - g + h;
+    let value = k0
+        + k1 * u.x
+        + k2 * u.y
+        + k3 * u.z
+        + k4 * u.x * u.y
+        + k5 * u.y * u.z
+        + k6 * u.z * u.x
+        + k7 * u.x * u.y * u.z;
+    let gradient = du * vec3f(
+        k1 + k4 * u.y + k6 * u.z + k7 * u.y * u.z,
+        k2 + k5 * u.z + k4 * u.x + k7 * u.z * u.x,
+        k3 + k6 * u.x + k5 * u.y + k7 * u.x * u.y
+    );
+    return vec4f(value, gradient);
+}
+
 fn ridge(value: f32) -> f32 {
     return 1.0 - abs(value * 2.0 - 1.0);
 }
@@ -591,10 +636,27 @@ fn body_displacement(body: vec4f, color: vec4f, point: vec3f) -> f32 {
     let radius = max(body.w, 0.001);
     let self_flag = color.w;
     let local = (point - body.xyz) / radius;
-    let domain_scale = mix(0.72, 1.12, self_flag);
-    let time_scale = mix(0.06, 0.16, self_flag);
-    let amplitude = mix(0.035, 0.14, self_flag);
-    return fbm4(vec4f(local * domain_scale, field.time * time_scale)) * amplitude;
+    let seed = vec3f(
+        dot(body.xyz, vec3f(0.071, 0.113, 0.047)) + color.r * 3.7,
+        dot(body.yzx, vec3f(0.097, -0.061, 0.083)) + color.g * 4.3,
+        dot(body.zxy, vec3f(-0.053, 0.089, 0.127)) + color.b * 5.1
+    );
+    let low_domain = local * mix(0.74, 0.92, self_flag) + seed + vec3f(0.0, field.time * mix(0.018, 0.045, self_flag), 0.0);
+    let low = noised3(low_domain);
+    let warp = low.yzw * mix(0.10, 0.18, self_flag);
+    let warped = local + warp;
+    let first = noised3(warped * mix(1.18, 1.42, self_flag) + seed.yzx + vec3f(field.time * mix(0.012, 0.035, self_flag), 0.0, 0.0)).x;
+    let second = noised3(warped * mix(2.05, 2.46, self_flag) + seed.zxy - vec3f(0.0, 0.0, field.time * mix(0.022, 0.052, self_flag))).x;
+    let amplitude = body_displacement_amplitude(color);
+    return clamp(first * 0.68 + second * 0.32, -1.0, 1.0) * amplitude;
+}
+
+fn body_displacement_amplitude(color: vec4f) -> f32 {
+    return mix(0.035, 0.14, color.w);
+}
+
+fn body_bound_radius(body: vec4f, color: vec4f) -> f32 {
+    return max(body.w, 0.001) * (1.0 + body_displacement_amplitude(color) + 0.02);
 }
 
 fn body_sdf(body: vec4f, color: vec4f, point: vec3f) -> f32 {
@@ -656,8 +718,7 @@ fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> 
             let color = field.colors[i];
             let self_flag = color.w;
             let radius = body.w;
-            let displacement_bound = mix(0.055, 0.18, self_flag);
-            let broad_radius = radius * (1.0 + displacement_bound);
+            let broad_radius = body_bound_radius(body, color);
             let oc = ray_origin - body.xyz;
             let b = dot(oc, ray_dir);
             let c = dot(oc, oc) - broad_radius * broad_radius;

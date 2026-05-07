@@ -27,6 +27,11 @@ Current renderer truth:
   refinement. The broad sphere is only a cheap cull; the visible hit is refined
   against `body_sdf`, and `body_normal` finite-differences that SDF so surface
   detail affects lighting instead of only silhouette.
+- Body displacement now uses a fast Quilez-style 3D value-noise derivative
+  basis. `noised3` returns value plus analytical gradient, which supplies the
+  planet-local domain warp without six extra finite-difference samples.
+  `body_bound_radius` is derived from `body_displacement_amplitude` plus margin,
+  so broad phase remains a conservative contract rather than a shape shortcut.
 
 Current next cut:
 
