@@ -13,12 +13,12 @@
   ],
   "technical_memory": {
     "legacy_web_stack": [
-      "React/Tauri/WebGL knowledge is historical fallback, not the live renderer identity. Keep it only for migration archaeology, visual smoke patterns, and DOM-billboard lessons that survive the Bevy move.",
-      "Crisp text and interaction still matter, but future UI should be a Rust-native diegetic surface backed by CultCache state, not a web panel model trying to sneak back in with nicer shoes.",
-      "Old WebGL buffer habits are allowed to inform WGPU pass design, but the target architecture is Bevy render graph nodes, storage buffers/textures, WGSL, and explicit GPU ownership."
+      "React/Tauri/WebGL knowledge now lives primarily in GameCult/EpiphanyAquarium-Web. Keep it for migration archaeology, visual smoke patterns, DOM-billboard lessons, and interaction grammar that survives into the C# engine.",
+      "Crisp text and interaction still matter, but future UI should be a C# Aquarium-owned diegetic surface backed by CultCache state, not a web panel model trying to sneak back in with nicer shoes.",
+      "Old WebGL buffer habits are allowed to inform field-pass design, but the next target architecture is the Aquarium-owned C# engine line, with GPU buffers/textures and explicit renderer ownership."
     ],
     "rust_bevy_vfx": [
-      "Bevy is now the aquarium's engine host, not a wrapper around a web artifact. Treat ECS entities as source/state anchors and the render graph as the frame machine that turns those anchors into fields, lighting, and final HDR pixels.",
+      "Bevy now lives in GameCult/EpiphanyAquarium-Bevy as a frozen prototype/reference, not the active host. Treat its ECS/render-graph work as salvageable renderer evidence, not as the future architecture by default.",
       "As of 2026-05-07, Bevy/Rust is frozen as prototype/reference, not the future host. The next Aquarium engine target is C# land, likely Stride-scaffolded but Aquarium-owned: use Stride for window/device/input/assets/tooling only where useful, while Aquarium owns render graph, fields, UI, state, and taste.",
       "Prefer custom Bevy render graph nodes for deep renderer work. `FullscreenMaterial` is useful for simple post effects, but Aquarium's raymarch, light propagation, brick occupancy, and field composition need explicit node ordering, bind groups, storage buffers, and texture ownership.",
       "Use Bevy 0.18's rendering improvements as leverage: generalized atmospheric scattering and atmosphere/PBR integration are reference machinery, while the aquarium's local grid fog remains a custom field volume because it is domain-authored, moving, and interaction-coupled.",
@@ -46,6 +46,12 @@
       "Aetheria's lesson is transferable structure: different scenes paint different height/patch/tint/light inputs into a shared raymarcher, then flowing procedural density noise supplies detail. Aquarium should use that confidence without becoming an Aetheria reproduction exercise.",
       "Grid texturing must be world-space. The Bevy Grid frame can move and resize as a visibility window, but line pitch and weather/noise domains sample from absolute world XY so panning the camera reveals terrain instead of dragging a texture sheet.",
       "TAA for Aquarium's noisy fields must be owned by the aquarium renderer when it returns. Do not reintroduce Bevy motion-vector/prepass coupling just to get temporal resolve; store exactly the history and reprojection data the field pass consumes."
+    ],
+    "repository_lineage": [
+      "GameCult/EpiphanyAquarium-Web owns the React/Tauri/WebGL prototype lineage.",
+      "GameCult/EpiphanyAquarium-Bevy owns the frozen Rust/Bevy prototype lineage and keeps its state/notes because the branch doctrine is part of the artifact.",
+      "GameCult/AquariumSynth owns the standalone Rust synth crate extracted with `git subtree split --prefix=crates/aquarium_synth`; the Bevy repo keeps an in-tree copy only for historical build context.",
+      "GameCult/EpiphanyAquarium-Engine is intentionally new history for the C# engine seed. Do not fake old provenance into it."
     ],
     "gpu_compute_specialist": [
       "Think in passes, domains, memory traffic, and synchronization, not object identity. A buffer slot is often labor, not identity; stable identity should come from deterministic world-space domains when state can be derived.",

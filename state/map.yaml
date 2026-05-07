@@ -8,9 +8,23 @@ project:
     audio feedback, motion language, and taste.
 
 current_model:
+  repository_split:
+    status: completed 2026-05-07
+    map: notes/repository-split-map.md
+    original_repo: https://github.com/GameCult/EpiphanyAquarium
+    repos:
+      web: https://github.com/GameCult/EpiphanyAquarium-Web
+      bevy: https://github.com/GameCult/EpiphanyAquarium-Bevy
+      synth: https://github.com/GameCult/AquariumSynth
+      engine: https://github.com/GameCult/EpiphanyAquarium-Engine
+    doctrine: >
+      Each pivot now has its own public repo and readable lineage. The original
+      repo remains archive/meta; future active work should choose the repo that
+      matches the actual system being changed instead of piling every era into
+      one historical junk drawer.
   migration_target:
     engine: C# Aquarium-owned engine core, likely Stride-scaffolded
-    path: pending
+    path: https://github.com/GameCult/EpiphanyAquarium-Engine
     migration_map: notes/rust-branch-retrospective.md
     communication: CultNet contract
     persistence: CultCache contract
@@ -26,7 +40,7 @@ current_model:
       scaffolding; Aquarium owns the visible frame.
   bevy_prototype:
     engine: Bevy 0.18 Rust host
-    path: bevy-aquarium
+    path: https://github.com/GameCult/EpiphanyAquarium-Bevy
     status: frozen prototype and reference implementation
     map: notes/bevy-migration-map.md
     retrospective: notes/rust-branch-retrospective.md
@@ -36,6 +50,7 @@ current_model:
       as algorithm/reference material.
   legacy_frontend:
     framework: React + Vite + Tauri v2
+    path: https://github.com/GameCult/EpiphanyAquarium-Web
     status: migration fallback and historical interaction prototype
     primary_files:
       - src/App.tsx

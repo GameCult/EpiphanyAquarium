@@ -2,6 +2,12 @@
 
 Current pivot truth:
 
+- The repo split is complete. Public repos:
+  - `https://github.com/GameCult/EpiphanyAquarium-Web`
+  - `https://github.com/GameCult/EpiphanyAquarium-Bevy`
+  - `https://github.com/GameCult/AquariumSynth`
+  - `https://github.com/GameCult/EpiphanyAquarium-Engine`
+- Split map lives at `notes/repository-split-map.md`.
 - The Bevy/Rust branch is frozen as prototype/reference, not the future host.
 - The next target is C# land: use Stride as scaffolding and parts donor where
   useful, but build an Aquarium-owned engine core that owns the frame, render
@@ -69,7 +75,8 @@ Frozen Bevy renderer truth:
 
 Current next cut:
 
-- Start the C# host/scaffold map before writing renderer code.
+- Start the C# host/scaffold map in `GameCult/EpiphanyAquarium-Engine` before
+  writing renderer code.
 - Keep Bevy changes limited to documentation, salvage extraction, or
   build-preservation unless explicitly reactivated.
 - If a shell terminal is added later in the new host, make it a separate loudly
