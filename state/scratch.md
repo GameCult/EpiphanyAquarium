@@ -444,3 +444,10 @@ Current slice:
   names, named commands, line room, moderate statement density, and reasonable
   numeric precision; tests prove readable spelling scores higher on readability
   while the primitive golf scripts still score higher on terseness.
+- Current compiler-abstraction pass: patch parsing now has a small compiler
+  context. `d`/`defaults` sets voice defaults, `def`/`template` stores reusable
+  voice field bundles, and `u=` borrows templates into voices before explicit
+  fields override them. `CLASSIC_SFXR_ABSTRACT_GOLF_SCRIPT` demonstrates shared
+  sfxr-ish voice defaults and a reusable noise template, with tests proving the
+  abstracted form renders identically to explicit primitive fields and reduces
+  field/byte count versus flat primitive scripts.

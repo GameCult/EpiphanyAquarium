@@ -60,6 +60,18 @@ pub const CLASSIC_SFXR_PRIMITIVE_GOLF_SCRIPTS: [(&str, &str); 7] = [
     ),
 ];
 
+pub const CLASSIC_SFXR_ABSTRACT_GOLF_SCRIPT: &str = concat!(
+    "d g=.22 drv=.12;",
+    "def name=N w=n nz=.35;",
+    "v w=sq f=148.7934 s=.01451247166 d=.1306122449 pu=.45 drv=.201 ad=.081844 am=1.116121255;",
+    "v w=saw f=229.0554 s=.08185941043 d=.07346938776 pr=.703836 du=.31 dur=.056 h=.04 ph=.0001458 phr=-.000504;",
+    "p r=.174744;v u=N f=20 s=.1907029478 d=.293877551 pu=.52 pr=.0320625 ph=-.0008712 phr=-.00035 vi=.11 vh=3.4112 drv=.2136 tr=.0264 th=13.04;",
+    "p r=.11315;v w=sin f=57.5946 s=.1306122449 d=.1777777778 pr=-.208544 vi=.09 vh=3.9602 tr=.0216 th=13.94;",
+    "v u=N f=51.4206 s=.00566893424 d=.09070294785 pr=1.050624 h=.12;",
+    "v w=sq f=78.2334 s=.1097505669 d=.07346938776 pr=-.101156 du=.38 l=.72 h=.05;",
+    "v w=sin f=78.2334 s=.03832199546 d=.01451247166 h=.1"
+);
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AudioAnalysisConfig {
     pub sample_rate: f32,
@@ -1194,14 +1206,14 @@ impl fmt::Display for PatchScriptError {
 impl Error for PatchScriptError {}
 
 pub fn parse_patch_script(script: &str) -> Result<SynthPatch, PatchScriptError> {
-    let mut patch = SynthPatch::new(Vec::new());
+    let mut compiler = PatchScriptCompiler::default();
     for (line_number, statement) in script_statements_with_lines(script) {
-        parse_patch_statement(&mut patch, statement, line_number)?;
+        compiler.parse_statement(statement, line_number)?;
     }
-    if patch.voices.is_empty() {
+    if compiler.patch.voices.is_empty() {
         return Err(PatchScriptError::new(0, "script produced no voices"));
     }
-    Ok(patch)
+    Ok(compiler.patch)
 }
 
 fn script_statements(script: &str) -> Vec<&str> {
@@ -1229,48 +1241,176 @@ fn script_statements_with_lines(script: &str) -> Vec<(usize, &str)> {
         .collect()
 }
 
-fn parse_patch_statement(
-    patch: &mut SynthPatch,
-    statement: &str,
-    line_number: usize,
-) -> Result<(), PatchScriptError> {
-    let mut parts = statement.split_whitespace();
-    let Some(command) = parts.next() else {
-        return Ok(());
-    };
-    let fields = parse_fields(parts, line_number)?;
-    match command {
-        name if SfxrParams::named(name).is_some() => {
-            let mut params = SfxrParams::named(name).expect("checked by match guard");
-            apply_sfxr_fields(&mut params, &fields, line_number)?;
-            append_sfxr_patch(patch, params);
-        }
-        "patch" | "p" => apply_patch_fields(patch, &fields, line_number)?,
-        "lfo" | "control" | "l" => patch
-            .controls
-            .push(control_lane_from_fields(&fields, line_number)?),
-        "voice" | "v" => patch.voices.push(voice_from_fields(&fields, line_number)?),
-        "sfxr" | "s" => {
-            let mut params = if let Some(name) =
-                field_value(&fields, "preset").or_else(|| field_value(&fields, "p"))
-            {
-                SfxrParams::named(name).ok_or_else(|| {
-                    PatchScriptError::new(line_number, format!("unknown sfxr preset `{name}`"))
-                })?
-            } else {
-                SfxrParams::default()
-            };
-            apply_sfxr_fields(&mut params, &fields, line_number)?;
-            append_sfxr_patch(patch, params);
-        }
-        unknown => {
-            return Err(PatchScriptError::new(
-                line_number,
-                format!("unknown command `{unknown}`"),
-            ));
+struct PatchScriptCompiler {
+    patch: SynthPatch,
+    voice_defaults: Vec<(String, String)>,
+    voice_templates: Vec<(String, Vec<(String, String)>)>,
+}
+
+impl Default for PatchScriptCompiler {
+    fn default() -> Self {
+        Self {
+            patch: SynthPatch::new(Vec::new()),
+            voice_defaults: Vec::new(),
+            voice_templates: Vec::new(),
         }
     }
-    Ok(())
+}
+
+impl PatchScriptCompiler {
+    fn parse_statement(
+        &mut self,
+        statement: &str,
+        line_number: usize,
+    ) -> Result<(), PatchScriptError> {
+        let mut parts = statement.split_whitespace();
+        let Some(command) = parts.next() else {
+            return Ok(());
+        };
+        let fields = parse_fields(parts, line_number)?;
+        match command {
+            name if SfxrParams::named(name).is_some() => {
+                let mut params = SfxrParams::named(name).expect("checked by match guard");
+                apply_sfxr_fields(&mut params, &fields, line_number)?;
+                append_sfxr_patch(&mut self.patch, params);
+            }
+            "patch" | "p" => apply_patch_fields(&mut self.patch, &fields, line_number)?,
+            "defaults" | "default" | "d" => self.apply_voice_defaults(&fields),
+            "def" | "template" | "t" => self.define_voice_template(&fields, line_number)?,
+            "lfo" | "control" | "l" => self
+                .patch
+                .controls
+                .push(control_lane_from_fields(&fields, line_number)?),
+            "voice" | "v" => {
+                let merged = self.voice_fields(&fields, line_number)?;
+                let borrowed = borrowed_fields(&merged);
+                self.patch
+                    .voices
+                    .push(voice_from_fields(&borrowed, line_number)?);
+            }
+            "sfxr" | "s" => {
+                let mut params = if let Some(name) =
+                    field_value(&fields, "preset").or_else(|| field_value(&fields, "p"))
+                {
+                    SfxrParams::named(name).ok_or_else(|| {
+                        PatchScriptError::new(line_number, format!("unknown sfxr preset `{name}`"))
+                    })?
+                } else {
+                    SfxrParams::default()
+                };
+                apply_sfxr_fields(&mut params, &fields, line_number)?;
+                append_sfxr_patch(&mut self.patch, params);
+            }
+            unknown => {
+                return Err(PatchScriptError::new(
+                    line_number,
+                    format!("unknown command `{unknown}`"),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_voice_defaults(&mut self, fields: &[(&str, &str)]) {
+        merge_owned_fields(&mut self.voice_defaults, fields);
+    }
+
+    fn define_voice_template(
+        &mut self,
+        fields: &[(&str, &str)],
+        line: usize,
+    ) -> Result<(), PatchScriptError> {
+        let name = field_value(fields, "name")
+            .or_else(|| field_value(fields, "n"))
+            .ok_or_else(|| PatchScriptError::new(line, "template needs name"))?;
+        let mut template = self
+            .voice_templates
+            .iter()
+            .find(|(candidate, _)| candidate == name)
+            .map(|(_, fields)| fields.clone())
+            .unwrap_or_default();
+        let fields_without_name: Vec<(&str, &str)> = fields
+            .iter()
+            .copied()
+            .filter(|(key, _)| !matches!(*key, "name" | "n"))
+            .collect();
+        merge_owned_fields(&mut template, &fields_without_name);
+        upsert_owned_template(&mut self.voice_templates, name, template);
+        Ok(())
+    }
+
+    fn voice_fields(
+        &self,
+        fields: &[(&str, &str)],
+        line: usize,
+    ) -> Result<Vec<(String, String)>, PatchScriptError> {
+        let mut merged = self.voice_defaults.clone();
+        if let Some(names) = field_value_any(fields, &["use", "u"]) {
+            for name in names
+                .split(',')
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+            {
+                let (_, template) = self
+                    .voice_templates
+                    .iter()
+                    .find(|(candidate, _)| candidate == name)
+                    .ok_or_else(|| {
+                        PatchScriptError::new(line, format!("unknown voice template `{name}`"))
+                    })?;
+                merge_owned_pairs(&mut merged, template);
+            }
+        }
+        let explicit: Vec<(&str, &str)> = fields
+            .iter()
+            .copied()
+            .filter(|(key, _)| !matches!(*key, "use" | "u"))
+            .collect();
+        merge_owned_fields(&mut merged, &explicit);
+        Ok(merged)
+    }
+}
+
+fn upsert_owned_template(
+    templates: &mut Vec<(String, Vec<(String, String)>)>,
+    name: &str,
+    fields: Vec<(String, String)>,
+) {
+    if let Some((_, existing)) = templates
+        .iter_mut()
+        .find(|(candidate, _)| candidate == name)
+    {
+        *existing = fields;
+    } else {
+        templates.push((name.to_owned(), fields));
+    }
+}
+
+fn merge_owned_pairs(target: &mut Vec<(String, String)>, fields: &[(String, String)]) {
+    for (key, value) in fields {
+        upsert_owned_field(target, key, value);
+    }
+}
+
+fn merge_owned_fields(target: &mut Vec<(String, String)>, fields: &[(&str, &str)]) {
+    for (key, value) in fields {
+        upsert_owned_field(target, key, value);
+    }
+}
+
+fn upsert_owned_field(target: &mut Vec<(String, String)>, key: &str, value: &str) {
+    if let Some((_, existing)) = target.iter_mut().find(|(candidate, _)| candidate == key) {
+        *existing = value.to_owned();
+    } else {
+        target.push((key.to_owned(), value.to_owned()));
+    }
+}
+
+fn borrowed_fields(fields: &[(String, String)]) -> Vec<(&str, &str)> {
+    fields
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect()
 }
 
 fn append_sfxr_patch(patch: &mut SynthPatch, params: SfxrParams) {
@@ -2681,6 +2821,41 @@ mod tests {
                 metrics.balanced_score
             );
         }
+    }
+
+    #[test]
+    fn voice_defaults_and_templates_abstract_common_structure() {
+        let abstracted = SynthPatch::from_script(
+            "d g=.22 drv=.12;def name=N w=n nz=.35;v u=N f=51.4206 s=.00566893424 d=.09070294785 pr=1.050624 h=.12",
+        )
+        .unwrap();
+        let explicit = SynthPatch::from_script(
+            "v w=n f=51.4206 g=.22 s=.00566893424 d=.09070294785 pr=1.050624 h=.12 nz=.35 drv=.12",
+        )
+        .unwrap();
+        let mut abstracted_player = PatchPlayer::new(abstracted, 44_100.0);
+        let mut explicit_player = PatchPlayer::new(explicit, 44_100.0);
+        let abstracted_buffer: Vec<f32> =
+            (0..8192).map(|_| abstracted_player.next_sample()).collect();
+        let explicit_buffer: Vec<f32> = (0..8192).map(|_| explicit_player.next_sample()).collect();
+        assert_eq!(abstracted_buffer, explicit_buffer);
+    }
+
+    #[test]
+    fn abstract_golf_script_borrows_compiler_structure() {
+        let patch = SynthPatch::from_script(CLASSIC_SFXR_ABSTRACT_GOLF_SCRIPT).unwrap();
+        assert_eq!(patch.voices.len(), CLASSIC_SFXR_NAMES.len());
+        let flat_script = CLASSIC_SFXR_PRIMITIVE_GOLF_SCRIPTS
+            .iter()
+            .map(|(_, script)| *script)
+            .collect::<Vec<_>>()
+            .join(";");
+        let abstracted = patch_script_metrics(CLASSIC_SFXR_ABSTRACT_GOLF_SCRIPT);
+        let flat = patch_script_metrics(&flat_script);
+        assert!(abstracted.field_count < flat.field_count);
+        assert!(abstracted.byte_count < flat.byte_count);
+        assert!(CLASSIC_SFXR_ABSTRACT_GOLF_SCRIPT.contains("def "));
+        assert!(CLASSIC_SFXR_ABSTRACT_GOLF_SCRIPT.contains("u=N"));
     }
 
     #[test]
