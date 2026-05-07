@@ -314,6 +314,38 @@ fn sample_sh_lighting(normal: vec3f, point: vec3f) -> vec3f {
     return max(lit, vec3f(0.0)) * edge_fade;
 }
 
+fn self_body() -> vec4f {
+    for (var body_index = 0u; body_index < 8u; body_index = body_index + 1u) {
+        if (f32(body_index) >= field.body_count) {
+            break;
+        }
+        if (field.colors[body_index].w > 0.5) {
+            return field.bodies[body_index];
+        }
+    }
+    return vec4f(field.grid_center, grid_height(field.grid_center) + 4.0, 1.25);
+}
+
+fn direct_self_light(point: vec3f, normal: vec3f) -> vec3f {
+    let sun = self_body();
+    let to_sun = sun.xyz - point;
+    let distance = max(length(to_sun), 0.001);
+    let light_dir = to_sun / distance;
+    let ndotl = max(dot(normalize(normal), light_dir), 0.0);
+    let surface_distance = max(distance - sun.w, 0.25);
+    let attenuation = 1.0 / (1.0 + surface_distance * surface_distance * 0.028);
+    let visibility = smoothstep(0.0, 0.18, ndotl);
+    return vec3f(5.8, 3.25, 1.05) * ndotl * visibility * attenuation;
+}
+
+fn shade_diegetic(albedo: vec3f, point: vec3f, normal: vec3f, roughness: f32) -> vec3f {
+    let direct = direct_self_light(point, normal);
+    let view_dir = normalize(field.camera_position.xyz - point);
+    let fresnel = pow(1.0 - clamp(dot(normalize(normal), view_dir), 0.0, 1.0), 4.0);
+    let soft_rim = fresnel * roughness * 0.035;
+    return albedo * direct + albedo * soft_rim;
+}
+
 fn interleaved_noise(pixel: vec2f) -> f32 {
     return fract(52.9829189 * fract(dot(floor(pixel), vec2f(0.06711056, 0.00583715))));
 }
@@ -588,9 +620,11 @@ fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> 
         sample.kind = 1.0;
         sample.point = point;
         sample.normal = grid_normal_from_sample(field_sample);
-        sample.color = clamp(terrain.color + vec3f(0.82, 0.92, 0.84) * lines * 0.12, vec3f(0.0), vec3f(0.82));
-        sample.emissive = vec3f(0.0);
-        sample.unlit = false;
+        let albedo = clamp(terrain.color + vec3f(0.82, 0.92, 0.84) * lines * 0.12, vec3f(0.0), vec3f(0.82));
+        let shaded = shade_diegetic(albedo, point, sample.normal, 0.82);
+        sample.color = shaded;
+        sample.emissive = shaded;
+        sample.unlit = true;
         sample.roughness = 0.82;
         sample.t = terrain.t;
     }
@@ -652,11 +686,12 @@ fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> 
             sample.kind = 2.0;
             sample.point = point;
             sample.normal = normal;
-            sample.color = mix(albedo, vec3f(1.0, 0.76, 0.32), self_flag);
-            sample.emissive = solar * self_flag;
-            sample.unlit = false;
-            sample.roughness = mix(0.18, 0.38, self_flag);
-            sample.metallic = 1.0 - self_flag * 0.45;
+            let shaded = shade_diegetic(albedo, point, normal, 0.74);
+            sample.color = mix(shaded, solar, self_flag);
+            sample.emissive = mix(shaded, solar, self_flag);
+            sample.unlit = true;
+            sample.roughness = mix(0.74, 0.42, self_flag);
+            sample.metallic = 0.0;
             sample.t = displaced_t;
         }
     }

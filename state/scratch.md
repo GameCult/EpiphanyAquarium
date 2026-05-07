@@ -514,3 +514,12 @@ Current slice:
   child entity, and the raymarched planet path no longer marks ordinary planets
   unlit or emissive. Non-Self bodies are deferred materials; Self is the solar
   emitter.
+- Current light-readability correction: non-Self planets are no longer black
+  metallic mirror balls. They are rough dielectric deferred materials so the
+  lit hemisphere should point toward Self instead of showing camera-dependent
+  studio-like specular dots.
+- Current light-direction correction: the raymarched Grid and non-Self bodies
+  no longer trust Bevy deferred point-light reconstruction for their first
+  readable pass. The shader now computes direct lighting from Self's actual
+  world position and writes that diegetic shaded result through the unlit
+  visible payload, so terminators should radiate away from Self.
