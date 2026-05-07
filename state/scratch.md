@@ -465,8 +465,10 @@ Current slice:
   routing abstraction rather than a genre button.
 - Current synth performance pass: added `crates/aquarium_synth/examples/voice_capacity.rs`
   as a release-mode benchmark for preallocated `PatchPlayer::render_mono`
-  buffer filling. Warmed local single-thread result at 44.1 kHz for two-second
-  buffers: simple plucks stay around 400-500 estimated realtime voices, colored
-  formant voices around 200-260, and heavy wobble/FM/formant basses around
-  100-120. Practical game budgets should stay well below parity and keep fills
-  off the audio callback thread.
+  buffer filling, then optimized the hot path by compiling modulators into
+  target-indexed groups and evaluating patch-level control buses once per
+  sample instead of once per voice per target. Warmed local single-thread result
+  at 44.1 kHz for two-second buffers: simple plucks now sit around 900-1100
+  estimated realtime voices, colored formant voices around 350-450, and heavy
+  wobble/FM/formant basses around 240-290. Practical game budgets should stay
+  well below parity and keep fills off the audio callback thread.

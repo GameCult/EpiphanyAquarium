@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::{error::Error, fmt};
 
 const DEFAULT_SAMPLE_RATE: f32 = 44_100.0;
+const MOD_TARGET_COUNT: usize = 10;
 
 pub const PATCH_SCRIPT_EXAMPLE: &str = r#"
 # One command per line. Comments start with #.
@@ -651,6 +652,23 @@ pub enum ModTarget {
     Fold,
     FormantMix,
     FmIndex,
+}
+
+impl ModTarget {
+    fn index(self) -> usize {
+        match self {
+            ModTarget::Gain => 0,
+            ModTarget::Pitch => 1,
+            ModTarget::Duty => 2,
+            ModTarget::LowPass => 3,
+            ModTarget::HighPass => 4,
+            ModTarget::Noise => 5,
+            ModTarget::Drive => 6,
+            ModTarget::Fold => 7,
+            ModTarget::FormantMix => 8,
+            ModTarget::FmIndex => 9,
+        }
+    }
 }
 
 pub const MOD_TARGET_NAMES: [(&str, ModTarget); 10] = [
@@ -1459,8 +1477,17 @@ impl PatchScriptCompiler {
         for (key, value) in fields {
             if matches!(
                 *key,
-                "hz" | "rate" | "wave" | "w" | "phase" | "ph" | "bias" | "b" | "name" | "n"
-                    | "to" | "targets"
+                "hz" | "rate"
+                    | "wave"
+                    | "w"
+                    | "phase"
+                    | "ph"
+                    | "bias"
+                    | "b"
+                    | "name"
+                    | "n"
+                    | "to"
+                    | "targets"
             ) {
                 continue;
             }
@@ -1655,8 +1682,10 @@ fn control_lane_from_fields(
             .ok_or_else(|| PatchScriptError::new(line, "control lane needs target"))?,
         line,
     )?;
-    let waveform =
-        parse_mod_waveform(field_value_any(fields, &["wave", "w"]).unwrap_or("sine"), line)?;
+    let waveform = parse_mod_waveform(
+        field_value_any(fields, &["wave", "w"]).unwrap_or("sine"),
+        line,
+    )?;
     let frequency_hz = parse_optional_f32_any(fields, &["hz", "rate"], line)?.unwrap_or(1.0);
     let depth = parse_optional_f32_any(fields, &["depth", "d"], line)?.unwrap_or(0.0);
     let phase = parse_optional_f32_any(fields, &["phase", "ph"], line)?.unwrap_or(0.0);
@@ -2143,6 +2172,7 @@ impl AudioUnit for PatchUnit {
 pub struct PatchPlayer {
     patch: SynthPatch,
     voices: Vec<VoiceState>,
+    control_modulators: [Vec<RuntimeModulator>; MOD_TARGET_COUNT],
     sample_rate: f32,
     sample_index: u64,
     seed: u64,
@@ -2152,6 +2182,7 @@ impl PatchPlayer {
     pub fn new(patch: SynthPatch, sample_rate: f32) -> Self {
         let mut player = Self {
             voices: Vec::new(),
+            control_modulators: grouped_control_modulators(&patch.controls),
             patch,
             sample_rate,
             sample_index: 0,
@@ -2188,14 +2219,10 @@ impl PatchPlayer {
         };
         let mut value = 0.0;
         let sample_rate = self.sample_rate;
+        let patch_mods = self.patch_modulation(repeat_age);
         for (voice, state) in self.patch.voices.iter().zip(self.voices.iter_mut()) {
-            value += state.next_sample(
-                voice,
-                &self.patch.controls,
-                repeat_age,
-                sample_rate,
-                self.seed,
-            ) * voice.gain;
+            value += state.next_sample(voice, &patch_mods, repeat_age, sample_rate, self.seed)
+                * voice.gain;
         }
         value *= self.patch.gain;
         self.sample_index = self.sample_index.saturating_add(1);
@@ -2221,6 +2248,48 @@ impl PatchPlayer {
             }
         }
     }
+
+    fn patch_modulation(&self, age: f32) -> [f32; MOD_TARGET_COUNT] {
+        let mut values = [0.0; MOD_TARGET_COUNT];
+        for (target_index, modulators) in self.control_modulators.iter().enumerate() {
+            values[target_index] = modulator_sum(modulators, age, self.seed);
+        }
+        values
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RuntimeModulator {
+    modulator: Modulator,
+    seed_salt: u64,
+}
+
+fn grouped_control_modulators(
+    controls: &[ControlLane],
+) -> [Vec<RuntimeModulator>; MOD_TARGET_COUNT] {
+    let mut grouped = empty_runtime_modulator_groups();
+    for control in controls {
+        grouped[control.modulator.target.index()].push(RuntimeModulator {
+            modulator: control.modulator,
+            seed_salt: stable_name_hash(&control.name),
+        });
+    }
+    grouped
+}
+
+fn grouped_voice_modulators(modulators: &[Modulator]) -> [Vec<RuntimeModulator>; MOD_TARGET_COUNT] {
+    let mut grouped = empty_runtime_modulator_groups();
+    for modulator in modulators {
+        grouped[modulator.target.index()].push(RuntimeModulator {
+            modulator: *modulator,
+            seed_salt: 0,
+        });
+    }
+    grouped
+}
+
+fn empty_runtime_modulator_groups() -> [Vec<RuntimeModulator>; MOD_TARGET_COUNT] {
+    std::array::from_fn(|_| Vec::new())
 }
 
 #[derive(Clone, Debug)]
@@ -2235,6 +2304,7 @@ struct VoiceState {
     phaser_cursor: usize,
     phaser_buffer: Vec<f32>,
     formants: Vec<FormantState>,
+    modulators: [Vec<RuntimeModulator>; MOD_TARGET_COUNT],
 }
 
 impl VoiceState {
@@ -2254,13 +2324,14 @@ impl VoiceState {
                 .iter()
                 .map(|formant| FormantState::new(*formant))
                 .collect(),
+            modulators: grouped_voice_modulators(&voice.modulators),
         }
     }
 
     fn next_sample(
         &mut self,
         voice: &Voice,
-        controls: &[ControlLane],
+        patch_mods: &[f32; MOD_TARGET_COUNT],
         age: f32,
         sample_rate: f32,
         seed: u64,
@@ -2271,7 +2342,7 @@ impl VoiceState {
             return 0.0;
         }
 
-        let pitch_mod = mod_amount(&voice.modulators, controls, ModTarget::Pitch, age, seed);
+        let pitch_mod = self.mod_amount(patch_mods, ModTarget::Pitch, age, seed);
         let mut frequency = frequency_at(voice, age) * 2.0_f32.powf(pitch_mod);
         if let Some(arpeggio) = voice.arpeggio {
             if age >= arpeggio.delay_seconds {
@@ -2280,7 +2351,7 @@ impl VoiceState {
         }
         let duty = (voice.oscillator.duty
             + voice.duty.ramp_per_second * age
-            + mod_amount(&voice.modulators, controls, ModTarget::Duty, age, seed))
+            + self.mod_amount(patch_mods, ModTarget::Duty, age, seed))
         .clamp(0.02, 0.98);
         let previous_phase = self.phase;
         self.phase = (self.phase + frequency / sample_rate).fract();
@@ -2288,8 +2359,9 @@ impl VoiceState {
         if self.phase < previous_phase {
             self.noise_epoch = self.noise_epoch.wrapping_add(1);
         }
-        let fm_index_mod =
-            mod_amount(&voice.modulators, controls, ModTarget::FmIndex, age, seed).max(0.0);
+        let fm_index_mod = self
+            .mod_amount(patch_mods, ModTarget::FmIndex, age, seed)
+            .max(0.0);
         let mut fm = voice.fm;
         fm.index += fm_index_mod;
         let phase = self.phase + voice.oscillator.phase + fm_phase_offset(fm, self.fm_phase, age);
@@ -2299,40 +2371,43 @@ impl VoiceState {
             duty,
             seed ^ self.noise_epoch as u64,
         );
-        sample = self.color(voice, controls, sample, age, seed);
-        sample = self.filter(modulated_filter(voice, controls, age, seed), sample, age);
-        sample = self.formants(voice, controls, sample, sample_rate, age, seed);
+        sample = self.color(voice, patch_mods, sample, age, seed);
+        sample = self.filter(
+            self.modulated_filter(voice, patch_mods, age, seed),
+            sample,
+            age,
+        );
+        sample = self.formants(voice, patch_mods, sample, sample_rate, age, seed);
         sample = self.phaser(voice.phaser, sample, age, sample_rate);
-        let gain_mod =
-            (1.0 + mod_amount(&voice.modulators, controls, ModTarget::Gain, age, seed)).max(0.0);
+        let gain_mod = (1.0 + self.mod_amount(patch_mods, ModTarget::Gain, age, seed)).max(0.0);
         sample * envelope * gain_mod
     }
 
     fn color(
         &self,
         voice: &Voice,
-        controls: &[ControlLane],
+        patch_mods: &[f32; MOD_TARGET_COUNT],
         sample: f32,
         age: f32,
         seed: u64,
     ) -> f32 {
         let mut value = sample;
         let noise_mix = (voice.color.noise_mix
-            + mod_amount(&voice.modulators, controls, ModTarget::Noise, age, seed))
+            + self.mod_amount(patch_mods, ModTarget::Noise, age, seed))
         .clamp(0.0, 1.0);
         if noise_mix > 0.0 {
             let noise = hash_noise(seed ^ self.sample_counter, self.noise_epoch);
             value = value * (1.0 - noise_mix) + noise * noise_mix;
         }
         let drive_amount = (voice.color.drive
-            + mod_amount(&voice.modulators, controls, ModTarget::Drive, age, seed))
+            + self.mod_amount(patch_mods, ModTarget::Drive, age, seed))
         .clamp(0.0, 1.0);
         if drive_amount > 0.0 {
             let drive = 1.0 + drive_amount * 12.0;
             value = (value * drive).tanh() / drive.tanh();
         }
         let fold_amount = (voice.color.fold
-            + mod_amount(&voice.modulators, controls, ModTarget::Fold, age, seed))
+            + self.mod_amount(patch_mods, ModTarget::Fold, age, seed))
         .clamp(0.0, 1.0);
         if fold_amount > 0.0 {
             value = wavefold(value * (1.0 + fold_amount * 3.5));
@@ -2385,20 +2460,14 @@ impl VoiceState {
     fn formants(
         &mut self,
         voice: &Voice,
-        controls: &[ControlLane],
+        patch_mods: &[f32; MOD_TARGET_COUNT],
         sample: f32,
         sample_rate: f32,
         age: f32,
         seed: u64,
     ) -> f32 {
         let mix = (voice.color.formant_mix
-            + mod_amount(
-                &voice.modulators,
-                controls,
-                ModTarget::FormantMix,
-                age,
-                seed,
-            ))
+            + self.mod_amount(patch_mods, ModTarget::FormantMix, age, seed))
         .clamp(0.0, 1.0);
         if mix <= 0.0 || self.formants.is_empty() {
             return sample;
@@ -2411,6 +2480,34 @@ impl VoiceState {
         }
         let resonant = resonant / gain_sum.max(0.001);
         sample * (1.0 - mix) + resonant * mix
+    }
+
+    fn modulated_filter(
+        &self,
+        voice: &Voice,
+        patch_mods: &[f32; MOD_TARGET_COUNT],
+        age: f32,
+        seed: u64,
+    ) -> Filter {
+        let mut filter = voice.filter;
+        filter.low_pass = (filter.low_pass
+            + self.mod_amount(patch_mods, ModTarget::LowPass, age, seed))
+        .clamp(0.0, 1.0);
+        filter.high_pass = (filter.high_pass
+            + self.mod_amount(patch_mods, ModTarget::HighPass, age, seed))
+        .clamp(0.0, 1.0);
+        filter
+    }
+
+    fn mod_amount(
+        &self,
+        patch_mods: &[f32; MOD_TARGET_COUNT],
+        target: ModTarget,
+        age: f32,
+        seed: u64,
+    ) -> f32 {
+        let index = target.index();
+        patch_mods[index] + modulator_sum(&self.modulators[index], age, seed)
     }
 }
 
@@ -2601,39 +2698,14 @@ fn frequency_at(voice: &Voice, age: f32) -> f32 {
         .clamp(10.0, 22_000.0)
 }
 
-fn modulated_filter(voice: &Voice, controls: &[ControlLane], age: f32, seed: u64) -> Filter {
-    let mut filter = voice.filter;
-    filter.low_pass = (filter.low_pass
-        + mod_amount(&voice.modulators, controls, ModTarget::LowPass, age, seed))
-    .clamp(0.0, 1.0);
-    filter.high_pass = (filter.high_pass
-        + mod_amount(&voice.modulators, controls, ModTarget::HighPass, age, seed))
-    .clamp(0.0, 1.0);
-    filter
-}
-
-fn mod_amount(
-    modulators: &[Modulator],
-    controls: &[ControlLane],
-    target: ModTarget,
-    age: f32,
-    seed: u64,
-) -> f32 {
-    let local: f32 = modulators
-        .iter()
-        .filter(|modulator| modulator.target == target)
-        .map(|modulator| modulator.bias + modulator.depth * modulator_value(*modulator, age, seed))
-        .sum();
-    let patch: f32 = controls
-        .iter()
-        .filter(|control| control.modulator.target == target)
-        .map(|control| {
-            let salt = stable_name_hash(&control.name);
-            control.modulator.bias
-                + control.modulator.depth * modulator_value(control.modulator, age, seed ^ salt)
-        })
-        .sum();
-    local + patch
+fn modulator_sum(modulators: &[RuntimeModulator], age: f32, seed: u64) -> f32 {
+    let mut amount = 0.0;
+    for runtime in modulators {
+        let modulator = runtime.modulator;
+        amount += modulator.bias
+            + modulator.depth * modulator_value(modulator, age, seed ^ runtime.seed_salt);
+    }
+    amount
 }
 
 fn modulator_value(modulator: Modulator, age: f32, seed: u64) -> f32 {

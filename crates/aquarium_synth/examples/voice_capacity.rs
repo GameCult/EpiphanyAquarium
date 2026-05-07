@@ -1,6 +1,4 @@
-use aquarium_synth::{
-    PatchPlayer, RenderOptions, SynthPatch, Voice, presets, render_script_mono,
-};
+use aquarium_synth::{PatchPlayer, RenderOptions, SynthPatch, Voice, presets, render_script_mono};
 use std::time::{Duration, Instant};
 
 const SAMPLE_RATE: f32 = 44_100.0;
@@ -33,7 +31,9 @@ fn main() {
 
     println!("sample_rate_hz,{SAMPLE_RATE}");
     println!("duration_seconds,{DURATION_SECONDS}");
-    println!("case,voices,best_ms,median_ms,best_speedup_x,median_speedup_x,estimated_realtime_voices");
+    println!(
+        "case,voices,best_ms,median_ms,best_speedup_x,median_speedup_x,estimated_realtime_voices"
+    );
     for case in cases {
         for voices in [1, 2, 4, 8, 16, 32, 64, 128, 256] {
             let patch = stack_patch(case.patch.clone(), voices);
@@ -68,7 +68,10 @@ fn main() {
         },
     )
     .expect("script benchmark renders");
-    eprintln!("parse_plus_render_ms,{:.3}", start.elapsed().as_secs_f64() * 1000.0);
+    eprintln!(
+        "parse_plus_render_ms,{:.3}",
+        start.elapsed().as_secs_f64() * 1000.0
+    );
 }
 
 struct BenchResult {
