@@ -35,6 +35,7 @@
       "The native renderer camera is explicitly HDR and uses gentle wide `Bloom` before `Tonemapping::AcesFitted`. Preserve that ordering while tuning sun/planet materials; solar emissive energy should spread softly in HDR before ACES compresses it.",
       "`E:\\Projects\\Aetheria-Economy\\Recordings\\image_094_0010.png` is a courage reference, not a pixel-clone target: horizon-scale blue/teal nebula sheets, dark volumetric depth, sparse HDR stardust, thin white grid instrumentation, and warm solar anchors are achievable with disciplined cheap fields.",
       "Aetheria's lesson is transferable structure: different scenes paint different height/patch/tint/light inputs into a shared raymarcher, then flowing procedural density noise supplies detail. Aquarium should use that confidence without becoming an Aetheria reproduction exercise.",
+      "Grid texturing must be world-space. The Bevy Grid frame can move and resize as a visibility window, but line pitch and weather/noise domains sample from absolute world XY so panning the camera reveals terrain instead of dragging a texture sheet.",
       "TAA only helps Aquarium's noisy fields if raymarched surfaces write correct depth and motion vectors. Camera cuts, Grid scale jumps, and hot reload rehydration should reset temporal history through explicit persisted state."
     ],
     "gpu_compute_specialist": [

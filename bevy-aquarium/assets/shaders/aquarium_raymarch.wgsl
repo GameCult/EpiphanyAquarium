@@ -70,6 +70,8 @@ const SH_L0_OFFSET: u32 = 0u;
 const SH_L1X_OFFSET: u32 = LIGHT_GRID_COUNT;
 const SH_L1Y_OFFSET: u32 = LIGHT_GRID_COUNT * 2u;
 const SH_L1Z_OFFSET: u32 = LIGHT_GRID_COUNT * 3u;
+const GRID_WEATHER_WORLD_SCALE: f32 = 42.0;
+const GRID_LINE_WORLD_CELL: f32 = 2.0;
 
 struct TerrainHit {
     color: vec3f,
@@ -99,6 +101,39 @@ fn fbm4(p0: vec4f) -> f32 {
         amplitude *= 0.52;
     }
     return clamp(value, -1.0, 1.0);
+}
+
+fn ridge(value: f32) -> f32 {
+    return 1.0 - abs(value * 2.0 - 1.0);
+}
+
+fn grid_weather_color(xy: vec2f, height: f32) -> vec3f {
+    let local = grid_local(xy);
+    let radius = length(local);
+    let edge = grid_edge_fade(xy);
+    let world_domain = xy / GRID_WEATHER_WORLD_SCALE;
+    let low_warp = vec2f(
+        noise4(vec4f(world_domain * 1.35, height * 0.10, field.time * 0.018)),
+        noise4(vec4f(world_domain.yx * 1.17 + vec2f(4.7, -2.3), height * 0.08, field.time * -0.014)),
+    ) * 0.36;
+    let drift = vec2f(0.018, -0.011) * field.time;
+    let warped = world_domain + low_warp + drift;
+    let sheet = pow(clamp(fbm4(vec4f(warped * 2.65, height * 0.12, field.time * 0.025)) * 0.5 + 0.5, 0.0, 1.0), 1.25);
+    let fine_warp = vec2f(
+        noise4(vec4f(warped * 4.8 + vec2f(1.9, 7.1), height * 0.18, field.time * 0.041)),
+        noise4(vec4f(warped.yx * 4.2 + vec2f(-3.4, 5.6), height * 0.16, field.time * -0.036)),
+    ) * 0.075;
+    let filament_noise = fbm4(vec4f((warped + fine_warp) * 9.5, height * 0.24, field.time * 0.052)) * 0.5 + 0.5;
+    let filament = pow(clamp(ridge(filament_noise), 0.0, 1.0), 3.4);
+    let horizon_dark = smoothstep(0.52, 1.02, radius);
+    let deep = vec3f(0.006, 0.026, 0.045);
+    let blue = vec3f(0.025, 0.20, 0.34);
+    let teal = vec3f(0.09, 0.68, 0.62);
+    let green = vec3f(0.55, 0.92, 0.36);
+    var color = mix(deep, mix(blue, teal, sheet), edge);
+    color += green * filament * edge * 0.34;
+    color *= mix(1.0, 0.22, horizon_dark);
+    return color;
 }
 
 fn power_pulse(distance_value: f32, radius: f32, power: f32) -> f32 {
@@ -170,8 +205,8 @@ fn grid_normal_from_sample(sample: vec4f) -> vec3f {
 }
 
 fn grid_line_factor(xy: vec2f) -> f32 {
-    let cell = max(field.grid_half_extent / 36.0, 0.22);
-    let grid = abs(fract((xy - field.grid_center) / cell) - vec2f(0.5));
+    let cell = GRID_LINE_WORLD_CELL;
+    let grid = abs(fract(xy / cell) - vec2f(0.5));
     let line = 1.0 - smoothstep(0.018, 0.042, min(grid.x, grid.y) * cell);
     return line * grid_edge_fade(xy);
 }
@@ -548,12 +583,13 @@ fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> 
     if (terrain.alpha > 0.0) {
         let point = ray_origin + ray_dir * terrain.t;
         let field_sample = grid_sample(point.xy);
+        let lines = grid_line_factor(point.xy);
         sample.hit = true;
         sample.kind = 1.0;
         sample.point = point;
         sample.normal = grid_normal_from_sample(field_sample);
-        sample.color = mix(vec3f(0.015, 0.18, 0.16), vec3f(0.58, 1.0, 0.84), grid_line_factor(point.xy));
-        sample.emissive = max(terrain.color, sample.color * 0.28);
+        sample.color = terrain.color + vec3f(0.95, 1.0, 0.88) * lines * 0.30;
+        sample.emissive = max(terrain.color * 0.62, sample.color * 0.18);
         sample.unlit = true;
         sample.roughness = 0.82;
         sample.t = terrain.t;
@@ -748,8 +784,8 @@ fn terrain_hit(ray_origin: vec3f, ray_dir: vec3f, jitter: f32) -> TerrainHit {
             let edge_fade = grid_edge_fade(plane_point.xy) * depth_window_fade(plane_t);
             if (plane_t > field.depth_near && plane_t < field.depth_far && edge_fade > 0.0) {
                 let lines = grid_line_factor(plane_point.xy);
-                let base = mix(vec3f(0.012, 0.09, 0.085), vec3f(0.50, 0.92, 0.78), lines);
-                let alpha = clamp(edge_fade * (0.18 + lines * 0.58), 0.0, 0.74);
+                let base = grid_weather_color(plane_point.xy, 0.0) + vec3f(0.95, 1.0, 0.86) * lines * 0.58;
+                let alpha = clamp(edge_fade * (0.16 + lines * 0.64), 0.0, 0.78);
                 return TerrainHit(base * edge_fade, alpha, plane_t);
             }
         }
@@ -782,9 +818,10 @@ fn terrain_hit(ray_origin: vec3f, ray_dir: vec3f, jitter: f32) -> TerrainHit {
     let lines = grid_line_factor(surface_point.xy);
     let field_energy = clamp(abs(height) * 1.15, 0.0, 1.0);
     let light = sample_sh_lighting(normal, surface_point);
-    let grid_base = mix(vec3f(0.015, 0.18, 0.16), vec3f(0.58, 1.0, 0.84), lines);
+    let weather = grid_weather_color(surface_point.xy, height);
+    let grid_base = weather + vec3f(0.95, 1.0, 0.86) * lines * (0.52 + field_energy * 0.18);
     let hot = mix(grid_base, vec3f(1.0, 0.58, 0.24), field_energy * 0.62);
-    let lit = hot * edge_fade * (light * (0.34 + fresnel * 0.35) + lines * 0.035);
+    let lit = hot * edge_fade * (vec3f(0.10) + light * (0.26 + fresnel * 0.28) + lines * 0.11);
     let alpha = clamp(edge_fade * (0.22 + lines * 0.58 + field_energy * 0.22 + fresnel * 0.12), 0.0, 0.88);
     return TerrainHit(lit, alpha, surface_t);
 }

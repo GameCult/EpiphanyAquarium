@@ -501,3 +501,6 @@ Current slice:
 - Current fog texture lesson: add domain warping to the Bevy rebuild. Sample a
   low-frequency noise/flow field, use it as the coordinate offset for another
   density noise sample, and let that bent domain carry the apparent complexity.
+- Current Grid texturing correction: the Bevy shader now anchors grid line pitch
+  and weather/noise domains to absolute world XY. The moving Grid frame only
+  clips/fades visibility; it must not drag or rescale the texture domain.
