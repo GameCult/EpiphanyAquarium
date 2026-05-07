@@ -401,18 +401,11 @@ Current slice:
   complex frame buffer, spectrum buffer, and mel band edges. Use this analyzer
   from worker/buffer-generation tooling; do not run analysis on the realtime
   audio callback thread.
-- Current renderer pass: added a 64x64 GPU grid-density-history field over the moving
-  Grid domain. `cs_update_grid_density_history` ping-pongs density/history/rejection
-  samples after Grid-height generation and before brick/SH/deferred raymarch.
-  F3 now includes `grid-density-history`, showing blue retained density, orange
-  rejection, and purple invalid reprojection. Runtime smoke reached first
-  frames without WGPU validation failure after keeping read/write storage usage
-  exclusive to compute and sampling only the read slice in the render pass.
-- Current renderer follow-through: renamed the misleading fog-history surface to
-  Grid density history and made the live `fs_deferred_prepass` consume it. The
-  prepass now integrates a compact volumetric segment to the nearest
-  terrain/body hit, applying SH-lit in-scatter and transmittance from the Grid
-  density source before packing the deferred payload.
+- Current renderer correction: removed the 64x64 Grid density-history buffer,
+  its compute pass, bind slots, debug mode, and the compact atmosphere segment
+  that consumed it. The renderer is back to the simple live spine: Grid height,
+  light bricks/SH, and raymarched solid terrain/bodies. Planets now get stronger
+  chrome/rim response, while Self gets a hotter solar emissive surface.
 - Current audio continuation: `aquarium_synth` now has realtime-facing buffer
   fill methods on `PatchPlayer` (`render_mono`, `render_interleaved_stereo`) and
   first-class scriptable modulation lanes. `voice` scripts can use

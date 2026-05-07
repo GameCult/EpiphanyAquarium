@@ -42,10 +42,6 @@ struct GridHeightField {
     samples: array<vec4f>,
 };
 
-struct GridDensityHistory {
-    samples: array<vec4f>,
-};
-
 @group(0) @binding(0) var in_texture: texture_2d<f32>;
 @group(0) @binding(1) var in_sampler: sampler;
 @group(0) @binding(2) var<uniform> field: AquariumRaymarch;
@@ -54,13 +50,8 @@ struct GridDensityHistory {
 @group(0) @binding(5) var<storage, read_write> next_sh_volume: ShVolume;
 @group(0) @binding(6) var<storage, read_write> light_bricks: BrickMap;
 @group(0) @binding(7) var<storage, read_write> grid_height_field: GridHeightField;
-@group(0) @binding(8) var<storage, read> read_grid_density_history: GridDensityHistory;
-@group(0) @binding(9) var<storage, read_write> next_grid_density_history: GridDensityHistory;
 
 const GRID_FIELD_SIZE: u32 = 128u;
-const GRID_DENSITY_HISTORY_WIDTH: u32 = 64u;
-const GRID_DENSITY_HISTORY_HEIGHT: u32 = 64u;
-const GRID_DENSITY_HISTORY_COUNT: u32 = GRID_DENSITY_HISTORY_WIDTH * GRID_DENSITY_HISTORY_HEIGHT;
 const FROXEL_WIDTH: u32 = 16u;
 const FROXEL_HEIGHT: u32 = 9u;
 const FROXEL_DEPTH: u32 = 16u;
@@ -157,10 +148,6 @@ fn grid_field_index(x: u32, y: u32) -> u32 {
     return y * GRID_FIELD_SIZE + x;
 }
 
-fn grid_density_history_index(x: u32, y: u32) -> u32 {
-    return y * GRID_DENSITY_HISTORY_WIDTH + x;
-}
-
 fn grid_height(xy: vec2f) -> f32 {
     return grid_sample(xy).x;
 }
@@ -181,33 +168,6 @@ fn grid_sample(xy: vec2f) -> vec4f {
 fn grid_normal_from_sample(sample: vec4f) -> vec3f {
     let cell_world = max((field.grid_half_extent * 2.0) / f32(GRID_FIELD_SIZE - 1u), 0.001);
     return normalize(vec3f(-sample.y, -sample.z, cell_world * 2.0));
-}
-
-fn grid_density_history_density_at(local: vec2f) -> vec4f {
-    let uv = clamp(local * 0.5 + vec2f(0.5), vec2f(0.0), vec2f(1.0));
-    let p = uv * vec2f(f32(GRID_DENSITY_HISTORY_WIDTH - 1u), f32(GRID_DENSITY_HISTORY_HEIGHT - 1u));
-    let base = vec2u(floor(p));
-    let next = min(base + vec2u(1u), vec2u(GRID_DENSITY_HISTORY_WIDTH - 1u, GRID_DENSITY_HISTORY_HEIGHT - 1u));
-    let f = fract(p);
-    let s00 = read_grid_density_history.samples[grid_density_history_index(base.x, base.y)];
-    let s10 = read_grid_density_history.samples[grid_density_history_index(next.x, base.y)];
-    let s01 = read_grid_density_history.samples[grid_density_history_index(base.x, next.y)];
-    let s11 = read_grid_density_history.samples[grid_density_history_index(next.x, next.y)];
-    return mix(mix(s00, s10, f.x), mix(s01, s11, f.x), f.y);
-}
-
-fn debug_grid_density_history_at(xy: vec2f) -> vec4f {
-    let local = grid_local(xy);
-    let uv = clamp(local * 0.5 + vec2f(0.5), vec2f(0.0), vec2f(1.0));
-    let p = uv * vec2f(f32(GRID_DENSITY_HISTORY_WIDTH - 1u), f32(GRID_DENSITY_HISTORY_HEIGHT - 1u));
-    let base = vec2u(floor(p));
-    let next = min(base + vec2u(1u), vec2u(GRID_DENSITY_HISTORY_WIDTH - 1u, GRID_DENSITY_HISTORY_HEIGHT - 1u));
-    let f = fract(p);
-    let s00 = read_grid_density_history.samples[grid_density_history_index(base.x, base.y)];
-    let s10 = read_grid_density_history.samples[grid_density_history_index(next.x, base.y)];
-    let s01 = read_grid_density_history.samples[grid_density_history_index(base.x, next.y)];
-    let s11 = read_grid_density_history.samples[grid_density_history_index(next.x, next.y)];
-    return mix(mix(s00, s10, f.x), mix(s01, s11, f.x), f.y);
 }
 
 fn grid_line_factor(xy: vec2f) -> f32 {
@@ -374,14 +334,6 @@ fn flare_impulse(phase: f32) -> f32 {
     return rise * fall;
 }
 
-fn grid_density_source(xy: vec2f) -> f32 {
-    let sample = grid_sample(xy);
-    let slope = length(sample.yz) / max((field.grid_half_extent * 2.0) / f32(GRID_FIELD_SIZE - 1u), 0.001);
-    let cup = smoothstep(0.02, 0.9, max(-sample.x, 0.0));
-    let slope_lift = smoothstep(0.05, 0.45, slope);
-    return clamp(sample.w * (0.025 + cup * 0.55 + slope_lift * 0.18), 0.0, 1.0);
-}
-
 @compute @workgroup_size(64)
 fn cs_update_grid_height(@builtin(global_invocation_id) id: vec3u) {
     let index = id.x;
@@ -402,30 +354,6 @@ fn cs_update_grid_height(@builtin(global_invocation_id) id: vec3u) {
     let hy = analytic_grid_height(xy + vec2f(0.0, cell_world)) - analytic_grid_height(xy - vec2f(0.0, cell_world));
     let edge = grid_edge_fade(xy);
     grid_height_field.samples[index] = vec4f(height, hx, hy, edge);
-}
-
-@compute @workgroup_size(64)
-fn cs_update_grid_density_history(@builtin(global_invocation_id) id: vec3u) {
-    let index = id.x;
-    if (index >= GRID_DENSITY_HISTORY_COUNT) {
-        return;
-    }
-    let y = index / GRID_DENSITY_HISTORY_WIDTH;
-    let x = index - y * GRID_DENSITY_HISTORY_WIDTH;
-    let uv = vec2f(
-        (f32(x) + 0.5) / f32(GRID_DENSITY_HISTORY_WIDTH),
-        (f32(y) + 0.5) / f32(GRID_DENSITY_HISTORY_HEIGHT),
-    );
-    let local = uv * 2.0 - vec2f(1.0);
-    let xy = field.grid_center + local * field.grid_half_extent;
-    let density = grid_density_source(xy);
-    let previous_local = (xy - field.previous_grid_center) / max(field.previous_grid_half_extent, 0.001);
-    let previous = grid_density_history_density_at(previous_local);
-    let inside_previous = select(0.0, 1.0, all(abs(previous_local) <= vec2f(1.0)));
-    let rejection = clamp(abs(density - previous.x) * 2.2 + (1.0 - inside_previous), 0.0, 1.0);
-    let history_weight = (1.0 - rejection) * exp(-field.delta_time * 1.8);
-    let blended = mix(density, previous.x, clamp(history_weight, 0.0, 0.92));
-    next_grid_density_history.samples[index] = vec4f(blended, density, rejection, inside_previous);
 }
 
 @compute @workgroup_size(64)
@@ -586,50 +514,6 @@ fn cs_grid_lighting(@builtin(global_invocation_id) id: vec3u) {
     write_sh(index, l0, l1x, l1y, l1z);
 }
 
-fn atmosphere_sample(point: vec3f) -> f32 {
-    let edge_fade = grid_edge_fade(point.xy);
-    if (edge_fade <= 0.0) {
-        return 0.0;
-    }
-    let surface_height = grid_height(point.xy);
-    let height_above_grid = max(point.z - surface_height, 0.0);
-    let source = debug_grid_density_history_at(point.xy);
-    let retained_density = max(source.x, source.y * 0.45);
-    let vertical_falloff = exp(-height_above_grid * 0.62);
-    let floor_haze = exp(-height_above_grid * 1.85) * 0.008;
-    return (floor_haze + retained_density * vertical_falloff * 0.055) * edge_fade;
-}
-
-struct AtmosphereIntegration {
-    inscatter: vec3f,
-    transmittance: f32,
-};
-
-fn integrate_atmosphere_to_surface(ray_origin: vec3f, ray_dir: vec3f, end_t: f32, jitter: f32) -> AtmosphereIntegration {
-    var inscatter = vec3f(0.0);
-    var transmittance = 1.0;
-    var previous_t = field.depth_near;
-    let clamped_end = min(end_t, field.depth_far);
-    for (var i = 1u; i <= 18u; i = i + 1u) {
-        let progress = clamp((f32(i) - 0.5 + jitter) / 18.0, 0.0, 1.0);
-        let t = field.depth_near + progress * progress * max(clamped_end - field.depth_near, 0.0);
-        let step_size = max(t - previous_t, 0.0001);
-        previous_t = t;
-        let point = ray_origin + ray_dir * t;
-        let density = atmosphere_sample(point) * depth_window_fade(t);
-        let light = sample_sh_lighting(vec3f(0.0, 0.0, 1.0), point);
-        let extinction = density * 2.9;
-        let step_transmittance = exp(-extinction * step_size);
-        let phase_tint = vec3f(0.50, 0.64, 0.82);
-        inscatter += transmittance * light * density * step_size * phase_tint;
-        transmittance *= step_transmittance;
-        if (transmittance < 0.025) {
-            break;
-        }
-    }
-    return AtmosphereIntegration(inscatter, transmittance);
-}
-
 struct DeferredPrepassOutput {
     @location(0) normal: vec4f,
     @location(1) motion_vector: vec2f,
@@ -760,23 +644,22 @@ fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> 
             let point = ray_origin + ray_dir * displaced_t;
             let normal = normalize((point - body.xyz) / max(displaced_radius, 0.001));
             let plasma = pow(max(fbm4(vec4f(local * mix(1.35, 2.15, self_flag), field.time * 0.24)) * 0.5 + 0.5, 0.0), mix(2.4, 5.4, self_flag));
+            let view_dir = normalize(ray_origin - point);
+            let fresnel = pow(1.0 - clamp(dot(normal, view_dir), 0.0, 1.0), 3.6);
+            let light = sample_sh_lighting(normal, point);
+            let chrome = color.rgb * (0.16 + light * (0.54 + fresnel * 0.45)) + vec3f(0.72, 0.88, 1.0) * fresnel * 0.32;
+            let solar = vec3f(5.4, 2.35, 0.58) * (0.72 + plasma * 1.75) + vec3f(1.0, 0.72, 0.24) * fresnel * 1.8;
             sample.hit = true;
             sample.kind = 2.0;
             sample.point = point;
             sample.normal = normal;
-            sample.color = color.rgb;
-            sample.emissive = max(color.rgb * 0.9, vec3f(4.2, 2.1, 0.55) * self_flag * (0.6 + plasma));
+            sample.color = mix(chrome, solar, self_flag);
+            sample.emissive = mix(chrome * 0.62, solar * 1.25, self_flag);
             sample.unlit = true;
             sample.roughness = mix(0.18, 0.38, self_flag);
             sample.metallic = 1.0 - self_flag * 0.45;
             sample.t = displaced_t;
         }
-    }
-
-    if (sample.hit) {
-        let atmosphere = integrate_atmosphere_to_surface(ray_origin, ray_dir, sample.t, jitter);
-        sample.color = sample.color * atmosphere.transmittance + atmosphere.inscatter;
-        sample.emissive = sample.emissive * atmosphere.transmittance + atmosphere.inscatter;
     }
 
     return sample;
@@ -803,14 +686,6 @@ fn debug_sh_luminance(sample: SurfaceSample) -> f32 {
     return clamp(dot(light, vec3f(0.2126, 0.7152, 0.0722)) / 4.0, 0.0, 1.0);
 }
 
-fn debug_grid_density_history(sample: SurfaceSample) -> vec3f {
-    let history = debug_grid_density_history_at(sample.point.xy);
-    let density_color = vec3f(0.08, 0.42, 0.95) * history.x;
-    let rejection_color = vec3f(1.0, 0.22, 0.05) * history.z;
-    let invalid_color = vec3f(0.5, 0.0, 0.9) * (1.0 - history.w);
-    return density_color + rejection_color + invalid_color;
-}
-
 fn debug_color(sample: SurfaceSample, uv: vec2f) -> vec3f {
     let mode = debug_mode();
     if (mode == 1u) {
@@ -834,9 +709,6 @@ fn debug_color(sample: SurfaceSample, uv: vec2f) -> vec3f {
     if (mode == 6u) {
         let luminance = debug_sh_luminance(sample);
         return mix(vec3f(0.01, 0.015, 0.04), vec3f(1.0, 0.76, 0.18), luminance);
-    }
-    if (mode == 7u) {
-        return debug_grid_density_history(sample);
     }
     return sample.color;
 }
@@ -1032,25 +904,6 @@ fn fs_main(input: FullscreenVertexOutput) -> @location(0) vec4f {
         field_color = best_color * best_alpha;
         field_alpha = best_alpha;
     }
-    var atmosphere = vec3f(0.0);
-    var transmittance = 1.0;
-    var previous_t = field.depth_near;
-    let atmosphere_end = min(min(terrain.t, best_t), field.depth_far);
-    for (var i = 1u; i <= 24u; i = i + 1u) {
-        let progress = clamp((f32(i) - 0.5 + jitter) / 24.0, 0.0, 1.0);
-        let t = field.depth_near + progress * progress * max(atmosphere_end - field.depth_near, 0.0);
-        let step_size = max(t - previous_t, 0.0001);
-        previous_t = t;
-        let point = ray_origin + ray_dir * t;
-        let density = atmosphere_sample(point) * depth_window_fade(t);
-        let light = sample_sh_lighting(vec3f(0.0, 0.0, 1.0), point);
-        let extinction = density * 2.8;
-        let step_transmittance = exp(-extinction * step_size);
-        atmosphere += transmittance * light * density * step_size * vec3f(0.48, 0.62, 0.78);
-        transmittance *= step_transmittance;
-    }
-    field_color = field_color * transmittance + atmosphere;
-    field_alpha = max(field_alpha, clamp(1.0 - transmittance, 0.0, 0.62));
     let mapped = aces(field_color);
     return vec4f(mix(base.rgb, mapped, clamp(field_alpha, 0.0, 0.96)), 1.0);
 }

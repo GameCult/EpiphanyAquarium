@@ -60,17 +60,12 @@ Current pass:
   ECS entities carry simulation, cache, label, audio, and renderer-source state.
 - Grid height is now an explicit GPU source field generated before brick
   occupancy, SH lighting, and the deferred raymarch sample it.
-- Grid density history is now a tiny GPU temporal source field over the moving
-  Grid domain. It ping-pongs 64x64 density/rejection samples before the
-  deferred raymarch; F3 includes a `grid-density-history` truth mode so history
-  validity is visible.
-- The live deferred-prepass raymarch consumes that source volumetrically:
-  camera rays integrate transmittance and SH-lit in-scatter up to the
-  terrain/body hit instead of leaving the 2D history as a detached debug toy.
+- The density-history experiment is removed; the current renderer is back to
+  making the sun and planets read before field complexity returns.
 
 Next renderer pass:
 
 - Move Grid height from a storage-buffer field to a packed source texture once
   density, tint, and flow join it.
-- Replace the toy Grid density source with Aetheria-style density, tint, and
-  flow fields.
+- Improve raymarched body material response, solar surface motion, and planet
+  readability before adding more field buffers.

@@ -121,7 +121,7 @@ next_actions:
   - Split the current `aquarium_light_compute` timing/labels into separately accountable brick occupancy and SH propagation scopes.
   - After diagnostics, move Grid height from duplicated analytic shader logic into an explicit Grid-domain source texture sampled by terrain, SH lighting, future fog, and stardust.
   - After Grid source textures, restore fog as a small temporal Aetheria-style path with current/history targets and visible history rejection before introducing sparse froxels/octrees.
-  - Replace the toy temporal Grid density source with Aetheria-style Grid density/tint/flow textures.
+  - Improve raymarched body material response, solar surface motion, and planet readability before adding more field buffers.
   - Port Aetheria nebula source textures/settings into Bevy as explicit Grid-domain resources before rebuilding full fog.
   - Rebuild stardust as a GPU worker-slot lattice over moving Grid-space cells, using deterministic world hashes for identity.
 
@@ -158,8 +158,7 @@ landed:
   - Moved Bevy SH froxel lighting from CPU/uniform updates to GPU compute. The old fullscreen-material helper was replaced by an Aquarium-specific render node with storage buffers, compute dispatch, and fullscreen raymarch composition in one graph slot.
   - Added the first Bevy renderer truth mode. CultCache persists `epiphany.aquarium.renderer-settings`; F3 cycles final, hit coverage, depth, normals, motion, brick occupancy, and SH luminance modes; WGSL routes those colors through the deferred prepass payload so the debug view validates the real G-buffer path. Bevy `RenderDiagnosticsPlugin` is enabled, with custom scoped pass timings still next.
   - Added scoped Bevy render diagnostics and the first GPU Grid source field. The render node now records spans for Grid-height generation, light brick occupancy, SH propagation, and deferred raymarch. A 128x128 storage-buffer field stores Grid height, slope, and edge coverage before brick/lighting/raymarch consumers sample it.
-  - Added the first temporal Bevy grid-density-history field. A compute pass ping-pongs 64x64 Grid-domain density/history/rejection samples, reprojects through previous Grid center/scale, and F3 exposes a `grid-density-history` truth view.
-  - Fed Grid density history into the live Bevy deferred prepass. The raymarch now integrates a compact volumetric segment to the nearest terrain/body hit, using SH lighting for in-scatter and density-history transmittance before packing the G-buffer payload.
+  - Removed the Bevy Grid density-history experiment. The renderer no longer allocates that 64x64 buffer, dispatches its compute pass, exposes its debug mode, or feeds it into the prepass; current focus is sun/planet readability.
   - Added `crates/aquarium_synth` as the isolated Rust-native modular synth crate. It owns serializable oscillator/envelope/pitch/filter/phaser/repeat/arpeggio patch primitives, an sfxr-parameter compatibility mapper, and a FunDSP `AudioUnit` adapter; Bevy now calls crate presets for pluck and heartbeat sounds instead of embedding DSP graphs in `main.rs`.
   - Expanded `aquarium_synth` toward the actual sfxr/modular target. The crate now exposes all classic named sfxr families (`pickup`, `laser`, `explosion`, `powerup`, `hit`, `jump`, `blip`), seeded mutation, and a line-oriented patch script that can combine raw modular `voice` commands with `sfxr preset=...` commands.
   - Anchored `aquarium_synth` sfxr compatibility tests to the original `sfxr` crate as dev-only ground truth. Integration tests render seeded sfxr presets through the reference generator, map the same `Sample` fields into `SfxrParams`, render the modular path, and compare duration/RMS/attack/zero-crossing features.
