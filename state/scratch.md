@@ -432,3 +432,9 @@ Current slice:
   each atom renders exactly the same buffer as the corresponding named
   `SfxrParams` patch, and shorthand overrides like `laser ms=9 m=0.01` match the
   verbose `sfxr preset=laser mutate_seed=9 mutate=0.01` form.
+- Correction from user: preset atoms are cheating for the actual golf challenge.
+  The live target is now primitive DSP graph golf. `CLASSIC_SFXR_PRIMITIVE_GOLF_SCRIPTS`
+  holds one terse script per classic sound, using only `p` and `v` graph
+  statements with short field aliases. Tests reject preset atoms/sfxr commands in
+  those scripts and compare the primitive output back to the named sfxr patch
+  path with the public analysis metrics.

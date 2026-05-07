@@ -29,6 +29,37 @@ pub const CLASSIC_SFXR_NAMES: [&str; 7] = [
 
 pub const CLASSIC_SFXR_GOLF_SCRIPT: &str = "pickup;laser;explosion;powerup;hit;jump;blip";
 
+pub const CLASSIC_SFXR_PRIMITIVE_GOLF_SCRIPTS: [(&str, &str); 7] = [
+    (
+        "pickup",
+        "v w=sq f=148.7934 g=.22 s=.01451247166 d=.1306122449 pu=.45 drv=.201 ad=.081844 am=1.116121255",
+    ),
+    (
+        "laser",
+        "v w=saw f=229.0554 g=.22 s=.08185941043 d=.07346938776 pr=.703836 du=.31 dur=.056 h=.04 ph=.0001458 phr=-.000504 drv=.12",
+    ),
+    (
+        "explosion",
+        "p r=.174744;v w=n f=20 g=.22 s=.1907029478 d=.293877551 pu=.52 pr=.0320625 ph=-.0008712 phr=-.00035 vi=.11 vh=3.4112 nz=.35 drv=.2136 tr=.0264 th=13.04",
+    ),
+    (
+        "powerup",
+        "p r=.11315;v w=sin f=57.5946 g=.22 s=.1306122449 d=.1777777778 pr=-.208544 vi=.09 vh=3.9602 drv=.12 tr=.0216 th=13.94",
+    ),
+    (
+        "hit",
+        "v w=n f=51.4206 g=.22 s=.00566893424 d=.09070294785 pr=1.050624 h=.12 nz=.35 drv=.12",
+    ),
+    (
+        "jump",
+        "v w=sq f=78.2334 g=.22 s=.1097505669 d=.07346938776 pr=-.101156 du=.38 l=.72 h=.05 drv=.12",
+    ),
+    (
+        "blip",
+        "v w=sin f=78.2334 g=.22 s=.03832199546 d=.01451247166 h=.1 drv=.12",
+    ),
+];
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AudioAnalysisConfig {
     pub sample_rate: f32,
@@ -1171,6 +1202,10 @@ fn field_value<'a>(fields: &'a [(&str, &str)], key: &str) -> Option<&'a str> {
         .find_map(|(candidate, value)| (*candidate == key).then_some(*value))
 }
 
+fn field_value_any<'a>(fields: &'a [(&str, &str)], keys: &[&str]) -> Option<&'a str> {
+    keys.iter().find_map(|key| field_value(fields, key))
+}
+
 fn apply_patch_fields(
     patch: &mut SynthPatch,
     fields: &[(&str, &str)],
@@ -1178,9 +1213,9 @@ fn apply_patch_fields(
 ) -> Result<(), PatchScriptError> {
     for (key, value) in fields {
         match *key {
-            "gain" => patch.gain = parse_f32(value, line, key)?,
-            "soft_clip" => patch.soft_clip = parse_bool(value, line, key)?,
-            "repeat" => {
+            "gain" | "g" => patch.gain = parse_f32(value, line, key)?,
+            "soft_clip" | "sc" => patch.soft_clip = parse_bool(value, line, key)?,
+            "repeat" | "r" | "rp" => {
                 let interval_seconds = parse_f32(value, line, key)?;
                 patch.repeat = (interval_seconds > 0.0).then_some(Repeat { interval_seconds });
             }
@@ -1230,12 +1265,12 @@ fn control_lane_from_fields(
 }
 
 fn voice_from_fields(fields: &[(&str, &str)], line: usize) -> Result<Voice, PatchScriptError> {
-    let waveform = match field_value(fields, "wave").unwrap_or("sine") {
-        "sine" => Waveform::Sine,
-        "square" => Waveform::Square,
+    let waveform = match field_value_any(fields, &["wave", "w"]).unwrap_or("sine") {
+        "sine" | "sin" => Waveform::Sine,
+        "square" | "sq" => Waveform::Square,
         "saw" | "sawtooth" => Waveform::Sawtooth,
         "tri" | "triangle" => Waveform::Triangle,
-        "noise" => Waveform::Noise,
+        "noise" | "n" => Waveform::Noise,
         other => {
             return Err(PatchScriptError::new(
                 line,
@@ -1243,16 +1278,16 @@ fn voice_from_fields(fields: &[(&str, &str)], line: usize) -> Result<Voice, Patc
             ));
         }
     };
-    let frequency_hz = parse_optional_f32(fields, "freq", line)?.unwrap_or(440.0);
+    let frequency_hz = parse_optional_f32_any(fields, &["freq", "f"], line)?.unwrap_or(440.0);
     let envelope = Envelope {
-        attack_seconds: parse_optional_f32(fields, "attack", line)?.unwrap_or(0.0),
-        sustain_seconds: parse_optional_f32(fields, "sustain", line)?.unwrap_or(0.1),
-        decay_seconds: parse_optional_f32(fields, "decay", line)?.unwrap_or(0.2),
-        punch: parse_optional_f32(fields, "punch", line)?.unwrap_or(0.0),
+        attack_seconds: parse_optional_f32_any(fields, &["attack", "a"], line)?.unwrap_or(0.0),
+        sustain_seconds: parse_optional_f32_any(fields, &["sustain", "s"], line)?.unwrap_or(0.1),
+        decay_seconds: parse_optional_f32_any(fields, &["decay", "d"], line)?.unwrap_or(0.2),
+        punch: parse_optional_f32_any(fields, &["punch", "pu"], line)?.unwrap_or(0.0),
     };
     let arpeggio = match (
-        parse_optional_f32(fields, "arp_delay", line)?,
-        parse_optional_f32(fields, "arp_mult", line)?,
+        parse_optional_f32_any(fields, &["arp_delay", "ad"], line)?,
+        parse_optional_f32_any(fields, &["arp_mult", "am"], line)?,
     ) {
         (Some(delay_seconds), Some(multiplier)) => Some(Arpeggio {
             delay_seconds,
@@ -1267,18 +1302,18 @@ fn voice_from_fields(fields: &[(&str, &str)], line: usize) -> Result<Voice, Patc
         }
     };
     let color = VoiceColor {
-        noise_mix: parse_optional_f32(fields, "noise", line)?.unwrap_or(0.0),
-        drive: parse_optional_f32(fields, "drive", line)?.unwrap_or(0.0),
-        fold: parse_optional_f32(fields, "fold", line)?.unwrap_or(0.0),
-        tremolo_depth: parse_optional_f32(fields, "tremolo", line)?.unwrap_or(0.0),
-        tremolo_hz: parse_optional_f32(fields, "tremolo_hz", line)?.unwrap_or(0.0),
-        formant_mix: parse_optional_f32(fields, "formant_mix", line)?.unwrap_or(0.0),
+        noise_mix: parse_optional_f32_any(fields, &["noise", "nz"], line)?.unwrap_or(0.0),
+        drive: parse_optional_f32_any(fields, &["drive", "drv"], line)?.unwrap_or(0.0),
+        fold: parse_optional_f32_any(fields, &["fold", "fl"], line)?.unwrap_or(0.0),
+        tremolo_depth: parse_optional_f32_any(fields, &["tremolo", "tr"], line)?.unwrap_or(0.0),
+        tremolo_hz: parse_optional_f32_any(fields, &["tremolo_hz", "th"], line)?.unwrap_or(0.0),
+        formant_mix: parse_optional_f32_any(fields, &["formant_mix", "fm"], line)?.unwrap_or(0.0),
     };
-    let formants = match field_value(fields, "formants") {
+    let formants = match field_value_any(fields, &["formants", "fs"]) {
         Some(value) => parse_formants(value, line)?,
         None => Vec::new(),
     };
-    let modulators = match field_value(fields, "mods") {
+    let modulators = match field_value_any(fields, &["mods", "m"]) {
         Some(value) => parse_modulators(value, line)?,
         None => Vec::new(),
     };
@@ -1286,39 +1321,46 @@ fn voice_from_fields(fields: &[(&str, &str)], line: usize) -> Result<Voice, Patc
         oscillator: Oscillator {
             waveform,
             frequency_hz,
-            duty: parse_optional_f32(fields, "duty", line)?.unwrap_or(0.5),
-            phase: parse_optional_f32(fields, "phase", line)?.unwrap_or(0.0),
+            duty: parse_optional_f32_any(fields, &["duty", "du"], line)?.unwrap_or(0.5),
+            phase: parse_optional_f32_any(fields, &["phase", "pa"], line)?.unwrap_or(0.0),
         },
         envelope,
         pitch: PitchMotion {
-            min_frequency_hz: parse_optional_f32(fields, "min_freq", line)?.unwrap_or(20.0),
-            ramp_per_second: parse_optional_f32(fields, "pitch_ramp", line)?.unwrap_or(0.0),
-            delta_ramp_per_second: parse_optional_f32(fields, "pitch_dramp", line)?.unwrap_or(0.0),
-            vibrato_depth: parse_optional_f32(fields, "vibrato", line)?.unwrap_or(0.0),
-            vibrato_hz: parse_optional_f32(fields, "vibrato_hz", line)?.unwrap_or(0.0),
-            vibrato_delay_seconds: parse_optional_f32(fields, "vibrato_delay", line)?
+            min_frequency_hz: parse_optional_f32_any(fields, &["min_freq", "min"], line)?
+                .unwrap_or(20.0),
+            ramp_per_second: parse_optional_f32_any(fields, &["pitch_ramp", "pr"], line)?
+                .unwrap_or(0.0),
+            delta_ramp_per_second: parse_optional_f32_any(fields, &["pitch_dramp", "pdr"], line)?
+                .unwrap_or(0.0),
+            vibrato_depth: parse_optional_f32_any(fields, &["vibrato", "vi"], line)?.unwrap_or(0.0),
+            vibrato_hz: parse_optional_f32_any(fields, &["vibrato_hz", "vh"], line)?.unwrap_or(0.0),
+            vibrato_delay_seconds: parse_optional_f32_any(fields, &["vibrato_delay", "vd"], line)?
                 .unwrap_or(0.0),
         },
         duty: DutyMotion {
-            ramp_per_second: parse_optional_f32(fields, "duty_ramp", line)?.unwrap_or(0.0),
+            ramp_per_second: parse_optional_f32_any(fields, &["duty_ramp", "dur"], line)?
+                .unwrap_or(0.0),
         },
         filter: Filter {
-            low_pass: parse_optional_f32(fields, "lpf", line)?.unwrap_or(1.0),
-            low_pass_ramp: parse_optional_f32(fields, "lpf_ramp", line)?.unwrap_or(0.0),
-            low_pass_resonance: parse_optional_f32(fields, "resonance", line)?.unwrap_or(0.0),
-            high_pass: parse_optional_f32(fields, "hpf", line)?.unwrap_or(0.0),
-            high_pass_ramp: parse_optional_f32(fields, "hpf_ramp", line)?.unwrap_or(0.0),
+            low_pass: parse_optional_f32_any(fields, &["lpf", "l"], line)?.unwrap_or(1.0),
+            low_pass_ramp: parse_optional_f32_any(fields, &["lpf_ramp", "lr"], line)?
+                .unwrap_or(0.0),
+            low_pass_resonance: parse_optional_f32_any(fields, &["resonance", "res"], line)?
+                .unwrap_or(0.0),
+            high_pass: parse_optional_f32_any(fields, &["hpf", "h"], line)?.unwrap_or(0.0),
+            high_pass_ramp: parse_optional_f32_any(fields, &["hpf_ramp", "hr"], line)?
+                .unwrap_or(0.0),
         },
         phaser: Phaser {
-            offset_seconds: parse_optional_f32(fields, "phaser", line)?.unwrap_or(0.0),
-            ramp_seconds_per_second: parse_optional_f32(fields, "phaser_ramp", line)?
+            offset_seconds: parse_optional_f32_any(fields, &["phaser", "ph"], line)?.unwrap_or(0.0),
+            ramp_seconds_per_second: parse_optional_f32_any(fields, &["phaser_ramp", "phr"], line)?
                 .unwrap_or(0.0),
         },
         arpeggio,
         color,
         formants,
         modulators,
-        gain: parse_optional_f32(fields, "gain", line)?.unwrap_or(0.2),
+        gain: parse_optional_f32_any(fields, &["gain", "g"], line)?.unwrap_or(0.2),
     };
     for (key, _) in fields {
         match *key {
@@ -1328,6 +1370,9 @@ fn voice_from_fields(fields: &[(&str, &str)], line: usize) -> Result<Voice, Patc
             | "hpf_ramp" | "phaser" | "phaser_ramp" | "arp_delay" | "arp_mult" | "noise"
             | "drive" | "fold" | "tremolo" | "tremolo_hz" | "formant_mix" | "formants" | "gain" => {
             }
+            "w" | "f" | "g" | "a" | "s" | "d" | "pu" | "min" | "pr" | "pdr" | "vi" | "vh"
+            | "vd" | "du" | "dur" | "l" | "lr" | "res" | "h" | "hr" | "ph" | "phr" | "ad"
+            | "am" | "nz" | "drv" | "fl" | "tr" | "th" | "fm" | "fs" | "m" | "pa" => {}
             "mods" => {}
             unknown => return Err(unknown_field(line, "voice", unknown)),
         }
@@ -1536,6 +1581,20 @@ fn parse_optional_f32(
     field_value(fields, key)
         .map(|value| parse_f32(value, line, key))
         .transpose()
+}
+
+fn parse_optional_f32_any(
+    fields: &[(&str, &str)],
+    keys: &[&str],
+    line: usize,
+) -> Result<Option<f32>, PatchScriptError> {
+    match keys
+        .iter()
+        .find_map(|key| field_value(fields, key).map(|value| (*key, value)))
+    {
+        Some((key, value)) => parse_f32(value, line, key).map(Some),
+        None => Ok(None),
+    }
 }
 
 fn parse_f32(value: &str, line: usize, key: &str) -> Result<f32, PatchScriptError> {
@@ -2431,6 +2490,70 @@ mod tests {
         let golfed_buffer: Vec<f32> = (0..4096).map(|_| golfed_player.next_sample()).collect();
         let verbose_buffer: Vec<f32> = (0..4096).map(|_| verbose_player.next_sample()).collect();
         assert_eq!(golfed_buffer, verbose_buffer);
+    }
+
+    #[test]
+    fn primitive_golf_scripts_use_only_graph_primitives() {
+        for (name, script) in CLASSIC_SFXR_PRIMITIVE_GOLF_SCRIPTS {
+            assert!(
+                !script.contains("sfxr"),
+                "{name} primitive script used sfxr command"
+            );
+            for statement in script
+                .split(';')
+                .map(str::trim)
+                .filter(|part| !part.is_empty())
+            {
+                let command = statement.split_whitespace().next().unwrap();
+                assert!(
+                    matches!(
+                        command,
+                        "p" | "patch" | "v" | "voice" | "l" | "lfo" | "control"
+                    ),
+                    "{name} primitive script used non-primitive command `{command}`"
+                );
+                assert!(
+                    !CLASSIC_SFXR_NAMES.contains(&command),
+                    "{name} primitive script used preset atom `{command}`"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn primitive_golf_scripts_match_classic_outputs() {
+        for (name, script) in CLASSIC_SFXR_PRIMITIVE_GOLF_SCRIPTS {
+            let primitive = SynthPatch::from_script(script).unwrap();
+            let reference = SfxrParams::named(name).unwrap().to_patch();
+            let mut primitive_player = PatchPlayer::new(primitive, 44_100.0);
+            let mut reference_player = PatchPlayer::new(reference, 44_100.0);
+            let primitive_buffer: Vec<f32> = (0..16_384)
+                .map(|_| primitive_player.next_sample())
+                .collect();
+            let reference_buffer: Vec<f32> = (0..16_384)
+                .map(|_| reference_player.next_sample())
+                .collect();
+            let comparison = compare_audio(
+                &reference_buffer,
+                &primitive_buffer,
+                &AudioAnalysisConfig {
+                    fft_size: 256,
+                    hop_size: 256,
+                    mel_band_count: 18,
+                    ..AudioAnalysisConfig::default()
+                },
+            );
+            assert!(
+                comparison.score > 0.995,
+                "{name} score was {}",
+                comparison.score
+            );
+            assert!(
+                comparison.log_mel_distance < 0.01,
+                "{name} log-mel distance was {}",
+                comparison.log_mel_distance
+            );
+        }
     }
 
     #[test]

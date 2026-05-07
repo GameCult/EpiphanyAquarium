@@ -178,7 +178,7 @@
       "`PatchPlayer::render_mono` and `render_interleaved_stereo` are the realtime-facing synth fill APIs. Use them to generate queued audio chunks off the callback path; `next_sample` remains useful for tests and small adapters.",
       "The synth script supports `mods=target:wave:hz:depth[:phase[:bias]]` on `voice` lines. Current targets are gain, pitch, duty, lpf, hpf, noise, drive, fold, and formant/formant_mix; current waves are sine, triangle, square, and sample-hold.",
       "Patch-level control lanes are scriptable with `lfo`/`control` commands (`name`, `target`, `wave`, `hz`, `depth`, optional `phase`/`bias`) and apply across voices. For Rust callers, prefer `PatchBuilder`, `ControlLane::new`, `Modulator::lfo`, and `render_patch_mono`/`render_script_mono` for buffer-generation jobs.",
-      "Classic sfxr presets are first-class script atoms. `pickup;laser;explosion;powerup;hit;jump;blip` is the canonical golfed suite, and each bare atom must remain sample-identical to `SfxrParams::named(name).to_patch()`. Short sfxr overrides include `ms` for mutate_seed and `m` for mutate."
+      "Classic sfxr presets remain convenience script atoms, but they are disqualified from primitive DSP graph golf. The real challenge target is `CLASSIC_SFXR_PRIMITIVE_GOLF_SCRIPTS`: each classic sound must be expressed through terse `p`/`v` primitive graph commands and pass output comparison against the named sfxr patch path."
     ],
     "interaction_design": [
       "Progressive disclosure is the core grammar: vibes first, object second, surface third.",
