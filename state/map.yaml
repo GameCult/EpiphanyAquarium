@@ -97,6 +97,8 @@ interaction_laws:
   - Renderer diagnostics are part of the renderer, not optional developer garnish. Persist a debug mode through CultCache and expose hit coverage, brick occupancy, SH lighting, density, temporal rejection, transmittance, and in-scatter before adding more field complexity.
   - The current Bevy deferred-prepass raymarch path is the renderer spine. Do not add new fog/beauty passes until that path can prove depth, normals, motion vectors, deferred payload, brick occupancy, SH luminance, and terrain/body hit coverage on demand.
   - The Bevy camera must stay HDR with bloom before ACES tonemapping while body readability is the target; solar emissive energy should spread softly in HDR instead of being clamped or blurred in SDR.
+  - The Aetheria horizon reference is inspiration, not a pixel-clone contract: dark upper depth, luminous field weather, thin white grid instrumentation, warm solar anchors, sparse HDR stardust, and fog that visibly belongs to the Grid domain.
+  - Aetheria proves a modest raymarcher can look huge when scenes paint good 2D Grid-domain source fields and the density function adds flowing procedural noise. Aquarium should borrow that confidence and structure without copying the exact scene.
   - Aetheria's nebula contract should return as Grid source textures and temporal reconstruction: surface height, patch density/height, tint, flow/noise settings, quadratic stochastic march steps, history reprojection, and AABB clipping.
   - Temporal Grid fields must be ping-ponged. One compute pass writes the next density/history target, while render passes sample a read-only slice; binding the same storage buffer as read-only and read-write in one usage scope is invalid WGPU, not a negotiable lifestyle.
   - Global sky and aerial-perspective lighting should use Bruneton-style precomputed transport caches; local dynamic fog should not be forced to solve horizon-scale multiple scattering per frame.
@@ -122,6 +124,8 @@ next_actions:
   - Add Bevy RenderDiagnosticsPlugin spans first, then wgpu-profiler scopes if nested GPU timing detail is still missing around brick update, SH propagation, and deferred-prepass raymarch.
   - Split the current `aquarium_light_compute` timing/labels into separately accountable brick occupancy and SH propagation scopes.
   - After diagnostics, move Grid height from duplicated analytic shader logic into an explicit Grid-domain source texture sampled by terrain, SH lighting, future fog, and stardust.
+  - Use `E:\Projects\Aetheria-Economy\Recordings\image_094_0010.png` as a courage reference for local Grid weather: broad luminous sheets, horizon fade, dark volumetric depth, tiny star sparkle, and readable geometry lines are possible with disciplined cheap inputs.
+  - Borrow Aetheria's order of operations before inventing heavier machinery: source-field render targets, density/tint/flow sampling, stochastic raymarch/history/composite.
   - After Grid source textures, restore fog as a small temporal Aetheria-style path with current/history targets and visible history rejection before introducing sparse froxels/octrees.
   - Improve raymarched body material response, solar surface motion, and planet readability before adding more field buffers.
   - Port Aetheria nebula source textures/settings into Bevy as explicit Grid-domain resources before rebuilding full fog.

@@ -73,6 +73,12 @@ Current pass:
 
 Next renderer pass:
 
+- Let the Aetheria reference raise the ambition: dark horizon depth, luminous
+  Grid weather, thin readable white grid lines, sparse HDR stardust, and warm
+  solar bodies embedded in the field instead of pasted over it.
+- Borrow Aetheria's transferable trick: cheap Grid-space source fields feeding
+  flowing procedural density noise can look enormous before we reach for heavier
+  volumetric machinery.
 - Move Grid height from a storage-buffer field to a packed source texture once
   density, tint, and flow join it.
 - Improve raymarched body material response, solar surface motion, and planet

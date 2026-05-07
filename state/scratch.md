@@ -489,3 +489,12 @@ Current slice:
   from Bevy SH lighting. The old pulse ran every 2.15 seconds and injected an
   outward carried radiance wave; future flare work should be explicit debug or
   interaction state, not idle lighting noise.
+- Current visual courage reference: `E:\Projects\Aetheria-Economy\Recordings\image_094_0010.png`.
+  The point is not exact reproduction; it is proof that disciplined cheap fields
+  can produce horizon-scale wonder. Aquarium should aim past the timid tabletop:
+  dark depth, luminous Grid weather, thin readable lines, sparse HDR stardust,
+  and warm solar bodies embedded in the field.
+- Current Aetheria lesson: the screenshot's detail comes from the shared cloud
+  raymarcher sampling scene-painted Grid-space source fields, then using
+  phase-paired flowing triangle noise inside the density function. Borrow that
+  architecture and confidence without turning Aquarium into an Aetheria clone.
