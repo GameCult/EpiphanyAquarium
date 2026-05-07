@@ -1,15 +1,20 @@
-# Bevy Migration Map
+# Bevy Prototype Map
 
 ## Direction
 
-Epiphany Aquarium is moving from a React/Tauri/WebGPU renderer experiment into a
-Bevy-native client. The web app remains a staging shell until the Bevy host can
-own the scene, agent communication, persistent state, and renderer pipeline.
+Epiphany Aquarium moved from a React/Tauri/WebGPU renderer experiment into a
+Bevy-native client prototype, then stopped there. Bevy is now reference
+material, not the target host.
 
-## Runtime Split
+The next target is a C# Aquarium-owned engine core, likely using Stride as
+scaffolding and parts donor where that preserves momentum without handing over
+the renderer's taste or frame ownership.
 
-- Bevy owns the living scene: camera, world-space bodies, springs, heightfield,
-  froxels, SDF marching, volumetrics, and diegetic UI anchors.
+## Prototype Runtime Split
+
+- Bevy owns the prototype scene: camera, world-space bodies, springs,
+  heightfield source fields, SDF marching, HDR output, bloom/tonemapping, and
+  a small native debug UI.
 - `cultnet-rs` owns wire communication with Epiphany agents and other Rust
   runtimes.
 - `cultcache-rs` owns aquarium settings, local persistent state, and replicated
@@ -17,7 +22,7 @@ own the scene, agent communication, persistent state, and renderer pipeline.
 - The existing Tauri backend remains a compatibility bridge while agent runtime
   communication moves to CultNet.
 
-## Current Bevy Host
+## Current Bevy Prototype
 
 Path: `bevy-aquarium`
 
@@ -37,6 +42,13 @@ Implemented:
   - `epiphany.aquarium.agent-presence`
 - `cultnet-rs` hello-message construction advertising the Bevy client and its
   supported document types.
+- A custom HDR raymarch path with Grid height/source-field compute, light brick
+  occupancy, Grid-space irradiance propagation, solid body/terrain marching,
+  debug modes, gentle Bloom, and ACES tonemapping.
+- A native Bevy debug UI with a top-left `>_` affordance, tab rail, left-half
+  panel, and registered-command terminal.
+- `crates/aquarium_synth`, a Rust procedural synth/reference module that became
+  stable enough to preserve as algorithmic salvage.
 
 Run:
 
@@ -63,20 +75,17 @@ npm run bevy:hot
 `bevy:watch` is only a fallback restart loop for changes that cannot be patched.
 Calling restart-on-save "hot reload" was nonsense with shoes on.
 
-## Next Renderer Steps
+## Frozen Renderer Lessons
 
-1. Replace CPU mesh heightfield regeneration with a Bevy render-graph gravity
-   texture pass.
-2. Add WebGPU compute binning for solid and gaseous SDF primitives.
-3. Store primitive membership in froxels, but sample fields continuously inside
-   the raymarch so froxels skip empty space without sculpting the surface.
-4. March solid and gaseous fields through one density accumulator; write depth
-   once density saturates.
-5. Add a froxel lighting cache using propagated spherical harmonics, with
-   environment light injected from volume boundaries.
-6. Move diegetic UI anchors into Bevy world entities, then decide whether the
-   interactive surface is native egui, a webview overlay, or a smaller custom UI
-   layer.
+- Solid-only bring-up was the correct simplification.
+- Purging Bevy deferred/prepass integration was correct.
+- Stable body seeds are mandatory for translation-invariant SDF detail.
+- Broad-phase bounds must stay conservative and separate from visible SDF
+  shading.
+- Renderer debug modes are not garnish; they are how black frames become facts.
+- The engine host must not own the lighting story.
+
+See `notes/rust-branch-retrospective.md` for the full salvage/rejection ledger.
 
 ## Invariant
 

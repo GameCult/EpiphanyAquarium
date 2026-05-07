@@ -19,6 +19,7 @@
     ],
     "rust_bevy_vfx": [
       "Bevy is now the aquarium's engine host, not a wrapper around a web artifact. Treat ECS entities as source/state anchors and the render graph as the frame machine that turns those anchors into fields, lighting, and final HDR pixels.",
+      "As of 2026-05-07, Bevy/Rust is frozen as prototype/reference, not the future host. The next Aquarium engine target is C# land, likely Stride-scaffolded but Aquarium-owned: use Stride for window/device/input/assets/tooling only where useful, while Aquarium owns render graph, fields, UI, state, and taste.",
       "Prefer custom Bevy render graph nodes for deep renderer work. `FullscreenMaterial` is useful for simple post effects, but Aquarium's raymarch, light propagation, brick occupancy, and field composition need explicit node ordering, bind groups, storage buffers, and texture ownership.",
       "Use Bevy 0.18's rendering improvements as leverage: generalized atmospheric scattering and atmosphere/PBR integration are reference machinery, while the aquarium's local grid fog remains a custom field volume because it is domain-authored, moving, and interaction-coupled.",
       "Keep compile features lean. Scenario-driven Bevy feature collections and explicit feature lists matter on Windows; avoid `bevy/dynamic_linking` until the MSVC `bevy_dylib` object-limit failure has a proven workaround.",
@@ -200,6 +201,8 @@
       "The synth language's real Serum-style affordance is oscillator-to-anything routing. Use neutral `mod`/`bus` commands, e.g. `mod n=wob hz=4 w=tri g=.4 l=.5 fmi=1.2` or `bus n=sway to=g:.1,l:-.2,fmix:.3`; `wob` is only an alias over the same primitive bus. Voice `fm` means FM ratio; use `fmix` for formant mix in terse scripts."
       ,
       "Current `aquarium_synth` release performance on the local single thread: `PatchPlayer::render_mono` into a preallocated buffer reaches realtime parity at about 1900-2200 simple pluck voices, 450-520 colored/formant voices, 320-360 wobble/FM/formant voices, 180-215 deliberately maximal per-voice graphs, and 240-265 maximal shared-bus graphs after grouped modulation routing, inactive-stage pruning, static filter/formant hoisting, reusable `CompiledPatch`, and stateful FM decay. Keep callback work much lower than parity; generate queued chunks off-thread and use `cargo run --release --manifest-path crates/aquarium_synth/Cargo.toml --example voice_capacity` when this needs rechecking."
+      ,
+      "`aquarium_synth` is salvage, not scrap. Preserve the Rust crate as oracle/reference while porting the patch model, script grammar, analysis metrics, and performance lessons into the C# host when Aquarium audio resumes."
     ],
     "interaction_design": [
       "Progressive disclosure is the core grammar: vibes first, object second, surface third.",

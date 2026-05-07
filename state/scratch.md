@@ -1,6 +1,19 @@
 # Scratch
 
-Current renderer truth:
+Current pivot truth:
+
+- The Bevy/Rust branch is frozen as prototype/reference, not the future host.
+- The next target is C# land: use Stride as scaffolding and parts donor where
+  useful, but build an Aquarium-owned engine core that owns the frame, render
+  graph, field pipeline, debug UI, CultCache/CultNet integration, and taste.
+- The branch retrospective lives at `notes/rust-branch-retrospective.md`.
+- `crates/aquarium_synth` is salvageable real work. Keep it as a Rust oracle
+  and port the patch model/analyzer/performance lessons to C# when audio returns.
+- Graph/layout work remains valuable as data-first tooling: serializable graph
+  layouts, evidence/code-ref projections, and icon-branch/leaf-surface UI
+  doctrine should carry forward.
+
+Frozen Bevy renderer truth:
 
 - The live Bevy aquarium renderer has no G-buffer.
 - The live Bevy aquarium renderer does not write prepass textures, deferred
@@ -56,10 +69,9 @@ Current renderer truth:
 
 Current next cut:
 
-- Runtime-validate WGSL after any irradiance edit; `cargo check` proves Rust
-  layout only, not shader entrypoint correctness.
-- Inspect the live image and tune irradiance strength/visibility if planets go
-  too black or the Grid starts emitting square ghosts again.
-- If a shell terminal is added later, make it a separate loudly labeled tab with
-  confirmation/logging. The default debug terminal is intentionally an
+- Start the C# host/scaffold map before writing renderer code.
+- Keep Bevy changes limited to documentation, salvage extraction, or
+  build-preservation unless explicitly reactivated.
+- If a shell terminal is added later in the new host, make it a separate loudly
+  labeled tab with confirmation/logging. The default debug terminal is an
   in-process command DSL.

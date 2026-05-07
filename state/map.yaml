@@ -9,21 +9,31 @@ project:
 
 current_model:
   migration_target:
+    engine: C# Aquarium-owned engine core, likely Stride-scaffolded
+    path: pending
+    migration_map: notes/rust-branch-retrospective.md
+    communication: CultNet contract
+    persistence: CultCache contract
+    principle: >
+      The Bevy/Rust host is frozen as a prototype/reference branch. The next
+      client should live in C# land, using Stride only as scaffolding and parts
+      donor where useful while Aquarium owns the frame, renderer, UI, state, and
+      taste.
+    renderer_doctrine: >
+      The future renderer remains a field machine: explicit source fields,
+      lighting fields, history buffers, SDF/raymarch surfaces, HDR bloom before
+      ACES, and diegetic illumination. The host may provide device/window/input
+      scaffolding; Aquarium owns the visible frame.
+  bevy_prototype:
     engine: Bevy 0.18 Rust host
     path: bevy-aquarium
-    migration_map: notes/bevy-migration-map.md
-    communication: cultnet-rs
-    persistence: cultcache-rs
-    principle: >
-      The aquarium renderer is moving to a Rust-native Bevy client. Bevy owns
-      world-space simulation and rendering; cultnet-rs owns agent communication;
-      cultcache-rs owns settings and persistent client state.
-    renderer_doctrine: >
-      The live renderer is a Rust/WGPU field machine. ECS state feeds custom
-      Bevy render graph nodes, compute/storage resources carry Grid-space
-      lighting and occupancy, and the aquarium raymarch node owns the visible
-      HDR color pass before Bevy bloom/tonemapping. Legacy React/WebGL/Tauri
-      surfaces are migration fallback, not the architecture center.
+    status: frozen prototype and reference implementation
+    map: notes/bevy-migration-map.md
+    retrospective: notes/rust-branch-retrospective.md
+    salvage: >
+      Preserve renderer invariants, debug-command DSL, CultCache/CultNet
+      boundaries, stable SDF body-domain lessons, and the aquarium_synth crate
+      as algorithm/reference material.
   legacy_frontend:
     framework: React + Vite + Tauri v2
     status: migration fallback and historical interaction prototype
