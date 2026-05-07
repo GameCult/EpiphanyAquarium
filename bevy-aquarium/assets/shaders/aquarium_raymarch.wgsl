@@ -42,6 +42,10 @@ struct GridHeightField {
     samples: array<vec4f>,
 };
 
+struct FogHistory {
+    samples: array<vec4f>,
+};
+
 @group(0) @binding(0) var in_texture: texture_2d<f32>;
 @group(0) @binding(1) var in_sampler: sampler;
 @group(0) @binding(2) var<uniform> field: AquariumRaymarch;
@@ -50,8 +54,13 @@ struct GridHeightField {
 @group(0) @binding(5) var<storage, read_write> next_sh_volume: ShVolume;
 @group(0) @binding(6) var<storage, read_write> light_bricks: BrickMap;
 @group(0) @binding(7) var<storage, read_write> grid_height_field: GridHeightField;
+@group(0) @binding(8) var<storage, read> previous_fog_history: FogHistory;
+@group(0) @binding(9) var<storage, read_write> next_fog_history: FogHistory;
 
 const GRID_FIELD_SIZE: u32 = 128u;
+const FOG_HISTORY_WIDTH: u32 = 64u;
+const FOG_HISTORY_HEIGHT: u32 = 64u;
+const FOG_HISTORY_COUNT: u32 = FOG_HISTORY_WIDTH * FOG_HISTORY_HEIGHT;
 const FROXEL_WIDTH: u32 = 16u;
 const FROXEL_HEIGHT: u32 = 9u;
 const FROXEL_DEPTH: u32 = 16u;
@@ -148,6 +157,10 @@ fn grid_field_index(x: u32, y: u32) -> u32 {
     return y * GRID_FIELD_SIZE + x;
 }
 
+fn fog_history_index(x: u32, y: u32) -> u32 {
+    return y * FOG_HISTORY_WIDTH + x;
+}
+
 fn grid_height(xy: vec2f) -> f32 {
     return grid_sample(xy).x;
 }
@@ -168,6 +181,33 @@ fn grid_sample(xy: vec2f) -> vec4f {
 fn grid_normal_from_sample(sample: vec4f) -> vec3f {
     let cell_world = max((field.grid_half_extent * 2.0) / f32(GRID_FIELD_SIZE - 1u), 0.001);
     return normalize(vec3f(-sample.y, -sample.z, cell_world * 2.0));
+}
+
+fn fog_history_density_at(local: vec2f) -> vec4f {
+    let uv = clamp(local * 0.5 + vec2f(0.5), vec2f(0.0), vec2f(1.0));
+    let p = uv * vec2f(f32(FOG_HISTORY_WIDTH - 1u), f32(FOG_HISTORY_HEIGHT - 1u));
+    let base = vec2u(floor(p));
+    let next = min(base + vec2u(1u), vec2u(FOG_HISTORY_WIDTH - 1u, FOG_HISTORY_HEIGHT - 1u));
+    let f = fract(p);
+    let s00 = previous_fog_history.samples[fog_history_index(base.x, base.y)];
+    let s10 = previous_fog_history.samples[fog_history_index(next.x, base.y)];
+    let s01 = previous_fog_history.samples[fog_history_index(base.x, next.y)];
+    let s11 = previous_fog_history.samples[fog_history_index(next.x, next.y)];
+    return mix(mix(s00, s10, f.x), mix(s01, s11, f.x), f.y);
+}
+
+fn debug_fog_history_at(xy: vec2f) -> vec4f {
+    let local = grid_local(xy);
+    let uv = clamp(local * 0.5 + vec2f(0.5), vec2f(0.0), vec2f(1.0));
+    let p = uv * vec2f(f32(FOG_HISTORY_WIDTH - 1u), f32(FOG_HISTORY_HEIGHT - 1u));
+    let base = vec2u(floor(p));
+    let next = min(base + vec2u(1u), vec2u(FOG_HISTORY_WIDTH - 1u, FOG_HISTORY_HEIGHT - 1u));
+    let f = fract(p);
+    let s00 = previous_fog_history.samples[fog_history_index(base.x, base.y)];
+    let s10 = previous_fog_history.samples[fog_history_index(next.x, base.y)];
+    let s01 = previous_fog_history.samples[fog_history_index(base.x, next.y)];
+    let s11 = previous_fog_history.samples[fog_history_index(next.x, next.y)];
+    return mix(mix(s00, s10, f.x), mix(s01, s11, f.x), f.y);
 }
 
 fn grid_line_factor(xy: vec2f) -> f32 {
@@ -334,6 +374,14 @@ fn flare_impulse(phase: f32) -> f32 {
     return rise * fall;
 }
 
+fn fog_source_density(xy: vec2f) -> f32 {
+    let sample = grid_sample(xy);
+    let slope = length(sample.yz) / max((field.grid_half_extent * 2.0) / f32(GRID_FIELD_SIZE - 1u), 0.001);
+    let cup = smoothstep(0.02, 0.9, max(-sample.x, 0.0));
+    let slope_lift = smoothstep(0.05, 0.45, slope);
+    return clamp(sample.w * (0.025 + cup * 0.55 + slope_lift * 0.18), 0.0, 1.0);
+}
+
 @compute @workgroup_size(64)
 fn cs_update_grid_height(@builtin(global_invocation_id) id: vec3u) {
     let index = id.x;
@@ -354,6 +402,30 @@ fn cs_update_grid_height(@builtin(global_invocation_id) id: vec3u) {
     let hy = analytic_grid_height(xy + vec2f(0.0, cell_world)) - analytic_grid_height(xy - vec2f(0.0, cell_world));
     let edge = grid_edge_fade(xy);
     grid_height_field.samples[index] = vec4f(height, hx, hy, edge);
+}
+
+@compute @workgroup_size(64)
+fn cs_update_fog_history(@builtin(global_invocation_id) id: vec3u) {
+    let index = id.x;
+    if (index >= FOG_HISTORY_COUNT) {
+        return;
+    }
+    let y = index / FOG_HISTORY_WIDTH;
+    let x = index - y * FOG_HISTORY_WIDTH;
+    let uv = vec2f(
+        (f32(x) + 0.5) / f32(FOG_HISTORY_WIDTH),
+        (f32(y) + 0.5) / f32(FOG_HISTORY_HEIGHT),
+    );
+    let local = uv * 2.0 - vec2f(1.0);
+    let xy = field.grid_center + local * field.grid_half_extent;
+    let density = fog_source_density(xy);
+    let previous_local = (xy - field.previous_grid_center) / max(field.previous_grid_half_extent, 0.001);
+    let previous = fog_history_density_at(previous_local);
+    let inside_previous = select(0.0, 1.0, all(abs(previous_local) <= vec2f(1.0)));
+    let rejection = clamp(abs(density - previous.x) * 2.2 + (1.0 - inside_previous), 0.0, 1.0);
+    let history_weight = (1.0 - rejection) * exp(-field.delta_time * 1.8);
+    let blended = mix(density, previous.x, clamp(history_weight, 0.0, 0.92));
+    next_fog_history.samples[index] = vec4f(blended, density, rejection, inside_previous);
 }
 
 @compute @workgroup_size(64)
@@ -691,6 +763,14 @@ fn debug_sh_luminance(sample: SurfaceSample) -> f32 {
     return clamp(dot(light, vec3f(0.2126, 0.7152, 0.0722)) / 4.0, 0.0, 1.0);
 }
 
+fn debug_fog_history(sample: SurfaceSample) -> vec3f {
+    let history = debug_fog_history_at(sample.point.xy);
+    let density_color = vec3f(0.08, 0.42, 0.95) * history.x;
+    let rejection_color = vec3f(1.0, 0.22, 0.05) * history.z;
+    let invalid_color = vec3f(0.5, 0.0, 0.9) * (1.0 - history.w);
+    return density_color + rejection_color + invalid_color;
+}
+
 fn debug_color(sample: SurfaceSample, uv: vec2f) -> vec3f {
     let mode = debug_mode();
     if (mode == 1u) {
@@ -714,6 +794,9 @@ fn debug_color(sample: SurfaceSample, uv: vec2f) -> vec3f {
     if (mode == 6u) {
         let luminance = debug_sh_luminance(sample);
         return mix(vec3f(0.01, 0.015, 0.04), vec3f(1.0, 0.76, 0.18), luminance);
+    }
+    if (mode == 7u) {
+        return debug_fog_history(sample);
     }
     return sample.color;
 }

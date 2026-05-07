@@ -60,11 +60,13 @@ Current pass:
   ECS entities carry simulation, cache, label, audio, and renderer-source state.
 - Grid height is now an explicit GPU source field generated before brick
   occupancy, SH lighting, and the deferred raymarch sample it.
+- Fog history is now a tiny GPU temporal field over the moving Grid domain.
+  It ping-pongs 64x64 density/rejection samples before the deferred raymarch;
+  F3 includes a `fog-history` truth mode so history validity is visible.
 
 Next renderer pass:
 
-- Expose deferred payload inspection before adding more fog.
 - Move Grid height from a storage-buffer field to a packed source texture once
   density, tint, and flow join it.
-- Restore fog as a small temporal Aetheria-style path with current/history
-  targets and visible history rejection.
+- Feed the fog history into actual visible atmosphere/in-scatter, then replace
+  the toy source with Aetheria-style density, tint, and flow fields.

@@ -390,3 +390,10 @@ Current slice:
   the modular Aquarium path, and compares duration/RMS/attack/zero-crossing
   features. This anchors compatibility without turning Aquarium into a hidden
   exact clone of the sfxr generator.
+- Current renderer pass: added a 64x64 GPU fog-history field over the moving
+  Grid domain. `cs_update_fog_history` ping-pongs density/history/rejection
+  samples after Grid-height generation and before brick/SH/deferred raymarch.
+  F3 now includes `fog-history`, showing blue retained density, orange
+  rejection, and purple invalid reprojection. Runtime smoke reached first
+  frames without WGPU validation failure after keeping read/write storage usage
+  exclusive to compute and sampling only the read slice in the render pass.
