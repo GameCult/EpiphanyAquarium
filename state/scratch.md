@@ -365,9 +365,22 @@ Current slice:
   separate overlay. Bevy `RenderDiagnosticsPlugin` is enabled after
   `DefaultPlugins`; custom scoped timings still need to be added around brick
   update, SH propagation, and the raymarch pass.
+- Current renderer continuation: added Bevy render diagnostic spans around
+  Grid-height generation, light brick occupancy, SH propagation, and deferred
+  raymarch. Added a GPU Grid source field generated before those passes; it
+  stores height, x/y slope, and edge coverage over a 128x128 moving Grid domain.
+  Terrain hits, normals, brick placement, SH lighting, and debug views now
+  sample that field instead of each owning private height logic. The analytic
+  function remains only as the generator until authored height/density/tint/flow
+  fields replace it.
 - Current audio slice: created `crates/aquarium_synth` to keep synth work out of
   the Bevy host. The crate defines serializable modular primitives
   (oscillator, envelope, pitch/duty motion, filter, phaser, repeat, arpeggio),
   maps the traditional sfxr API surface into a `SynthPatch`, and exposes
   `PatchUnit` as a FunDSP `AudioUnit`. Bevy's pluck/heartbeat graphs now only
   call crate presets.
+- Current audio scripting slice: `aquarium_synth` now has a small line-oriented
+  DSL with `patch`, `voice`, and `sfxr` commands. It can combine modular
+  oscillator/envelope/filter/phaser/arpeggio voices with classic sfxr preset
+  lines, supports seeded mutation, and tests prove all classic named sfxr
+  families generate non-silent audio.

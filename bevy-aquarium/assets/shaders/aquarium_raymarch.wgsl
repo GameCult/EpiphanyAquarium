@@ -38,6 +38,10 @@ struct BrickMap {
     flags: array<u32>,
 };
 
+struct GridHeightField {
+    samples: array<vec4f>,
+};
+
 @group(0) @binding(0) var in_texture: texture_2d<f32>;
 @group(0) @binding(1) var in_sampler: sampler;
 @group(0) @binding(2) var<uniform> field: AquariumRaymarch;
@@ -45,7 +49,9 @@ struct BrickMap {
 @group(0) @binding(4) var<storage, read> previous_sh_volume: ShVolume;
 @group(0) @binding(5) var<storage, read_write> next_sh_volume: ShVolume;
 @group(0) @binding(6) var<storage, read_write> light_bricks: BrickMap;
+@group(0) @binding(7) var<storage, read_write> grid_height_field: GridHeightField;
 
+const GRID_FIELD_SIZE: u32 = 128u;
 const FROXEL_WIDTH: u32 = 16u;
 const FROXEL_HEIGHT: u32 = 9u;
 const FROXEL_DEPTH: u32 = 16u;
@@ -115,7 +121,7 @@ fn grid_volume_top(half_extent: f32) -> f32 {
     return max(8.0, half_extent * 0.18);
 }
 
-fn grid_height(xy: vec2f) -> f32 {
+fn analytic_grid_height(xy: vec2f) -> f32 {
     var positive = 0.0;
     var negative = 0.0;
     for (var i = 0u; i < 8u; i = i + 1u) {
@@ -136,6 +142,32 @@ fn grid_height(xy: vec2f) -> f32 {
     positive += max(slow, 0.0);
     negative += max(-slow, 0.0);
     return positive - negative;
+}
+
+fn grid_field_index(x: u32, y: u32) -> u32 {
+    return y * GRID_FIELD_SIZE + x;
+}
+
+fn grid_height(xy: vec2f) -> f32 {
+    return grid_sample(xy).x;
+}
+
+fn grid_sample(xy: vec2f) -> vec4f {
+    let local = clamp(grid_local(xy) * 0.5 + vec2f(0.5), vec2f(0.0), vec2f(1.0));
+    let p = local * f32(GRID_FIELD_SIZE - 1u);
+    let base = vec2u(floor(p));
+    let next = min(base + vec2u(1u), vec2u(GRID_FIELD_SIZE - 1u));
+    let f = fract(p);
+    let s00 = grid_height_field.samples[grid_field_index(base.x, base.y)];
+    let s10 = grid_height_field.samples[grid_field_index(next.x, base.y)];
+    let s01 = grid_height_field.samples[grid_field_index(base.x, next.y)];
+    let s11 = grid_height_field.samples[grid_field_index(next.x, next.y)];
+    return mix(mix(s00, s10, f.x), mix(s01, s11, f.x), f.y);
+}
+
+fn grid_normal_from_sample(sample: vec4f) -> vec3f {
+    let cell_world = max((field.grid_half_extent * 2.0) / f32(GRID_FIELD_SIZE - 1u), 0.001);
+    return normalize(vec3f(-sample.y, -sample.z, cell_world * 2.0));
 }
 
 fn grid_line_factor(xy: vec2f) -> f32 {
@@ -300,6 +332,28 @@ fn flare_impulse(phase: f32) -> f32 {
     let rise = smoothstep(0.015, 0.08, phase);
     let fall = 1.0 - smoothstep(0.12, 0.32, phase);
     return rise * fall;
+}
+
+@compute @workgroup_size(64)
+fn cs_update_grid_height(@builtin(global_invocation_id) id: vec3u) {
+    let index = id.x;
+    if (index >= GRID_FIELD_SIZE * GRID_FIELD_SIZE) {
+        return;
+    }
+    let y = index / GRID_FIELD_SIZE;
+    let x = index - y * GRID_FIELD_SIZE;
+    let uv = vec2f(
+        f32(x) / f32(GRID_FIELD_SIZE - 1u),
+        f32(y) / f32(GRID_FIELD_SIZE - 1u),
+    );
+    let local = uv * 2.0 - vec2f(1.0);
+    let xy = field.grid_center + local * field.grid_half_extent;
+    let height = analytic_grid_height(xy);
+    let cell_world = max((field.grid_half_extent * 2.0) / f32(GRID_FIELD_SIZE - 1u), 0.001);
+    let hx = analytic_grid_height(xy + vec2f(cell_world, 0.0)) - analytic_grid_height(xy - vec2f(cell_world, 0.0));
+    let hy = analytic_grid_height(xy + vec2f(0.0, cell_world)) - analytic_grid_height(xy - vec2f(0.0, cell_world));
+    let edge = grid_edge_fade(xy);
+    grid_height_field.samples[index] = vec4f(height, hx, hy, edge);
 }
 
 @compute @workgroup_size(64)
@@ -539,13 +593,11 @@ fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> 
 
     if (terrain.alpha > 0.0) {
         let point = ray_origin + ray_dir * terrain.t;
-        let eps = 0.05;
-        let hx = grid_height(point.xy + vec2f(eps, 0.0)) - grid_height(point.xy - vec2f(eps, 0.0));
-        let hy = grid_height(point.xy + vec2f(0.0, eps)) - grid_height(point.xy - vec2f(0.0, eps));
+        let field_sample = grid_sample(point.xy);
         sample.hit = true;
         sample.kind = 1.0;
         sample.point = point;
-        sample.normal = normalize(vec3f(-hx, -hy, 2.0 * eps));
+        sample.normal = grid_normal_from_sample(field_sample);
         sample.color = mix(vec3f(0.015, 0.18, 0.16), vec3f(0.58, 1.0, 0.84), grid_line_factor(point.xy));
         sample.emissive = max(terrain.color, sample.color * 0.28);
         sample.unlit = true;
@@ -758,16 +810,14 @@ fn terrain_hit(ray_origin: vec3f, ray_dir: vec3f, jitter: f32) -> TerrainHit {
 
     let surface_t = hit_high;
     let surface_point = ray_origin + ray_dir * surface_t;
-    let height = grid_height(surface_point.xy);
+    let field_sample = grid_sample(surface_point.xy);
+    let height = field_sample.x;
     let edge_fade = grid_edge_fade(surface_point.xy) * depth_window_fade(surface_t);
     if (edge_fade <= 0.0) {
         return TerrainHit(vec3f(0.0), 0.0, field.depth_far + 1.0);
     }
 
-    let eps = 0.05;
-    let hx = grid_height(surface_point.xy + vec2f(eps, 0.0)) - grid_height(surface_point.xy - vec2f(eps, 0.0));
-    let hy = grid_height(surface_point.xy + vec2f(0.0, eps)) - grid_height(surface_point.xy - vec2f(0.0, eps));
-    let normal = normalize(vec3f(-hx, -hy, 2.0 * eps));
+    let normal = grid_normal_from_sample(field_sample);
     let view_dir = normalize(ray_origin - surface_point);
     let fresnel = pow(1.0 - clamp(dot(normal, view_dir), 0.0, 1.0), 2.6);
     let lines = grid_line_factor(surface_point.xy);

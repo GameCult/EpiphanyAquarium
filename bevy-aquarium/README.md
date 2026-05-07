@@ -58,12 +58,13 @@ Current pass:
 - All bodies use the same spring integration path.
 - The visible grid and bodies are raymarched through the Bevy/WGPU renderer;
   ECS entities carry simulation, cache, label, audio, and renderer-source state.
+- Grid height is now an explicit GPU source field generated before brick
+  occupancy, SH lighting, and the deferred raymarch sample it.
 
 Next renderer pass:
 
-- Add a CultCache-backed renderer debug mode.
 - Expose deferred payload inspection before adding more fog.
-- Add GPU timing scopes around brick update, SH propagation, and the deferred
-  prepass raymarch.
-- Move Grid height into an explicit Grid-domain source texture sampled by
-  terrain, lighting, future fog, and stardust.
+- Move Grid height from a storage-buffer field to a packed source texture once
+  density, tint, and flow join it.
+- Restore fog as a small temporal Aetheria-style path with current/history
+  targets and visible history rejection.

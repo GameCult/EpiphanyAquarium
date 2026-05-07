@@ -31,6 +31,7 @@
       "Renderer diagnostics need explicit modes for hit coverage, brick occupancy, SH luminance, density, temporal rejection, transmittance, and in-scatter. Black frames should become categorized failures, not spiritual experiences.",
       "The current Bevy renderer already owns a custom deferred prepass node that runs brick/SH compute before `fs_deferred_prepass` writes the G-buffer. The next cut should instrument that path before adding beauty: Bevy RenderDiagnosticsPlugin, debug modes, and visible validation of depth/normal/motion/deferred payloads.",
       "The first Bevy renderer truth mode is live: `epiphany.aquarium.renderer-settings` in CultCache persists the active debug mode, F3 cycles it, and WGSL routes hit/depth/normal/motion/brick/SH debug colors through the deferred prepass payload instead of a separate overlay.",
+      "Bevy render diagnostics now wrap Grid-height generation, light brick occupancy, SH propagation, and deferred raymarch. The Grid is a GPU source field now: a 128x128 storage-buffer domain stores height, x/y slope, and edge coverage before terrain, normals, bricks, lighting, and debug modes consume it.",
       "TAA only helps Aquarium's noisy fields if raymarched surfaces write correct depth and motion vectors. Camera cuts, Grid scale jumps, and hot reload rehydration should reset temporal history through explicit persisted state."
     ],
     "gpu_compute_specialist": [
@@ -166,7 +167,8 @@
       "Use GPU or batched generation for expensive spectral work.",
       "Agent voices can be continuous; interface controls should be transient.",
       "Subtractive interface hits start with noise and shape it with resonators.",
-      "Rust-native synth work belongs in the isolated `crates/aquarium_synth` crate. Bevy should consume narrow `AudioUnit` adapters and presets from that crate instead of growing patch logic in `bevy-aquarium/src/main.rs`."
+      "Rust-native synth work belongs in the isolated `crates/aquarium_synth` crate. Bevy should consume narrow `AudioUnit` adapters and presets from that crate instead of growing patch logic in `bevy-aquarium/src/main.rs`.",
+      "`aquarium_synth` has a line-oriented patch script: `patch`, `voice`, and `sfxr` commands with key=value fields. It can mix modular voices with classic sfxr preset lines, e.g. `sfxr preset=laser mutate_seed=9 mutate=0.01`."
     ],
     "interaction_design": [
       "Progressive disclosure is the core grammar: vibes first, object second, surface third.",

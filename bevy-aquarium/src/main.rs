@@ -18,7 +18,7 @@ use bevy::pbr::DefaultOpaqueRendererMethod;
 use bevy::prelude::*;
 use bevy::render::{
     RenderApp, RenderStartup,
-    diagnostic::RenderDiagnosticsPlugin,
+    diagnostic::{RecordDiagnostics, RenderDiagnosticsPlugin},
     extract_component::{
         ComponentUniforms, DynamicUniformIndex, ExtractComponent, ExtractComponentPlugin,
         UniformComponentPlugin,
@@ -78,6 +78,8 @@ const LIGHT_BRICK_WIDTH: usize = 8;
 const LIGHT_BRICK_HEIGHT: usize = 8;
 const LIGHT_BRICK_DEPTH: usize = 4;
 const LIGHT_BRICK_COUNT: usize = LIGHT_BRICK_WIDTH * LIGHT_BRICK_HEIGHT * LIGHT_BRICK_DEPTH;
+const GRID_FIELD_SIZE: usize = 128;
+const GRID_FIELD_COUNT: usize = GRID_FIELD_SIZE * GRID_FIELD_SIZE;
 
 fn main() {
     let runtime_bridge = CultRuntimeBridge::load().unwrap_or_else(|err| {
@@ -755,6 +757,7 @@ struct AquariumRaymarchPipeline {
     compute_layout: BindGroupLayoutDescriptor,
     prepass_layout: BindGroupLayoutDescriptor,
     deferred_prepass_pipeline_id: CachedRenderPipelineId,
+    height_pipeline_id: CachedComputePipelineId,
     compute_pipeline_id: CachedComputePipelineId,
     brick_pipeline_id: CachedComputePipelineId,
 }
@@ -763,6 +766,7 @@ struct AquariumRaymarchPipeline {
 struct AquariumLightBuffers {
     buffers: [Buffer; 2],
     brick_occupancy: Buffer,
+    grid_height: Buffer,
     frame: AtomicU32,
 }
 
@@ -775,6 +779,7 @@ fn init_aquarium_raymarch_pipeline(
 ) {
     let storage_size = (LIGHT_COEFFICIENT_COUNT * size_of::<Vec4>()) as u64;
     let brick_storage_size = (LIGHT_BRICK_COUNT * size_of::<u32>()) as u64;
+    let grid_height_storage_size = (GRID_FIELD_COUNT * size_of::<Vec4>()) as u64;
     let buffers = [
         render_device.create_buffer(&BufferDescriptor {
             label: Some("aquarium_sh_volume_a"),
@@ -795,6 +800,12 @@ fn init_aquarium_raymarch_pipeline(
         usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
+    let grid_height = render_device.create_buffer(&BufferDescriptor {
+        label: Some("aquarium_grid_height_field"),
+        size: grid_height_storage_size,
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
 
     let compute_layout = BindGroupLayoutDescriptor::new(
         "aquarium_raymarch_compute_layout",
@@ -805,6 +816,7 @@ fn init_aquarium_raymarch_pipeline(
                 (4, storage_buffer_read_only_sized(false, None)),
                 (5, storage_buffer_sized(false, None)),
                 (6, storage_buffer_sized(false, None)),
+                (7, storage_buffer_sized(false, None)),
             ),
         ),
     );
@@ -815,11 +827,19 @@ fn init_aquarium_raymarch_pipeline(
             (
                 (2, uniform_buffer::<AquariumRaymarch>(true)),
                 (3, storage_buffer_read_only_sized(false, None)),
+                (7, storage_buffer_sized(false, None)),
             ),
         ),
     );
 
     let shader = asset_server.load("shaders/aquarium_raymarch.wgsl");
+    let height_pipeline_id = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+        label: Some("aquarium_grid_height_compute".into()),
+        layout: vec![compute_layout.clone()],
+        shader: shader.clone(),
+        entry_point: Some("cs_update_grid_height".into()),
+        ..default()
+    });
     let deferred_prepass_pipeline_id =
         pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
             label: Some("aquarium_raymarch_deferred_prepass_pipeline".into()),
@@ -881,12 +901,14 @@ fn init_aquarium_raymarch_pipeline(
         compute_layout,
         prepass_layout,
         deferred_prepass_pipeline_id,
+        height_pipeline_id,
         compute_pipeline_id,
         brick_pipeline_id,
     });
     commands.insert_resource(AquariumLightBuffers {
         buffers,
         brick_occupancy,
+        grid_height,
         frame: AtomicU32::new(0),
     });
 }
@@ -933,6 +955,11 @@ impl ViewNode for AquariumDeferredPrepassNode {
         else {
             return Ok(());
         };
+        let Some(height_pipeline) =
+            pipeline_cache.get_compute_pipeline(pipeline.height_pipeline_id)
+        else {
+            return Ok(());
+        };
         let Some(brick_pipeline) = pipeline_cache.get_compute_pipeline(pipeline.brick_pipeline_id)
         else {
             return Ok(());
@@ -961,9 +988,11 @@ impl ViewNode for AquariumDeferredPrepassNode {
                 (4, buffers.buffers[read_index].as_entire_binding()),
                 (5, buffers.buffers[write_index].as_entire_binding()),
                 (6, buffers.brick_occupancy.as_entire_binding()),
+                (7, buffers.grid_height.as_entire_binding()),
             )),
         );
         {
+            let diagnostics = render_context.diagnostic_recorder();
             let mut pass =
                 render_context
                     .command_encoder()
@@ -971,12 +1000,21 @@ impl ViewNode for AquariumDeferredPrepassNode {
                         label: Some("aquarium_light_compute"),
                         ..default()
                     });
+            let height_span = diagnostics.pass_span(&mut pass, "aquarium_grid_height_compute");
+            pass.set_pipeline(height_pipeline);
+            pass.set_bind_group(0, &compute_bind_group, &[settings_index.index()]);
+            pass.dispatch_workgroups(GRID_FIELD_COUNT.div_ceil(64) as u32, 1, 1);
+            height_span.end(&mut pass);
+            let brick_span = diagnostics.pass_span(&mut pass, "aquarium_light_brick_occupancy");
             pass.set_pipeline(brick_pipeline);
             pass.set_bind_group(0, &compute_bind_group, &[settings_index.index()]);
             pass.dispatch_workgroups(LIGHT_BRICK_COUNT.div_ceil(64) as u32, 1, 1);
+            brick_span.end(&mut pass);
+            let sh_span = diagnostics.pass_span(&mut pass, "aquarium_sh_grid_lighting");
             pass.set_pipeline(compute_pipeline);
             pass.set_bind_group(0, &compute_bind_group, &[settings_index.index()]);
             pass.dispatch_workgroups(LIGHT_GRID_COUNT.div_ceil(64) as u32, 1, 1);
+            sh_span.end(&mut pass);
         }
 
         let bind_group = render_context.render_device().create_bind_group(
@@ -985,6 +1023,7 @@ impl ViewNode for AquariumDeferredPrepassNode {
             &BindGroupEntries::with_indices((
                 (2, settings_binding.clone()),
                 (3, buffers.buffers[write_index].as_entire_binding()),
+                (7, buffers.grid_height.as_entire_binding()),
             )),
         );
 
@@ -1003,6 +1042,7 @@ impl ViewNode for AquariumDeferredPrepassNode {
             stencil_ops: None,
         });
         {
+            let diagnostics = render_context.diagnostic_recorder();
             let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
                 label: Some("aquarium_raymarch_deferred_prepass"),
                 color_attachments: &color_attachments,
@@ -1010,9 +1050,12 @@ impl ViewNode for AquariumDeferredPrepassNode {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+            let raymarch_span =
+                diagnostics.pass_span(&mut render_pass, "aquarium_deferred_raymarch");
             render_pass.set_render_pipeline(render_pipeline);
             render_pass.set_bind_group(0, &bind_group, &[settings_index.index()]);
             render_pass.draw(0..3, 0..1);
+            raymarch_span.end(&mut render_pass);
         }
 
         render_context.command_encoder().copy_texture_to_texture(
