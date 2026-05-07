@@ -45,7 +45,6 @@ use cultnet_rs::{
 use std::f32::consts::{FRAC_PI_2, TAU};
 use std::mem::size_of;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
@@ -224,7 +223,7 @@ impl Default for DebugUiState {
             terminal_input: String::new(),
             terminal_lines: vec![
                 "Epiphany Aquarium debug terminal".to_string(),
-                "Type `help`; commands execute through PowerShell.".to_string(),
+                "Type `help`; commands are internal debug verbs.".to_string(),
             ],
         }
     }
@@ -233,6 +232,35 @@ impl Default for DebugUiState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DebugTab {
     Terminal,
+}
+
+struct DebugCommandSpec {
+    name: &'static str,
+    usage: &'static str,
+    summary: &'static str,
+}
+
+const DEBUG_COMMANDS: &[DebugCommandSpec] = &[
+    DebugCommandSpec {
+        name: "help",
+        usage: "help",
+        summary: "list registered debug commands",
+    },
+    DebugCommandSpec {
+        name: "clear",
+        usage: "clear",
+        summary: "clear the terminal output",
+    },
+    DebugCommandSpec {
+        name: "renderer",
+        usage: "renderer [mode|next|list]",
+        summary: "inspect or change the renderer debug mode",
+    },
+];
+
+struct DebugCommandResult {
+    clear_terminal: bool,
+    lines: Vec<String>,
 }
 
 impl Default for AquariumRendererSettings {
@@ -506,13 +534,18 @@ impl RendererDebugMode {
     }
 
     fn from_key(value: &str) -> Self {
+        Self::from_key_option(value).unwrap_or(Self::Final)
+    }
+
+    fn from_key_option(value: &str) -> Option<Self> {
         match value {
-            "hit-coverage" => Self::HitCoverage,
-            "depth" => Self::Depth,
-            "normals" => Self::Normals,
-            "brick-occupancy" => Self::BrickOccupancy,
-            "irradiance-luminance" | "sh-luminance" => Self::IrradianceLuminance,
-            _ => Self::Final,
+            "final" => Some(Self::Final),
+            "hit-coverage" => Some(Self::HitCoverage),
+            "depth" => Some(Self::Depth),
+            "normals" => Some(Self::Normals),
+            "brick-occupancy" => Some(Self::BrickOccupancy),
+            "irradiance-luminance" | "sh-luminance" => Some(Self::IrradianceLuminance),
+            _ => None,
         }
     }
 
@@ -1352,6 +1385,8 @@ fn debug_ui_buttons(
 
 fn debug_terminal_input(
     mut debug: ResMut<DebugUiState>,
+    mut renderer_debug: ResMut<RendererDebugState>,
+    mut bridge: ResMut<CultRuntimeBridge>,
     mut keyboard_events: MessageReader<KeyboardInput>,
 ) {
     if !debug.open || debug.active_tab != DebugTab::Terminal || !debug.terminal_focused {
@@ -1373,13 +1408,12 @@ fn debug_terminal_input(
                     continue;
                 }
                 debug.terminal_lines.push(format!("> {command}"));
-                if command == "clear" {
+                let result = execute_debug_command(&command, &mut renderer_debug, &mut bridge);
+                if result.clear_terminal {
                     debug.terminal_lines.clear();
-                } else {
-                    let output = run_debug_terminal_command(&command);
-                    for line in output.lines() {
-                        debug.terminal_lines.push(line.to_string());
-                    }
+                }
+                for line in result.lines {
+                    debug.terminal_lines.push(line);
                 }
                 let keep = 28;
                 if debug.terminal_lines.len() > keep {
@@ -1403,41 +1437,88 @@ fn debug_terminal_input(
     }
 }
 
-fn run_debug_terminal_command(command: &str) -> String {
-    match command.trim() {
-        "help" => "builtins: help, clear\nshell: any other line is sent to PowerShell".to_string(),
-        "clear" => String::new(),
-        command => match Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                command,
-            ])
-            .output()
-        {
-            Ok(output) => {
-                let mut text = String::new();
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                if !stdout.trim().is_empty() {
-                    text.push_str(stdout.trim_end());
-                }
-                if !stderr.trim().is_empty() {
-                    if !text.is_empty() {
-                        text.push('\n');
-                    }
-                    text.push_str(stderr.trim_end());
-                }
-                if text.is_empty() {
-                    format!("exit {}", output.status.code().unwrap_or_default())
-                } else {
-                    text
-                }
-            }
-            Err(err) => format!("failed to run PowerShell: {err}"),
+fn execute_debug_command(
+    command: &str,
+    renderer_debug: &mut RendererDebugState,
+    bridge: &mut CultRuntimeBridge,
+) -> DebugCommandResult {
+    let mut parts = command.split_whitespace();
+    let Some(verb) = parts.next() else {
+        return DebugCommandResult {
+            clear_terminal: false,
+            lines: Vec::new(),
+        };
+    };
+
+    match verb {
+        "help" => DebugCommandResult {
+            clear_terminal: false,
+            lines: DEBUG_COMMANDS
+                .iter()
+                .map(|spec| format!("{:<10} {:<24} {}", spec.name, spec.usage, spec.summary))
+                .collect(),
         },
+        "clear" => DebugCommandResult {
+            clear_terminal: true,
+            lines: Vec::new(),
+        },
+        "renderer" => debug_renderer_command(parts.collect(), renderer_debug, bridge),
+        unknown => DebugCommandResult {
+            clear_terminal: false,
+            lines: vec![
+                format!("unknown debug command `{unknown}`"),
+                "type `help` for registered commands".to_string(),
+            ],
+        },
+    }
+}
+
+fn debug_renderer_command(
+    args: Vec<&str>,
+    renderer_debug: &mut RendererDebugState,
+    bridge: &mut CultRuntimeBridge,
+) -> DebugCommandResult {
+    let Some(first) = args.first().copied() else {
+        return DebugCommandResult {
+            clear_terminal: false,
+            lines: vec![format!("renderer mode: {}", renderer_debug.mode.as_key())],
+        };
+    };
+
+    if first == "list" {
+        return DebugCommandResult {
+            clear_terminal: false,
+            lines: RendererDebugMode::ALL
+                .iter()
+                .map(|mode| mode.as_key().to_string())
+                .collect(),
+        };
+    }
+
+    let requested = if first == "next" {
+        renderer_debug.mode.next()
+    } else {
+        let Some(mode) = RendererDebugMode::from_key_option(first) else {
+            return DebugCommandResult {
+                clear_terminal: false,
+                lines: vec![
+                    format!("unknown renderer mode `{first}`"),
+                    "try `renderer list`".to_string(),
+                ],
+            };
+        };
+        mode
+    };
+    renderer_debug.mode = requested;
+    let save_result = bridge.save_renderer_settings(renderer_debug.as_settings());
+    let mut lines = vec![format!("renderer mode: {}", renderer_debug.mode.as_key())];
+    if let Err(err) = save_result {
+        lines.push(format!("failed to persist renderer mode: {err}"));
+    }
+
+    DebugCommandResult {
+        clear_terminal: false,
+        lines,
     }
 }
 

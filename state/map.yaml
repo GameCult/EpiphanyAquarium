@@ -47,6 +47,7 @@ current_model:
     backend_gui: E:\Projects\EpiphanyAgent\.epiphany-gui
   behavior_map: notes/aquarium-behavior-map.md
   renderer_map: notes/aquarium-renderer-map.md
+  bevy_debug_ui_map: notes/bevy-debug-ui.md
   rust_vfx_research_map: notes/rust-vfx-research-map.md
   backend_api_tree_map: notes/epiphany-agent-api-tree-map.md
   aetheria_volumetric_fog_map: notes/aetheria-volumetric-fog-map.md
@@ -188,7 +189,8 @@ landed:
   - Anchored `aquarium_synth` sfxr compatibility tests to the original `sfxr` crate as dev-only ground truth. Integration tests render seeded sfxr presets through the reference generator, map the same `Sample` fields into `SfxrParams`, render the modular path, and compare duration/RMS/attack/zero-crossing features.
   - Promoted audio passability metrics into the `aquarium_synth` API. `analyze_audio` extracts gated duration, attack, peak, RMS, zero-crossing rate, spectral centroid/rolloff, RMS envelope, and normalized log-mel spectrogram data; `compare_audio` reports feature ratios, envelope distance, log-mel distance, and a score.
   - Reworked `aquarium_synth` analysis for game-scale throughput. `AudioAnalyzer` now caches a RustFFT plan plus reusable FFT/spectrum buffers, and the public convenience functions route through it. Tests use a smaller comparison config so the sfxr oracle remains quick after compilation.
-  - Added the first Bevy-native Debug UI. A tiny top-left `>_` button expands square tab buttons and opens a left-half terminal panel, with a focused PowerShell-backed terminal as the first debug tab and camera controls paused while terminal focus is active.
+  - Added the first Bevy-native Debug UI. A tiny top-left `>_` button expands square tab buttons and opens a left-half terminal panel, with a focused registered-command terminal as the first debug tab and camera controls paused while terminal focus is active.
+  - Replaced the temporary PowerShell-backed debug terminal with an in-process command DSL. Registered commands now include help, clear, and renderer mode control; unknown commands are rejected instead of being sent to the OS.
   - Added fast buffer rendering and first-class modulation lanes to `aquarium_synth`. `PatchPlayer` can fill mono and interleaved stereo buffers directly, and scriptable modulators can target gain, pitch, duty, filters, noise, drive, fold, and formant mix.
   - Promoted `aquarium_synth` toward a real modular authoring surface. Patches now carry named patch-level control lanes via `lfo`/`control` script commands, `PatchBuilder` provides a Rust construction API, and render helpers can turn a patch or script into complete mono/stereo buffers.
   - Corrected the sfxr script-golf target after the preset-atom shortcut was called out as cheating. The compiler now has terse primitive aliases for patch and voice fields, and `CLASSIC_SFXR_PRIMITIVE_GOLF_SCRIPTS` expresses each classic sound as `p`/`v` graph primitives whose analyzed output matches the named sfxr patch path.
