@@ -445,7 +445,7 @@ enum RendererDebugMode {
     Depth,
     Normals,
     BrickOccupancy,
-    ShLuminance,
+    IrradianceLuminance,
 }
 
 impl RendererDebugMode {
@@ -455,7 +455,7 @@ impl RendererDebugMode {
         Self::Depth,
         Self::Normals,
         Self::BrickOccupancy,
-        Self::ShLuminance,
+        Self::IrradianceLuminance,
     ];
 
     fn as_key(self) -> &'static str {
@@ -465,7 +465,7 @@ impl RendererDebugMode {
             Self::Depth => "depth",
             Self::Normals => "normals",
             Self::BrickOccupancy => "brick-occupancy",
-            Self::ShLuminance => "sh-luminance",
+            Self::IrradianceLuminance => "irradiance-luminance",
         }
     }
 
@@ -475,7 +475,7 @@ impl RendererDebugMode {
             "depth" => Self::Depth,
             "normals" => Self::Normals,
             "brick-occupancy" => Self::BrickOccupancy,
-            "sh-luminance" => Self::ShLuminance,
+            "irradiance-luminance" | "sh-luminance" => Self::IrradianceLuminance,
             _ => Self::Final,
         }
     }
@@ -487,7 +487,7 @@ impl RendererDebugMode {
             Self::Depth => 2.0,
             Self::Normals => 3.0,
             Self::BrickOccupancy => 4.0,
-            Self::ShLuminance => 5.0,
+            Self::IrradianceLuminance => 5.0,
         }
     }
 
@@ -751,13 +751,13 @@ fn init_aquarium_raymarch_pipeline(
     let grid_height_storage_size = (GRID_FIELD_COUNT * size_of::<Vec4>()) as u64;
     let buffers = [
         render_device.create_buffer(&BufferDescriptor {
-            label: Some("aquarium_sh_volume_a"),
+            label: Some("aquarium_irradiance_volume_a"),
             size: storage_size,
             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         }),
         render_device.create_buffer(&BufferDescriptor {
-            label: Some("aquarium_sh_volume_b"),
+            label: Some("aquarium_irradiance_volume_b"),
             size: storage_size,
             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -829,7 +829,7 @@ fn init_aquarium_raymarch_pipeline(
         ..default()
     });
     let compute_pipeline_id = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
-        label: Some("aquarium_sh_grid_compute".into()),
+        label: Some("aquarium_irradiance_grid_compute".into()),
         layout: vec![compute_layout.clone()],
         shader,
         entry_point: Some("cs_grid_lighting".into()),
@@ -910,7 +910,7 @@ impl ViewNode for AquariumRaymarchNode {
         let write_index = 1usize - read_index;
 
         let compute_bind_group = render_context.render_device().create_bind_group(
-            "aquarium_sh_compute_bind_group",
+            "aquarium_irradiance_compute_bind_group",
             &pipeline_cache.get_bind_group_layout(&pipeline.compute_layout),
             &BindGroupEntries::with_indices((
                 (2, settings_binding.clone()),
@@ -939,7 +939,7 @@ impl ViewNode for AquariumRaymarchNode {
             pass.set_bind_group(0, &compute_bind_group, &[settings_index.index()]);
             pass.dispatch_workgroups(LIGHT_BRICK_COUNT.div_ceil(64) as u32, 1, 1);
             brick_span.end(&mut pass);
-            let sh_span = diagnostics.pass_span(&mut pass, "aquarium_sh_grid_lighting");
+            let sh_span = diagnostics.pass_span(&mut pass, "aquarium_irradiance_grid_lighting");
             pass.set_pipeline(compute_pipeline);
             pass.set_bind_group(0, &compute_bind_group, &[settings_index.index()]);
             pass.dispatch_workgroups(LIGHT_GRID_COUNT.div_ceil(64) as u32, 1, 1);

@@ -260,10 +260,10 @@ fn sh_read(volume_index: u32, offset: u32) -> vec3f {
 fn sh_lighting_at(index: u32, normal: vec3f) -> vec3f {
     let y0 = 0.282095;
     let y1 = 0.488603;
-    return sh_read(index, SH_L0_OFFSET) * y0
+    return max(sh_read(index, SH_L0_OFFSET) * y0
         + sh_read(index, SH_L1X_OFFSET) * (y1 * normal.x)
         + sh_read(index, SH_L1Y_OFFSET) * (y1 * normal.y)
-        + sh_read(index, SH_L1Z_OFFSET) * (y1 * normal.z);
+        + sh_read(index, SH_L1Z_OFFSET) * (y1 * normal.z), vec3f(0.0));
 }
 
 fn grid_volume_position(point: vec3f) -> vec3f {
@@ -319,24 +319,12 @@ fn self_body() -> vec4f {
     return vec4f(field.grid_center, grid_height(field.grid_center) + 4.0, 1.25);
 }
 
-fn direct_self_light(point: vec3f, normal: vec3f) -> vec3f {
-    let sun = self_body();
-    let to_sun = sun.xyz - point;
-    let distance = max(length(to_sun), 0.001);
-    let light_dir = to_sun / distance;
-    let ndotl = max(dot(normalize(normal), light_dir), 0.0);
-    let surface_distance = max(distance - sun.w, 0.25);
-    let attenuation = 1.0 / (1.0 + surface_distance * surface_distance * 0.028);
-    let visibility = smoothstep(0.0, 0.18, ndotl);
-    return vec3f(5.8, 3.25, 1.05) * ndotl * visibility * attenuation;
-}
-
 fn shade_diegetic(albedo: vec3f, point: vec3f, normal: vec3f, roughness: f32) -> vec3f {
-    let direct = direct_self_light(point, normal);
+    let irradiance = sample_sh_lighting(normalize(normal), point);
     let view_dir = normalize(field.camera_position.xyz - point);
     let fresnel = pow(1.0 - clamp(dot(normalize(normal), view_dir), 0.0, 1.0), 4.0);
-    let soft_rim = fresnel * roughness * 0.035;
-    return albedo * direct + albedo * soft_rim;
+    let grazing_scatter = sample_sh_lighting(normalize(normal + view_dir * 0.35), point) * fresnel * roughness * 0.08;
+    return albedo * (irradiance + grazing_scatter);
 }
 
 fn interleaved_noise(pixel: vec2f) -> f32 {
@@ -385,6 +373,57 @@ fn write_sh(index: u32, l0: vec4f, l1x: vec4f, l1y: vec4f, l1z: vec4f) {
     next_sh_volume.values[SH_L1X_OFFSET + index] = vec4f(clamp(l1x.rgb, vec3f(0.0), vec3f(18.0)), 0.0);
     next_sh_volume.values[SH_L1Y_OFFSET + index] = vec4f(clamp(l1y.rgb, vec3f(0.0), vec3f(18.0)), 0.0);
     next_sh_volume.values[SH_L1Z_OFFSET + index] = vec4f(clamp(l1z.rgb, vec3f(0.0), vec3f(18.0)), 0.0);
+}
+
+fn sh_encode_directional_radiance(radiance: vec3f, direction: vec3f) -> array<vec4f, 4> {
+    let d = normalize(direction);
+    return array<vec4f, 4>(
+        vec4f(radiance * 0.282095, 0.0),
+        vec4f(radiance * (0.488603 * d.x), 0.0),
+        vec4f(radiance * (0.488603 * d.y), 0.0),
+        vec4f(radiance * (0.488603 * d.z), 0.0),
+    );
+}
+
+fn body_occludes_light(point: vec3f) -> bool {
+    for (var body_index = 0u; body_index < 8u; body_index = body_index + 1u) {
+        if (f32(body_index) >= field.body_count) {
+            break;
+        }
+        if (field.colors[body_index].w > 0.5) {
+            continue;
+        }
+        let body = field.bodies[body_index];
+        if (length(point - body.xyz) < body.w * 0.98) {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn visibility_to_self(point: vec3f) -> f32 {
+    let sun = self_body();
+    let to_sun = sun.xyz - point;
+    let distance_to_center = length(to_sun);
+    let travel_distance = max(distance_to_center - sun.w, 0.05);
+    let direction = to_sun / max(distance_to_center, 0.001);
+    let top = grid_volume_top(field.grid_half_extent);
+    let step_length = travel_distance / 12.0;
+    var transmittance = 1.0;
+
+    for (var step = 1u; step <= 12u; step = step + 1u) {
+        let t = (f32(step) - 0.35) * step_length;
+        let sample_point = point + direction * t;
+        let edge = grid_edge_fade(sample_point.xy);
+        let surface_clearance = sample_point.z - grid_height(sample_point.xy);
+        if (edge <= 0.0 || surface_clearance < 0.025 || body_occludes_light(sample_point)) {
+            return 0.0;
+        }
+        let fog_density = exp(-max(surface_clearance, 0.0) / max(top * 0.24, 0.5)) * edge * 0.035;
+        transmittance *= exp(-fog_density * step_length);
+    }
+
+    return clamp(transmittance, 0.0, 1.0);
 }
 
 @compute @workgroup_size(64)
@@ -461,6 +500,10 @@ fn cs_grid_lighting(@builtin(global_invocation_id) id: vec3u) {
     let top = grid_volume_top(field.grid_half_extent);
     let height_above_grid = ((f32(z) + 0.5) / f32(LIGHT_GRID_DEPTH)) * top;
     let point = vec3f(xy, grid_height(xy) + height_above_grid);
+    let vertical_medium = exp(-height_above_grid / max(top * 0.34, 0.5));
+    let terrain_medium = select(0.0, 0.18, (brick_flags & LIGHT_BRICK_TERRAIN) != 0u);
+    let body_medium = select(0.0, 0.12, (brick_flags & (LIGHT_BRICK_BODY | LIGHT_BRICK_SELF)) != 0u);
+    let scatter_density = edge_fade * clamp(0.045 + vertical_medium * 0.22 + terrain_medium + body_medium, 0.0, 0.75);
 
     let swirl = vec2f(-local.y, local.x) * (0.18 + 0.05 * sin(field.time * 0.21 + point.z * 0.17));
     let drift = vec2f(
@@ -473,15 +516,10 @@ fn cs_grid_lighting(@builtin(global_invocation_id) id: vec3u) {
     let flow_z = sin(dot(local, vec2f(2.1, -1.7)) + field.time * 0.24) * 0.24;
     let sample_position = previous_grid_volume_position(previous_xy, height_above_grid) - vec3f(0.0, 0.0, flow_z * dt);
 
-    var l0 = previous_coeff_sample(sample_position, SH_L0_OFFSET) * 0.78;
-    var l1x = previous_coeff_sample(sample_position, SH_L1X_OFFSET) * 0.78;
-    var l1y = previous_coeff_sample(sample_position, SH_L1Y_OFFSET) * 0.78;
-    var l1z = previous_coeff_sample(sample_position, SH_L1Z_OFFSET) * 0.78;
-
-    if (brick_flags == 0u) {
-        write_sh(index, l0 * edge_fade * 0.72, l1x * edge_fade * 0.72, l1y * edge_fade * 0.72, l1z * edge_fade * 0.72);
-        return;
-    }
+    var l0 = previous_coeff_sample(sample_position, SH_L0_OFFSET) * 0.62;
+    var l1x = previous_coeff_sample(sample_position, SH_L1X_OFFSET) * 0.62;
+    var l1y = previous_coeff_sample(sample_position, SH_L1Y_OFFSET) * 0.62;
+    var l1z = previous_coeff_sample(sample_position, SH_L1Z_OFFSET) * 0.62;
 
     let neighbors = array<vec3i, 6>(
         vec3i(-1, 0, 0),
@@ -495,7 +533,7 @@ fn cs_grid_lighting(@builtin(global_invocation_id) id: vec3u) {
         let n = vec3i(i32(x), i32(y), i32(z)) + neighbors[i];
         if (all(n >= vec3i(0)) && n.x < i32(LIGHT_GRID_WIDTH) && n.y < i32(LIGHT_GRID_HEIGHT) && n.z < i32(LIGHT_GRID_DEPTH)) {
             let ni = light_grid_index_xyz(u32(n.x), u32(n.y), u32(n.z));
-            let scatter = select(0.016, 0.026, (brick_flags & (LIGHT_BRICK_BODY | LIGHT_BRICK_SELF)) != 0u);
+            let scatter = mix(0.010, 0.038, scatter_density);
             l0 += previous_coeff_at(ni, SH_L0_OFFSET) * scatter;
             l1x += previous_coeff_at(ni, SH_L1X_OFFSET) * scatter;
             l1y += previous_coeff_at(ni, SH_L1Y_OFFSET) * scatter;
@@ -514,22 +552,24 @@ fn cs_grid_lighting(@builtin(global_invocation_id) id: vec3u) {
         l1z += previous_coeff_sample(detailed_sample, SH_L1Z_OFFSET) * 0.10;
     }
 
-    for (var body_index = 0u; body_index < 8u; body_index = body_index + 1u) {
-        if (f32(body_index) >= field.body_count || field.colors[body_index].w < 0.5) {
-            continue;
-        }
-        let sun_position = field.bodies[body_index].xyz;
-        let to_sun = sun_position - point;
-        let distance = max(length(to_sun), 0.001);
-        let direction = to_sun / distance;
-        let strength = exp(-distance * 0.045) * 8.6 * edge_fade;
-        let radiance = vec3f(4.4, 2.35, 0.72) * min(strength, 9.0);
-        let rgb = vec4f(radiance, 0.0);
-        l0 += rgb * 0.282095;
-        l1x += rgb * (0.488603 * direction.x);
-        l1y += rgb * (0.488603 * direction.y);
-        l1z += rgb * (0.488603 * direction.z);
-    }
+    let sun = self_body();
+    let to_sun = sun.xyz - point;
+    let distance = max(length(to_sun), 0.001);
+    let direction = to_sun / distance;
+    let visibility = visibility_to_self(point);
+    let solid_angle = (sun.w * sun.w) / max(distance * distance, sun.w * sun.w);
+    let solar_radiance = vec3f(18.0, 9.4, 2.7) * solid_angle * visibility * edge_fade;
+    let encoded = sh_encode_directional_radiance(solar_radiance, direction);
+    l0 += encoded[0];
+    l1x += encoded[1];
+    l1y += encoded[2];
+    l1z += encoded[3];
+
+    let scatter_glow = sh_encode_directional_radiance(solar_radiance * scatter_density * 0.18, normalize(vec3f(direction.xy * 0.35, 0.65)));
+    l0 += scatter_glow[0];
+    l1x += scatter_glow[1] * 0.45;
+    l1y += scatter_glow[2] * 0.45;
+    l1z += scatter_glow[3] * 0.45;
 
     l0 *= edge_fade;
     l1x *= edge_fade;
@@ -654,7 +694,7 @@ fn debug_froxel_occupancy(uv: vec2f, sample_t: f32) -> f32 {
     return count / 8.0;
 }
 
-fn debug_sh_luminance(sample: SurfaceSample) -> f32 {
+fn debug_irradiance_luminance(sample: SurfaceSample) -> f32 {
     let light = sample_sh_lighting(sample.normal, sample.point);
     return clamp(dot(light, vec3f(0.2126, 0.7152, 0.0722)) / 4.0, 0.0, 1.0);
 }
@@ -676,7 +716,7 @@ fn debug_color(sample: SurfaceSample, uv: vec2f) -> vec3f {
         return mix(vec3f(0.02, 0.02, 0.04), vec3f(0.12, 0.95, 0.48), occupancy);
     }
     if (mode == 5u) {
-        let luminance = debug_sh_luminance(sample);
+        let luminance = debug_irradiance_luminance(sample);
         return mix(vec3f(0.01, 0.015, 0.04), vec3f(1.0, 0.76, 0.18), luminance);
     }
     return sample.color;
@@ -723,7 +763,7 @@ fn terrain_hit(ray_origin: vec3f, ray_dir: vec3f, jitter: f32) -> TerrainHit {
                 let lines = grid_line_factor(plane_point.xy);
                 let base = grid_weather_color(plane_point.xy, 0.0) + vec3f(0.82, 0.92, 0.84) * lines * 0.20;
                 let alpha = clamp(edge_fade * (0.14 + lines * 0.42), 0.0, 0.62);
-                return TerrainHit(base * edge_fade, alpha, plane_t);
+                return TerrainHit(clamp(base, vec3f(0.0), vec3f(0.82)), alpha, plane_t);
             }
         }
         return TerrainHit(vec3f(0.0), 0.0, field.depth_far + 1.0);
@@ -756,10 +796,10 @@ fn terrain_hit(ray_origin: vec3f, ray_dir: vec3f, jitter: f32) -> TerrainHit {
     let field_energy = clamp(abs(height) * 1.15, 0.0, 1.0);
     let weather = grid_weather_color(surface_point.xy, height);
     let grid_base = weather + vec3f(0.82, 0.92, 0.84) * lines * (0.24 + field_energy * 0.08);
-    let hot = mix(grid_base, vec3f(0.82, 0.42, 0.18), field_energy * 0.34);
-    let lit = hot * edge_fade * (0.38 + fresnel * 0.12 + lines * 0.05);
+    let hot = mix(grid_base, vec3f(0.82, 0.42, 0.18), field_energy * 0.22);
+    let albedo = clamp(hot * (0.78 + fresnel * 0.08), vec3f(0.0), vec3f(0.86));
     let alpha = clamp(edge_fade * (0.18 + lines * 0.42 + field_energy * 0.14 + fresnel * 0.08), 0.0, 0.68);
-    return TerrainHit(lit, alpha, surface_t);
+    return TerrainHit(albedo, alpha, surface_t);
 }
 
 @fragment
