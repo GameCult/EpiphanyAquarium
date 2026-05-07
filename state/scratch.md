@@ -471,12 +471,16 @@ Current slice:
   per-voice flags for inactive modulation targets and DSP stages, skipping
   dead FM/color/phaser/gain-mod work where the patch graph cannot reach it.
   The current bigger swing exposes `CompiledPatch` as a reusable graph artifact,
-  lets `PatchPlayer::from_compiled` avoid incidental recompilation, and hoists
-  static filter coefficients out of the sample loop. Warmed local single-thread
-  result at 44.1 kHz for two-second buffers: simple plucks now sit around
-  1800-2000 estimated realtime voices, colored formant voices around 400-480,
-  and heavy wobble/FM/formant basses around 280-320. Practical game budgets
-  should stay well below parity and keep fills off the audio callback thread.
+  lets `PatchPlayer::from_compiled` avoid incidental recompilation, hoists
+  static filter coefficients and formant gain normalization out of the sample
+  loop, and turns FM index decay from per-sample `exp` into a cached one-pole
+  multiplier. The probe now includes deliberately maximal and maximal shared-bus
+  graphs. Warmed local single-thread result at 44.1 kHz for two-second buffers:
+  simple plucks around 1900-2200 estimated realtime voices, colored formants
+  around 450-520, wobble/FM/formant around 320-360, deliberately maximal
+  per-voice graphs around 180-215, and maximal shared-bus graphs around 240-265.
+  Practical game budgets should stay well below parity and keep fills off the
+  audio callback thread.
 - Current renderer post pass: Bevy camera has explicit `Hdr`,
   `Tonemapping::AcesFitted`, and gentle wide `Bloom` before tonemapping. Bloom
   is energy-conserving, low intensity, low high-pass frequency, and high

@@ -27,6 +27,20 @@ fn main() {
             )
             .expect("wobble benchmark patch parses"),
         },
+        Case {
+            name: "maximal_voice",
+            patch: SynthPatch::from_script(
+                "mod n=macro hz=5 w=tri g=.28 p=.025 du=.04 l=.35 h=.08 nz=.08 drv=.22 fl=.16 fmix=.35 fmi=2.4;v w=saw f=55 g=.2 s=.8 d=.35 pu=.08 pr=-.15 pdr=.03 vi=.02 vh=5 vd=.05 du=.42 dur=.03 l=.4 lr=.08 res=.25 h=.02 hr=.04 ph=.004 phr=.001 nz=.06 drv=.35 fl=.18 tr=.08 th=6 fm=2.3 fmi=1.4 fmd=.5 fs=420:70:.7,880:110:1,1550:180:.85,2600:320:.45 fmix=.42",
+            )
+            .expect("maximal benchmark patch parses"),
+        },
+        Case {
+            name: "maximal_shared_bus",
+            patch: SynthPatch::from_script(
+                "mod n=macro hz=5 w=tri g=.28 p=.025 du=.04 l=.35 h=.08 nz=.08 drv=.22 fl=.16 fmix=.35 fmi=2.4;v w=saw f=55 g=.2 s=.8 d=.35 pu=.08 pr=-.15 pdr=.03 vi=.02 vh=5 vd=.05 du=.42 dur=.03 l=.4 lr=.08 res=.25 h=.02 hr=.04 ph=.004 phr=.001 tr=.08 th=6 fm=2.3 fmi=1.4 fmd=.5 fs=420:70:.7,880:110:1,1550:180:.85,2600:320:.45 fmix=.42",
+            )
+            .expect("maximal shared-bus benchmark patch parses"),
+        },
     ];
 
     println!("sample_rate_hz,{SAMPLE_RATE}");

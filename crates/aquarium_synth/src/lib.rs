@@ -2236,6 +2236,9 @@ impl PatchPlayer {
             .iter()
             .map(VoiceState::new)
             .collect();
+        for (voice, state) in self.patch.patch.voices.iter().zip(self.voices.iter_mut()) {
+            state.set_sample_rate(voice, self.sample_rate);
+        }
     }
 
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
@@ -2367,6 +2370,7 @@ struct VoiceState {
     phaser_cursor: usize,
     phaser_buffer: Vec<f32>,
     formants: Vec<FormantState>,
+    formant_gain_scale: f32,
     modulators: [Vec<RuntimeModulator>; MOD_TARGET_COUNT],
     mod_active: [bool; MOD_TARGET_COUNT],
     dynamic_pitch: bool,
@@ -2375,6 +2379,10 @@ struct VoiceState {
     color_enabled: bool,
     phaser_enabled: bool,
     static_filter: Option<RuntimeFilter>,
+    static_frequency_hz: Option<f32>,
+    phase_increment: f32,
+    fm_decay_gain: f32,
+    fm_decay_step: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2421,6 +2429,7 @@ impl VoiceState {
                 .iter()
                 .map(|formant| FormantState::new(*formant))
                 .collect(),
+            formant_gain_scale: reciprocal_formant_gain_sum(&voice.formants),
             modulators: grouped_voice_modulators(&voice.modulators),
             mod_active: active_voice_mod_targets(&voice.modulators),
             dynamic_pitch: voice.pitch.ramp_per_second != 0.0
@@ -2436,7 +2445,28 @@ impl VoiceState {
             phaser_enabled: voice.phaser.offset_seconds.abs() > 0.00001
                 || voice.phaser.ramp_seconds_per_second != 0.0,
             static_filter: RuntimeFilter::for_static_filter(voice.filter),
+            static_frequency_hz: None,
+            phase_increment: 0.0,
+            fm_decay_gain: 1.0,
+            fm_decay_step: 1.0,
         }
+    }
+
+    fn set_sample_rate(&mut self, voice: &Voice, sample_rate: f32) {
+        self.static_frequency_hz = (!self.dynamic_pitch && voice.arpeggio.is_none()).then(|| {
+            voice
+                .oscillator
+                .frequency_hz
+                .max(voice.pitch.min_frequency_hz)
+                .clamp(10.0, 22_000.0)
+        });
+        self.phase_increment = self.static_frequency_hz.unwrap_or(0.0) / sample_rate;
+        self.fm_decay_gain = 1.0;
+        self.fm_decay_step = if voice.fm.index_decay_seconds > 0.0 {
+            (-1.0 / (voice.fm.index_decay_seconds.max(0.0001) * sample_rate)).exp()
+        } else {
+            1.0
+        };
     }
 
     fn next_sample(
@@ -2454,23 +2484,50 @@ impl VoiceState {
             return 0.0;
         }
 
-        let mut frequency = if self.dynamic_pitch {
-            frequency_at(voice, age)
-        } else {
-            voice
-                .oscillator
-                .frequency_hz
-                .max(voice.pitch.min_frequency_hz)
-                .clamp(10.0, 22_000.0)
-        };
-        if self.target_active(patch_active, ModTarget::Pitch) {
-            let pitch_mod = self.mod_amount(patch_mods, ModTarget::Pitch, age, seed);
-            frequency *= 2.0_f32.powf(pitch_mod);
-        }
-        if let Some(arpeggio) = voice.arpeggio {
-            if age >= arpeggio.delay_seconds {
-                frequency *= arpeggio.multiplier;
+        let pitch_mod_active = self.target_active(patch_active, ModTarget::Pitch);
+        let frequency;
+        let phase_step;
+        if !pitch_mod_active {
+            if let Some(static_frequency) = self.static_frequency_hz {
+                frequency = static_frequency;
+                phase_step = self.phase_increment;
+            } else {
+                let mut dynamic_frequency = if self.dynamic_pitch {
+                    frequency_at(voice, age)
+                } else {
+                    voice
+                        .oscillator
+                        .frequency_hz
+                        .max(voice.pitch.min_frequency_hz)
+                        .clamp(10.0, 22_000.0)
+                };
+                if let Some(arpeggio) = voice.arpeggio {
+                    if age >= arpeggio.delay_seconds {
+                        dynamic_frequency *= arpeggio.multiplier;
+                    }
+                }
+                frequency = dynamic_frequency;
+                phase_step = dynamic_frequency / sample_rate;
             }
+        } else {
+            let mut dynamic_frequency = if self.dynamic_pitch {
+                frequency_at(voice, age)
+            } else {
+                voice
+                    .oscillator
+                    .frequency_hz
+                    .max(voice.pitch.min_frequency_hz)
+                    .clamp(10.0, 22_000.0)
+            };
+            let pitch_mod = self.mod_amount(patch_mods, ModTarget::Pitch, age, seed);
+            dynamic_frequency *= 2.0_f32.powf(pitch_mod);
+            if let Some(arpeggio) = voice.arpeggio {
+                if age >= arpeggio.delay_seconds {
+                    dynamic_frequency *= arpeggio.multiplier;
+                }
+            }
+            frequency = dynamic_frequency;
+            phase_step = dynamic_frequency / sample_rate;
         }
         let duty = if self.dynamic_duty || self.target_active(patch_active, ModTarget::Duty) {
             (voice.oscillator.duty
@@ -2481,7 +2538,7 @@ impl VoiceState {
             voice.oscillator.duty.clamp(0.02, 0.98)
         };
         let previous_phase = self.phase;
-        self.phase = (self.phase + frequency / sample_rate).fract();
+        self.phase = (self.phase + phase_step).fract();
         if self.phase < previous_phase {
             self.noise_epoch = self.noise_epoch.wrapping_add(1);
         }
@@ -2493,7 +2550,9 @@ impl VoiceState {
                 .max(0.0);
             let mut fm = voice.fm;
             fm.index += fm_index_mod;
-            self.phase + voice.oscillator.phase + fm_phase_offset(fm, self.fm_phase, age)
+            let offset = fm_phase_offset_with_decay(fm, self.fm_phase, self.fm_decay_gain);
+            self.fm_decay_gain *= self.fm_decay_step;
+            self.phase + voice.oscillator.phase + offset
         } else {
             self.phase + voice.oscillator.phase
         };
@@ -2674,12 +2733,10 @@ impl VoiceState {
             return sample;
         }
         let mut resonant = 0.0;
-        let mut gain_sum = 0.0;
-        for (state, formant) in self.formants.iter_mut().zip(&voice.formants) {
-            resonant += state.process(sample, *formant, sample_rate) * formant.gain;
-            gain_sum += formant.gain.abs();
+        for state in &mut self.formants {
+            resonant += state.process(sample, sample_rate);
         }
-        let resonant = resonant / gain_sum.max(0.001);
+        let resonant = resonant * self.formant_gain_scale;
         sample * (1.0 - mix) + resonant * mix
     }
 
@@ -2726,6 +2783,7 @@ impl VoiceState {
 struct FormantState {
     source: Formant,
     sample_rate: f32,
+    gain: f32,
     b0: f32,
     b1: f32,
     b2: f32,
@@ -2742,6 +2800,7 @@ impl FormantState {
         Self {
             source,
             sample_rate: 0.0,
+            gain: source.gain,
             b0: 1.0,
             b1: 0.0,
             b2: 0.0,
@@ -2754,15 +2813,10 @@ impl FormantState {
         }
     }
 
-    fn process(&mut self, input: f32, formant: Formant, sample_rate: f32) -> f32 {
-        if self.source.frequency_hz != formant.frequency_hz
-            || self.source.bandwidth_hz != formant.bandwidth_hz
-            || self.source.gain != formant.gain
-            || self.sample_rate != sample_rate
-        {
-            self.source = formant;
+    fn process(&mut self, input: f32, sample_rate: f32) -> f32 {
+        if self.sample_rate != sample_rate {
             self.sample_rate = sample_rate;
-            self.update_coefficients(formant, sample_rate);
+            self.update_coefficients(sample_rate);
         }
         let output = self.b0 * input + self.b1 * self.x1 + self.b2 * self.x2
             - self.a1 * self.y1
@@ -2771,12 +2825,12 @@ impl FormantState {
         self.x1 = input;
         self.y2 = self.y1;
         self.y1 = output;
-        output
+        output * self.gain
     }
 
-    fn update_coefficients(&mut self, formant: Formant, sample_rate: f32) {
-        let frequency = formant.frequency_hz.clamp(20.0, sample_rate * 0.45);
-        let bandwidth = formant.bandwidth_hz.max(10.0);
+    fn update_coefficients(&mut self, sample_rate: f32) {
+        let frequency = self.source.frequency_hz.clamp(20.0, sample_rate * 0.45);
+        let bandwidth = self.source.bandwidth_hz.max(10.0);
         let q = (frequency / bandwidth).clamp(0.2, 40.0);
         let omega = TAU * frequency / sample_rate.max(1.0);
         let alpha = omega.sin() / (2.0 * q);
@@ -2938,15 +2992,18 @@ fn modulator_value(modulator: Modulator, age: f32, seed: u64) -> f32 {
     }
 }
 
-fn fm_phase_offset(fm: FrequencyModulation, phase: f32, age: f32) -> f32 {
+fn reciprocal_formant_gain_sum(formants: &[Formant]) -> f32 {
+    1.0 / formants
+        .iter()
+        .map(|formant| formant.gain.abs())
+        .sum::<f32>()
+        .max(0.001)
+}
+
+fn fm_phase_offset_with_decay(fm: FrequencyModulation, phase: f32, decay: f32) -> f32 {
     if fm.index <= 0.0 || fm.ratio <= 0.0 {
         return 0.0;
     }
-    let decay = if fm.index_decay_seconds > 0.0 {
-        (-age / fm.index_decay_seconds.max(0.0001)).exp()
-    } else {
-        1.0
-    };
     (phase * TAU).sin() * fm.index * decay / TAU
 }
 
