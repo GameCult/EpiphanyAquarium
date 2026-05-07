@@ -32,6 +32,7 @@
       "The current Bevy renderer already owns a custom deferred prepass node that runs brick/SH compute before `fs_deferred_prepass` writes the G-buffer. The next cut should instrument that path before adding beauty: Bevy RenderDiagnosticsPlugin, debug modes, and visible validation of depth/normal/motion/deferred payloads.",
       "The first Bevy renderer truth mode is live: `epiphany.aquarium.renderer-settings` in CultCache persists the active debug mode, F3 cycles it, and WGSL routes hit/depth/normal/motion/brick/SH debug colors through the deferred prepass payload instead of a separate overlay.",
       "Bevy render diagnostics now wrap Grid-height generation, light brick occupancy, SH propagation, and deferred raymarch. The Grid is a GPU source field now: a 128x128 storage-buffer domain stores height, x/y slope, and edge coverage before terrain, normals, bricks, lighting, and debug modes consume it.",
+      "The native renderer camera is explicitly HDR and uses `Tonemapping::AcesFitted` plus thresholded additive `Bloom`. Preserve that post stack while tuning sun/planet materials; otherwise solar emissive values get flattened before they can read.",
       "TAA only helps Aquarium's noisy fields if raymarched surfaces write correct depth and motion vectors. Camera cuts, Grid scale jumps, and hot reload rehydration should reset temporal history through explicit persisted state."
     ],
     "gpu_compute_specialist": [

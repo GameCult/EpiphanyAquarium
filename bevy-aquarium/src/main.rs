@@ -15,6 +15,7 @@ use bevy::ecs::query::QueryItem;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::light::GlobalAmbientLight;
 use bevy::pbr::DefaultOpaqueRendererMethod;
+use bevy::post_process::bloom::{Bloom, BloomCompositeMode, BloomPrefilter};
 use bevy::prelude::*;
 use bevy::render::{
     RenderApp, RenderStartup,
@@ -36,7 +37,7 @@ use bevy::render::{
         binding_types::{storage_buffer_read_only_sized, storage_buffer_sized, uniform_buffer},
     },
     renderer::{RenderContext, RenderDevice},
-    view::ViewDepthTexture,
+    view::{Hdr, ViewDepthTexture},
 };
 use bevy_procedural_audio::prelude::{
     DspAppExt, DspGraph, DspManager, DspPlugin, DspSource, SourceType,
@@ -1160,7 +1161,21 @@ fn setup(mut commands: Commands, bridge: Res<CultRuntimeBridge>, grid_frame: Res
         }),
         Transform::default(),
         Msaa::Off,
+        Hdr,
         Tonemapping::AcesFitted,
+        Bloom {
+            intensity: 0.24,
+            low_frequency_boost: 0.72,
+            low_frequency_boost_curvature: 0.88,
+            high_pass_frequency: 0.82,
+            prefilter: BloomPrefilter {
+                threshold: 1.0,
+                threshold_softness: 0.55,
+            },
+            composite_mode: BloomCompositeMode::Additive,
+            max_mip_dimension: 1024,
+            scale: Vec2::ONE,
+        },
         DepthPrepass,
         NormalPrepass,
         MotionVectorPrepass,

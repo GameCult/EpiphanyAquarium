@@ -472,3 +472,7 @@ Current slice:
   estimated realtime voices, colored formant voices around 350-450, and heavy
   wobble/FM/formant basses around 240-290. Practical game budgets should stay
   well below parity and keep fills off the audio callback thread.
+- Current renderer post pass: Bevy camera now has explicit `Hdr`,
+  `Tonemapping::AcesFitted`, and thresholded additive `Bloom`. The renderer
+  should now let the sun's HDR emissive values bloom while keeping planet/grid
+  midtones under ACES instead of clamping everything into flat SDR.

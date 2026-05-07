@@ -62,6 +62,9 @@ Current pass:
   occupancy, SH lighting, and the deferred raymarch sample it.
 - The density-history experiment is removed; the current renderer is back to
   making the sun and planets read before field complexity returns.
+- The camera renders through an HDR intermediate with `Tonemapping::AcesFitted`
+  and thresholded bloom, so solar emissive values can glow without flattening
+  the whole scene.
 
 Next renderer pass:
 
@@ -69,3 +72,5 @@ Next renderer pass:
   density, tint, and flow join it.
 - Improve raymarched body material response, solar surface motion, and planet
   readability before adding more field buffers.
+- Tune bloom exposure/material values against the actual running view, not just
+  compile-time righteousness.
