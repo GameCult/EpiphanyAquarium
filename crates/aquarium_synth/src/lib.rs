@@ -1,8 +1,17 @@
 use fundsp::prelude::{AttoHash, AudioUnit, BufferMut, BufferRef, SignalFrame};
 use serde::{Deserialize, Serialize};
 use std::f32::consts::TAU;
+use std::{error::Error, fmt};
 
 const DEFAULT_SAMPLE_RATE: f32 = 44_100.0;
+
+pub const PATCH_SCRIPT_EXAMPLE: &str = r#"
+# One command per line. Comments start with #.
+patch gain=0.7 soft_clip=true
+voice wave=sine freq=220 gain=0.12 attack=0.002 sustain=0.03 decay=0.2 vibrato=0.02 vibrato_hz=5
+voice wave=triangle freq=440 gain=0.04 attack=0 sustain=0.02 decay=0.18 lpf=0.7 hpf=0.02
+sfxr preset=laser mutate_seed=9 mutate=0.01
+"#;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Waveform {
@@ -208,6 +217,10 @@ impl SynthPatch {
             .map(|voice| voice.envelope.duration_seconds())
             .fold(0.0, f32::max)
     }
+
+    pub fn from_script(script: &str) -> Result<Self, PatchScriptError> {
+        parse_patch_script(script)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -270,6 +283,19 @@ impl Default for SfxrParams {
 }
 
 impl SfxrParams {
+    pub fn named(name: &str) -> Option<Self> {
+        match name {
+            "blip" => Some(Self::blip()),
+            "pickup" | "coin" => Some(Self::pickup()),
+            "laser" | "shoot" => Some(Self::laser()),
+            "explosion" => Some(Self::explosion()),
+            "powerup" => Some(Self::powerup()),
+            "hit" | "hurt" => Some(Self::hit()),
+            "jump" => Some(Self::jump()),
+            _ => None,
+        }
+    }
+
     pub fn blip() -> Self {
         Self {
             wave_type: Waveform::Sine,
@@ -280,6 +306,100 @@ impl SfxrParams {
             hpf_freq: 0.1,
             ..Default::default()
         }
+    }
+
+    pub fn explosion() -> Self {
+        Self {
+            wave_type: Waveform::Noise,
+            base_freq: 0.18,
+            freq_ramp: -0.15,
+            env_attack: 0.0,
+            env_sustain: 0.29,
+            env_decay: 0.36,
+            env_punch: 0.52,
+            pha_offset: -0.22,
+            pha_ramp: -0.1,
+            vib_strength: 0.22,
+            vib_speed: 0.28,
+            repeat_speed: 0.42,
+            ..Default::default()
+        }
+    }
+
+    pub fn powerup() -> Self {
+        Self {
+            wave_type: Waveform::Sine,
+            base_freq: 0.36,
+            freq_ramp: 0.28,
+            env_attack: 0.0,
+            env_sustain: 0.24,
+            env_decay: 0.28,
+            repeat_speed: 0.55,
+            vib_strength: 0.18,
+            vib_speed: 0.33,
+            ..Default::default()
+        }
+    }
+
+    pub fn hit() -> Self {
+        Self {
+            wave_type: Waveform::Noise,
+            base_freq: 0.34,
+            freq_ramp: -0.48,
+            env_attack: 0.0,
+            env_sustain: 0.05,
+            env_decay: 0.2,
+            hpf_freq: 0.12,
+            ..Default::default()
+        }
+    }
+
+    pub fn jump() -> Self {
+        Self {
+            wave_type: Waveform::Square,
+            duty: 0.24,
+            base_freq: 0.42,
+            freq_ramp: 0.22,
+            env_attack: 0.0,
+            env_sustain: 0.22,
+            env_decay: 0.18,
+            hpf_freq: 0.05,
+            lpf_freq: 0.72,
+            ..Default::default()
+        }
+    }
+
+    pub fn mutate(&mut self, seed: u64, amount: f32) {
+        let mut rng = SeededRng::new(seed);
+        let amount = amount.max(0.0);
+        macro_rules! nudge {
+            ($field:ident, $min:expr, $max:expr) => {
+                self.$field =
+                    (self.$field + rng.range(-amount, amount)).clamp($min as f32, $max as f32);
+            };
+        }
+        nudge!(base_freq, 0.0, 1.0);
+        nudge!(freq_ramp, -1.0, 1.0);
+        nudge!(freq_dramp, -1.0, 1.0);
+        nudge!(duty, 0.0, 1.0);
+        nudge!(duty_ramp, -1.0, 1.0);
+        nudge!(vib_strength, 0.0, 1.0);
+        nudge!(vib_speed, 0.0, 1.0);
+        nudge!(vib_delay, 0.0, 1.0);
+        nudge!(env_attack, 0.0, 1.0);
+        nudge!(env_sustain, 0.0, 1.0);
+        nudge!(env_decay, 0.0, 1.0);
+        nudge!(env_punch, -1.0, 1.0);
+        nudge!(lpf_resonance, 0.0, 1.0);
+        nudge!(lpf_freq, 0.0, 1.0);
+        nudge!(lpf_ramp, -1.0, 1.0);
+        nudge!(hpf_freq, 0.0, 1.0);
+        nudge!(hpf_ramp, -1.0, 1.0);
+        nudge!(pha_offset, -1.0, 1.0);
+        nudge!(pha_ramp, -1.0, 1.0);
+        nudge!(repeat_speed, 0.0, 1.0);
+        nudge!(arp_speed, 0.0, 1.0);
+        nudge!(arp_mod, -1.0, 1.0);
     }
 
     pub fn pickup() -> Self {
@@ -377,6 +497,293 @@ impl SfxrParams {
         };
         patch
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PatchScriptError {
+    pub line: usize,
+    pub message: String,
+}
+
+impl PatchScriptError {
+    fn new(line: usize, message: impl Into<String>) -> Self {
+        Self {
+            line,
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for PatchScriptError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "patch script line {}: {}",
+            self.line, self.message
+        )
+    }
+}
+
+impl Error for PatchScriptError {}
+
+pub fn parse_patch_script(script: &str) -> Result<SynthPatch, PatchScriptError> {
+    let mut patch = SynthPatch::new(Vec::new());
+    for (index, raw_line) in script.lines().enumerate() {
+        let line_number = index + 1;
+        let line = raw_line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let mut parts = line.split_whitespace();
+        let Some(command) = parts.next() else {
+            continue;
+        };
+        let fields = parse_fields(parts, line_number)?;
+        match command {
+            "patch" => apply_patch_fields(&mut patch, &fields, line_number)?,
+            "voice" => patch.voices.push(voice_from_fields(&fields, line_number)?),
+            "sfxr" => {
+                let mut params = if let Some(name) = field_value(&fields, "preset") {
+                    SfxrParams::named(name).ok_or_else(|| {
+                        PatchScriptError::new(line_number, format!("unknown sfxr preset `{name}`"))
+                    })?
+                } else {
+                    SfxrParams::default()
+                };
+                apply_sfxr_fields(&mut params, &fields, line_number)?;
+                let mapped = params.to_patch();
+                patch.voices.extend(mapped.voices);
+                patch.repeat = mapped.repeat;
+                patch.gain *= mapped.gain;
+            }
+            unknown => {
+                return Err(PatchScriptError::new(
+                    line_number,
+                    format!("unknown command `{unknown}`"),
+                ));
+            }
+        }
+    }
+    if patch.voices.is_empty() {
+        return Err(PatchScriptError::new(0, "script produced no voices"));
+    }
+    Ok(patch)
+}
+
+fn parse_fields<'a>(
+    parts: impl Iterator<Item = &'a str>,
+    line: usize,
+) -> Result<Vec<(&'a str, &'a str)>, PatchScriptError> {
+    let mut fields = Vec::new();
+    for part in parts {
+        let Some((key, value)) = part.split_once('=') else {
+            return Err(PatchScriptError::new(
+                line,
+                format!("expected key=value field, got `{part}`"),
+            ));
+        };
+        fields.push((key, value));
+    }
+    Ok(fields)
+}
+
+fn field_value<'a>(fields: &'a [(&str, &str)], key: &str) -> Option<&'a str> {
+    fields
+        .iter()
+        .find_map(|(candidate, value)| (*candidate == key).then_some(*value))
+}
+
+fn apply_patch_fields(
+    patch: &mut SynthPatch,
+    fields: &[(&str, &str)],
+    line: usize,
+) -> Result<(), PatchScriptError> {
+    for (key, value) in fields {
+        match *key {
+            "gain" => patch.gain = parse_f32(value, line, key)?,
+            "soft_clip" => patch.soft_clip = parse_bool(value, line, key)?,
+            "repeat" => {
+                let interval_seconds = parse_f32(value, line, key)?;
+                patch.repeat = (interval_seconds > 0.0).then_some(Repeat { interval_seconds });
+            }
+            unknown => return Err(unknown_field(line, "patch", unknown)),
+        }
+    }
+    Ok(())
+}
+
+fn voice_from_fields(fields: &[(&str, &str)], line: usize) -> Result<Voice, PatchScriptError> {
+    let waveform = match field_value(fields, "wave").unwrap_or("sine") {
+        "sine" => Waveform::Sine,
+        "square" => Waveform::Square,
+        "saw" | "sawtooth" => Waveform::Sawtooth,
+        "tri" | "triangle" => Waveform::Triangle,
+        "noise" => Waveform::Noise,
+        other => {
+            return Err(PatchScriptError::new(
+                line,
+                format!("unknown waveform `{other}`"),
+            ));
+        }
+    };
+    let frequency_hz = parse_optional_f32(fields, "freq", line)?.unwrap_or(440.0);
+    let envelope = Envelope {
+        attack_seconds: parse_optional_f32(fields, "attack", line)?.unwrap_or(0.0),
+        sustain_seconds: parse_optional_f32(fields, "sustain", line)?.unwrap_or(0.1),
+        decay_seconds: parse_optional_f32(fields, "decay", line)?.unwrap_or(0.2),
+        punch: parse_optional_f32(fields, "punch", line)?.unwrap_or(0.0),
+    };
+    let arpeggio = match (
+        parse_optional_f32(fields, "arp_delay", line)?,
+        parse_optional_f32(fields, "arp_mult", line)?,
+    ) {
+        (Some(delay_seconds), Some(multiplier)) => Some(Arpeggio {
+            delay_seconds,
+            multiplier,
+        }),
+        (None, None) => None,
+        _ => {
+            return Err(PatchScriptError::new(
+                line,
+                "arpeggio needs both arp_delay and arp_mult",
+            ));
+        }
+    };
+    let voice = Voice {
+        oscillator: Oscillator {
+            waveform,
+            frequency_hz,
+            duty: parse_optional_f32(fields, "duty", line)?.unwrap_or(0.5),
+            phase: parse_optional_f32(fields, "phase", line)?.unwrap_or(0.0),
+        },
+        envelope,
+        pitch: PitchMotion {
+            min_frequency_hz: parse_optional_f32(fields, "min_freq", line)?.unwrap_or(20.0),
+            ramp_per_second: parse_optional_f32(fields, "pitch_ramp", line)?.unwrap_or(0.0),
+            delta_ramp_per_second: parse_optional_f32(fields, "pitch_dramp", line)?.unwrap_or(0.0),
+            vibrato_depth: parse_optional_f32(fields, "vibrato", line)?.unwrap_or(0.0),
+            vibrato_hz: parse_optional_f32(fields, "vibrato_hz", line)?.unwrap_or(0.0),
+            vibrato_delay_seconds: parse_optional_f32(fields, "vibrato_delay", line)?
+                .unwrap_or(0.0),
+        },
+        duty: DutyMotion {
+            ramp_per_second: parse_optional_f32(fields, "duty_ramp", line)?.unwrap_or(0.0),
+        },
+        filter: Filter {
+            low_pass: parse_optional_f32(fields, "lpf", line)?.unwrap_or(1.0),
+            low_pass_ramp: parse_optional_f32(fields, "lpf_ramp", line)?.unwrap_or(0.0),
+            low_pass_resonance: parse_optional_f32(fields, "resonance", line)?.unwrap_or(0.0),
+            high_pass: parse_optional_f32(fields, "hpf", line)?.unwrap_or(0.0),
+            high_pass_ramp: parse_optional_f32(fields, "hpf_ramp", line)?.unwrap_or(0.0),
+        },
+        phaser: Phaser {
+            offset_seconds: parse_optional_f32(fields, "phaser", line)?.unwrap_or(0.0),
+            ramp_seconds_per_second: parse_optional_f32(fields, "phaser_ramp", line)?
+                .unwrap_or(0.0),
+        },
+        arpeggio,
+        gain: parse_optional_f32(fields, "gain", line)?.unwrap_or(0.2),
+    };
+    for (key, _) in fields {
+        match *key {
+            "wave" | "freq" | "duty" | "phase" | "attack" | "sustain" | "decay" | "punch"
+            | "min_freq" | "pitch_ramp" | "pitch_dramp" | "vibrato" | "vibrato_hz"
+            | "vibrato_delay" | "duty_ramp" | "lpf" | "lpf_ramp" | "resonance" | "hpf"
+            | "hpf_ramp" | "phaser" | "phaser_ramp" | "arp_delay" | "arp_mult" | "gain" => {}
+            unknown => return Err(unknown_field(line, "voice", unknown)),
+        }
+    }
+    Ok(voice)
+}
+
+fn apply_sfxr_fields(
+    params: &mut SfxrParams,
+    fields: &[(&str, &str)],
+    line: usize,
+) -> Result<(), PatchScriptError> {
+    if let Some(seed) = field_value(fields, "mutate_seed") {
+        let seed = seed
+            .parse::<u64>()
+            .map_err(|_| PatchScriptError::new(line, "mutate_seed must be an integer"))?;
+        let amount = parse_optional_f32(fields, "mutate", line)?.unwrap_or(0.05);
+        params.mutate(seed, amount);
+    }
+    for (key, value) in fields {
+        match *key {
+            "preset" | "mutate_seed" | "mutate" => {}
+            "wave" => {
+                params.wave_type = match *value {
+                    "sine" => Waveform::Sine,
+                    "square" => Waveform::Square,
+                    "saw" | "sawtooth" => Waveform::Sawtooth,
+                    "tri" | "triangle" => Waveform::Triangle,
+                    "noise" => Waveform::Noise,
+                    other => {
+                        return Err(PatchScriptError::new(
+                            line,
+                            format!("unknown waveform `{other}`"),
+                        ));
+                    }
+                };
+            }
+            "base" => params.base_freq = parse_f32(value, line, key)?.clamp(0.0, 1.0),
+            "limit" => params.freq_limit = parse_f32(value, line, key)?.clamp(0.0, 1.0),
+            "ramp" => params.freq_ramp = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
+            "dramp" => params.freq_dramp = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
+            "duty" => params.duty = parse_f32(value, line, key)?.clamp(0.0, 1.0),
+            "duty_ramp" => params.duty_ramp = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
+            "vib" => params.vib_strength = parse_f32(value, line, key)?.clamp(0.0, 1.0),
+            "vib_speed" => params.vib_speed = parse_f32(value, line, key)?.clamp(0.0, 1.0),
+            "vib_delay" => params.vib_delay = parse_f32(value, line, key)?.clamp(0.0, 1.0),
+            "attack" => params.env_attack = parse_f32(value, line, key)?.clamp(0.0, 1.0),
+            "sustain" => params.env_sustain = parse_f32(value, line, key)?.clamp(0.0, 1.0),
+            "decay" => params.env_decay = parse_f32(value, line, key)?.clamp(0.0, 1.0),
+            "punch" => params.env_punch = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
+            "resonance" => params.lpf_resonance = parse_f32(value, line, key)?.clamp(0.0, 1.0),
+            "lpf" => params.lpf_freq = parse_f32(value, line, key)?.clamp(0.0, 1.0),
+            "lpf_ramp" => params.lpf_ramp = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
+            "hpf" => params.hpf_freq = parse_f32(value, line, key)?.clamp(0.0, 1.0),
+            "hpf_ramp" => params.hpf_ramp = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
+            "phaser" => params.pha_offset = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
+            "phaser_ramp" => params.pha_ramp = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
+            "repeat" => params.repeat_speed = parse_f32(value, line, key)?.clamp(0.0, 1.0),
+            "arp" => params.arp_speed = parse_f32(value, line, key)?.clamp(0.0, 1.0),
+            "arp_mod" => params.arp_mod = parse_f32(value, line, key)?.clamp(-1.0, 1.0),
+            unknown => return Err(unknown_field(line, "sfxr", unknown)),
+        }
+    }
+    Ok(())
+}
+
+fn parse_optional_f32(
+    fields: &[(&str, &str)],
+    key: &str,
+    line: usize,
+) -> Result<Option<f32>, PatchScriptError> {
+    field_value(fields, key)
+        .map(|value| parse_f32(value, line, key))
+        .transpose()
+}
+
+fn parse_f32(value: &str, line: usize, key: &str) -> Result<f32, PatchScriptError> {
+    value
+        .parse::<f32>()
+        .map_err(|_| PatchScriptError::new(line, format!("`{key}` must be a number")))
+}
+
+fn parse_bool(value: &str, line: usize, key: &str) -> Result<bool, PatchScriptError> {
+    match value {
+        "true" | "yes" | "1" => Ok(true),
+        "false" | "no" | "0" => Ok(false),
+        _ => Err(PatchScriptError::new(
+            line,
+            format!("`{key}` must be true or false"),
+        )),
+    }
+}
+
+fn unknown_field(line: usize, command: &str, field: &str) -> PatchScriptError {
+    PatchScriptError::new(line, format!("unknown {command} field `{field}`"))
 }
 
 #[derive(Clone, Debug)]
@@ -690,6 +1097,37 @@ fn hash_noise(seed: u64, slot: u32) -> f32 {
     ((value >> 40) as f32 / 8_388_608.0) * 2.0 - 1.0
 }
 
+#[derive(Clone, Copy, Debug)]
+struct SeededRng {
+    state: u64,
+}
+
+impl SeededRng {
+    fn new(seed: u64) -> Self {
+        Self {
+            state: seed ^ 0x517c_c1b7_2722_0a95,
+        }
+    }
+
+    fn next_f32(&mut self) -> f32 {
+        self.state = self
+            .state
+            .wrapping_add(0x9e37_79b9_7f4a_7c15)
+            .rotate_left(17);
+        let mut value = self.state;
+        value ^= value >> 30;
+        value = value.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        value ^= value >> 27;
+        value = value.wrapping_mul(0x94d0_49bb_1331_11eb);
+        value ^= value >> 31;
+        (value >> 40) as f32 / 16_777_216.0
+    }
+
+    fn range(&mut self, min: f32, max: f32) -> f32 {
+        min + (max - min) * self.next_f32()
+    }
+}
+
 fn sfxr_frequency_hz(value: f32) -> f32 {
     let period = 100.0 / (value.clamp(0.0, 1.0).powi(2) + 0.001);
     (DEFAULT_SAMPLE_RATE / period).clamp(20.0, 20_000.0)
@@ -725,5 +1163,40 @@ mod tests {
     fn envelope_reaches_silence() {
         let envelope = Envelope::percussive(0.01, 0.01);
         assert_eq!(envelope.amplitude(1.0), 0.0);
+    }
+
+    #[test]
+    fn all_classic_sfxr_presets_map_to_sound() {
+        for name in [
+            "pickup",
+            "laser",
+            "explosion",
+            "powerup",
+            "hit",
+            "jump",
+            "blip",
+        ] {
+            let patch = SfxrParams::named(name).unwrap().to_patch();
+            let mut player = PatchPlayer::new(patch, 44_100.0);
+            let peak = (0..8192)
+                .map(|_| player.next_sample().abs())
+                .fold(0.0, f32::max);
+            assert!(peak > 0.001, "{name} was silent");
+        }
+    }
+
+    #[test]
+    fn patch_script_parses_modular_and_sfxr_voices() {
+        let patch = SynthPatch::from_script(PATCH_SCRIPT_EXAMPLE).unwrap();
+        assert_eq!(patch.voices.len(), 3);
+        let mut player = PatchPlayer::new(patch, 44_100.0);
+        let energy: f32 = (0..4096).map(|_| player.next_sample().abs()).sum();
+        assert!(energy > 1.0);
+    }
+
+    #[test]
+    fn patch_script_reports_line_numbers() {
+        let err = SynthPatch::from_script("patch gain=1\nvoice wave=beige").unwrap_err();
+        assert_eq!(err.line, 2);
     }
 }
