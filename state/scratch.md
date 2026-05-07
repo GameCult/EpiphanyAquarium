@@ -45,6 +45,10 @@ Current renderer truth:
   was identity/domain seed coupling to body position and shader slot. The CPU
   now writes a stable per-body seed derived from `body_id`; WGSL samples that
   seed while using `(point - body.xyz) / radius` as the local domain.
+- Windows link failures mentioning unresolved `anon.*.llvm.*` symbols from
+  `libaquarium_synth` have reproduced as stale incremental package artifacts.
+  `scripts/repair-bevy-link.ps1` performs the narrow recovery: `cargo clean -p
+  aquarium_synth`, then rebuilds the Bevy hotpatch target.
 
 Current next cut:
 

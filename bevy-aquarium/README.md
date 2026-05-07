@@ -41,6 +41,13 @@ Or directly:
 cargo run --manifest-path bevy-aquarium/Cargo.toml
 ```
 
+If Windows linking fails with unresolved `anon.*.llvm.*` symbols from
+`libaquarium_synth`, clear only that stale package output and rebuild:
+
+```powershell
+.\scripts\repair-bevy-link.ps1
+```
+
 Controls:
 
 - Middle mouse drag: orbit camera.
