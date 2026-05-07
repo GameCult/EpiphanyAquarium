@@ -13,6 +13,131 @@ voice wave=triangle freq=440 gain=0.04 attack=0 sustain=0.02 decay=0.18 lpf=0.7 
 sfxr preset=laser mutate_seed=9 mutate=0.01
 "#;
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AudioAnalysisConfig {
+    pub sample_rate: f32,
+    pub gate_floor: f32,
+    pub gate_ratio: f32,
+    pub fft_size: usize,
+    pub hop_size: usize,
+    pub mel_band_count: usize,
+    pub min_frequency_hz: f32,
+    pub max_frequency_hz: f32,
+}
+
+impl Default for AudioAnalysisConfig {
+    fn default() -> Self {
+        Self {
+            sample_rate: DEFAULT_SAMPLE_RATE,
+            gate_floor: 0.0005,
+            gate_ratio: 0.03,
+            fft_size: 512,
+            hop_size: 128,
+            mel_band_count: 32,
+            min_frequency_hz: 40.0,
+            max_frequency_hz: 16_000.0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AudioFeatures {
+    pub attack_seconds: f32,
+    pub duration_seconds: f32,
+    pub peak: f32,
+    pub rms: f32,
+    pub zero_crossing_rate: f32,
+    pub spectral_centroid_hz: f32,
+    pub spectral_rolloff_hz: f32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Spectrogram {
+    pub frames: usize,
+    pub bands: usize,
+    pub values: Vec<f32>,
+}
+
+impl Spectrogram {
+    pub fn at(&self, frame: usize, band: usize) -> f32 {
+        self.values[frame * self.bands + band]
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AudioAnalysis {
+    pub features: AudioFeatures,
+    pub log_mel_spectrogram: Spectrogram,
+    pub rms_envelope: Vec<f32>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AudioComparison {
+    pub reference: AudioAnalysis,
+    pub candidate: AudioAnalysis,
+    pub duration_ratio: f32,
+    pub rms_ratio: f32,
+    pub zero_crossing_ratio: f32,
+    pub centroid_ratio: f32,
+    pub envelope_distance: f32,
+    pub log_mel_distance: f32,
+    pub score: f32,
+}
+
+pub fn analyze_audio(samples: &[f32], config: &AudioAnalysisConfig) -> AudioAnalysis {
+    let features = extract_audio_features(samples, config);
+    let rms_envelope = rms_envelope(samples, config.fft_size, config.hop_size);
+    let log_mel_spectrogram = log_mel_spectrogram(samples, config);
+    AudioAnalysis {
+        features,
+        log_mel_spectrogram,
+        rms_envelope,
+    }
+}
+
+pub fn compare_audio(
+    reference_samples: &[f32],
+    candidate_samples: &[f32],
+    config: &AudioAnalysisConfig,
+) -> AudioComparison {
+    let reference = analyze_audio(reference_samples, config);
+    let candidate = analyze_audio(candidate_samples, config);
+    let duration_ratio = safe_ratio(
+        candidate.features.duration_seconds,
+        reference.features.duration_seconds,
+    );
+    let rms_ratio = safe_ratio(candidate.features.rms, reference.features.rms);
+    let zero_crossing_ratio = safe_ratio(
+        candidate.features.zero_crossing_rate,
+        reference.features.zero_crossing_rate,
+    );
+    let centroid_ratio = safe_ratio(
+        candidate.features.spectral_centroid_hz,
+        reference.features.spectral_centroid_hz,
+    );
+    let envelope_distance = normalized_distance(&reference.rms_envelope, &candidate.rms_envelope);
+    let log_mel_distance = normalized_distance(
+        &reference.log_mel_spectrogram.values,
+        &candidate.log_mel_spectrogram.values,
+    );
+    let ratio_penalty = ratio_distance(duration_ratio)
+        + ratio_distance(rms_ratio)
+        + ratio_distance(zero_crossing_ratio) * 0.5
+        + ratio_distance(centroid_ratio) * 0.5;
+    let score = 1.0 / (1.0 + envelope_distance * 0.7 + log_mel_distance + ratio_penalty);
+    AudioComparison {
+        reference,
+        candidate,
+        duration_ratio,
+        rms_ratio,
+        zero_crossing_ratio,
+        centroid_ratio,
+        envelope_distance,
+        log_mel_distance,
+        score,
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Waveform {
     Sine,
@@ -1097,6 +1222,270 @@ fn hash_noise(seed: u64, slot: u32) -> f32 {
     ((value >> 40) as f32 / 8_388_608.0) * 2.0 - 1.0
 }
 
+fn extract_audio_features(samples: &[f32], config: &AudioAnalysisConfig) -> AudioFeatures {
+    let peak = samples
+        .iter()
+        .map(|sample| sample.abs())
+        .fold(0.0, f32::max);
+    let gate = (peak * config.gate_ratio).max(config.gate_floor);
+    let first = samples
+        .iter()
+        .position(|sample| sample.abs() >= gate)
+        .unwrap_or(0);
+    let last = samples
+        .iter()
+        .rposition(|sample| sample.abs() >= gate)
+        .unwrap_or(first);
+    let active = if samples.is_empty() {
+        &[][..]
+    } else {
+        &samples[first..=last]
+    };
+    let rms = mean_square(active).sqrt();
+    let zero_crossings = active
+        .windows(2)
+        .filter(|pair| pair[0].signum() != pair[1].signum())
+        .count();
+    let duration_seconds = (last.saturating_sub(first) + usize::from(!samples.is_empty())) as f32
+        / config.sample_rate.max(1.0);
+    let spectrum = average_power_spectrum(active, config.fft_size.max(32));
+    let (spectral_centroid_hz, spectral_rolloff_hz) =
+        spectral_shape(&spectrum, config.sample_rate, 0.85);
+    AudioFeatures {
+        attack_seconds: first as f32 / config.sample_rate.max(1.0),
+        duration_seconds,
+        peak,
+        rms,
+        zero_crossing_rate: zero_crossings as f32 / duration_seconds.max(1.0 / config.sample_rate),
+        spectral_centroid_hz,
+        spectral_rolloff_hz,
+    }
+}
+
+fn rms_envelope(samples: &[f32], window_size: usize, hop_size: usize) -> Vec<f32> {
+    let window_size = window_size.max(16);
+    let hop_size = hop_size.max(1);
+    if samples.is_empty() {
+        return vec![0.0];
+    }
+    let mut envelope = Vec::new();
+    let mut start = 0;
+    while start < samples.len() {
+        let end = (start + window_size).min(samples.len());
+        envelope.push(mean_square(&samples[start..end]).sqrt());
+        start += hop_size;
+    }
+    envelope
+}
+
+fn log_mel_spectrogram(samples: &[f32], config: &AudioAnalysisConfig) -> Spectrogram {
+    let fft_size = config.fft_size.max(32).next_power_of_two();
+    let hop_size = config.hop_size.max(1);
+    let bands = config.mel_band_count.max(1);
+    if samples.is_empty() {
+        return Spectrogram {
+            frames: 1,
+            bands,
+            values: vec![0.0; bands],
+        };
+    }
+    let edges = mel_band_edges(
+        bands,
+        fft_size,
+        config.sample_rate,
+        config.min_frequency_hz,
+        config.max_frequency_hz,
+    );
+    let mut values = Vec::new();
+    let mut frames = 0;
+    let mut start = 0;
+    while start < samples.len() {
+        let spectrum = frame_power_spectrum(samples, start, fft_size);
+        for band in 0..bands {
+            let left = edges[band];
+            let center = edges[band + 1].max(left + 1);
+            let right = edges[band + 2].max(center + 1);
+            let mut energy = 0.0;
+            let mut weight_sum = 0.0;
+            for bin in left..right.min(spectrum.len()) {
+                let weight = if bin <= center {
+                    (bin - left) as f32 / (center - left).max(1) as f32
+                } else {
+                    (right - bin) as f32 / (right - center).max(1) as f32
+                }
+                .max(0.0);
+                energy += spectrum[bin] * weight;
+                weight_sum += weight;
+            }
+            values.push((energy / weight_sum.max(1.0) + 1.0e-9).ln());
+        }
+        frames += 1;
+        start += hop_size;
+    }
+    normalize_in_place(&mut values);
+    Spectrogram {
+        frames,
+        bands,
+        values,
+    }
+}
+
+fn average_power_spectrum(samples: &[f32], fft_size: usize) -> Vec<f32> {
+    if samples.is_empty() {
+        return vec![0.0; fft_size / 2 + 1];
+    }
+    let hop_size = (fft_size / 2).max(1);
+    let mut sum = vec![0.0; fft_size / 2 + 1];
+    let mut frames = 0.0;
+    let mut start = 0;
+    while start < samples.len() {
+        let spectrum = frame_power_spectrum(samples, start, fft_size);
+        for (target, value) in sum.iter_mut().zip(spectrum) {
+            *target += value;
+        }
+        frames += 1.0;
+        start += hop_size;
+    }
+    for value in &mut sum {
+        *value /= frames;
+    }
+    sum
+}
+
+fn frame_power_spectrum(samples: &[f32], start: usize, fft_size: usize) -> Vec<f32> {
+    let bins = fft_size / 2 + 1;
+    let mut spectrum = vec![0.0; bins];
+    for (bin, output) in spectrum.iter_mut().enumerate() {
+        let mut real = 0.0;
+        let mut imaginary = 0.0;
+        for offset in 0..fft_size {
+            let index = start + offset;
+            let sample = samples.get(index).copied().unwrap_or(0.0) * hann(offset, fft_size);
+            let angle = TAU * bin as f32 * offset as f32 / fft_size as f32;
+            real += sample * angle.cos();
+            imaginary -= sample * angle.sin();
+        }
+        *output = real * real + imaginary * imaginary;
+    }
+    spectrum
+}
+
+fn mel_band_edges(
+    band_count: usize,
+    fft_size: usize,
+    sample_rate: f32,
+    min_frequency_hz: f32,
+    max_frequency_hz: f32,
+) -> Vec<usize> {
+    let min_mel = hz_to_mel(min_frequency_hz.max(0.0));
+    let max_mel = hz_to_mel(
+        max_frequency_hz
+            .min(sample_rate * 0.5)
+            .max(min_frequency_hz + 1.0),
+    );
+    (0..band_count + 2)
+        .map(|index| {
+            let t = index as f32 / (band_count + 1) as f32;
+            let hz = mel_to_hz(min_mel + (max_mel - min_mel) * t);
+            ((hz / sample_rate.max(1.0)) * fft_size as f32).round() as usize
+        })
+        .collect()
+}
+
+fn spectral_shape(spectrum: &[f32], sample_rate: f32, rolloff_portion: f32) -> (f32, f32) {
+    let total: f32 = spectrum.iter().sum();
+    if total <= f32::EPSILON {
+        return (0.0, 0.0);
+    }
+    let mut weighted = 0.0;
+    let mut cumulative = 0.0;
+    let mut rolloff = 0.0;
+    for (bin, energy) in spectrum.iter().enumerate() {
+        let frequency =
+            bin as f32 * sample_rate * 0.5 / (spectrum.len().saturating_sub(1)).max(1) as f32;
+        weighted += frequency * energy;
+        cumulative += energy;
+        if rolloff == 0.0 && cumulative >= total * rolloff_portion {
+            rolloff = frequency;
+        }
+    }
+    (weighted / total, rolloff)
+}
+
+fn normalized_distance(reference: &[f32], candidate: &[f32]) -> f32 {
+    let length = reference.len().max(candidate.len()).max(1);
+    let mut error = 0.0;
+    let mut scale = 0.0;
+    for index in 0..length {
+        let a = resampled_at(reference, index, length);
+        let b = resampled_at(candidate, index, length);
+        let delta = a - b;
+        error += delta * delta;
+        scale += a * a + b * b;
+    }
+    (error / scale.max(f32::EPSILON)).sqrt()
+}
+
+fn resampled_at(values: &[f32], index: usize, target_len: usize) -> f32 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    if values.len() == 1 || target_len <= 1 {
+        return values[0];
+    }
+    let position = index as f32 * (values.len() - 1) as f32 / (target_len - 1) as f32;
+    let left = position.floor() as usize;
+    let right = (left + 1).min(values.len() - 1);
+    let t = position - left as f32;
+    values[left] * (1.0 - t) + values[right] * t
+}
+
+fn normalize_in_place(values: &mut [f32]) {
+    if values.is_empty() {
+        return;
+    }
+    let mean = values.iter().sum::<f32>() / values.len() as f32;
+    let variance = values
+        .iter()
+        .map(|value| {
+            let delta = value - mean;
+            delta * delta
+        })
+        .sum::<f32>()
+        / values.len() as f32;
+    let scale = variance.sqrt().max(1.0e-6);
+    for value in values {
+        *value = (*value - mean) / scale;
+    }
+}
+
+fn mean_square(samples: &[f32]) -> f32 {
+    samples.iter().map(|sample| sample * sample).sum::<f32>() / samples.len().max(1) as f32
+}
+
+fn hann(index: usize, size: usize) -> f32 {
+    if size <= 1 {
+        return 1.0;
+    }
+    0.5 - 0.5 * (TAU * index as f32 / (size - 1) as f32).cos()
+}
+
+fn hz_to_mel(hz: f32) -> f32 {
+    2595.0 * (1.0 + hz / 700.0).log10()
+}
+
+fn mel_to_hz(mel: f32) -> f32 {
+    700.0 * (10.0_f32.powf(mel / 2595.0) - 1.0)
+}
+
+fn safe_ratio(candidate: f32, reference: f32) -> f32 {
+    candidate / reference.max(f32::EPSILON)
+}
+
+fn ratio_distance(ratio: f32) -> f32 {
+    ratio.max(f32::EPSILON).ln().abs()
+}
+
 #[derive(Clone, Copy, Debug)]
 struct SeededRng {
     state: u64,
@@ -1198,5 +1587,24 @@ mod tests {
     fn patch_script_reports_line_numbers() {
         let err = SynthPatch::from_script("patch gain=1\nvoice wave=beige").unwrap_err();
         assert_eq!(err.line, 2);
+    }
+
+    #[test]
+    fn audio_comparison_scores_identical_buffers_high() {
+        let mut player = PatchPlayer::new(presets::aquarium_pluck(), 44_100.0);
+        let buffer: Vec<f32> = (0..4096).map(|_| player.next_sample()).collect();
+        let comparison = compare_audio(
+            &buffer,
+            &buffer,
+            &AudioAnalysisConfig {
+                fft_size: 128,
+                hop_size: 256,
+                mel_band_count: 12,
+                ..AudioAnalysisConfig::default()
+            },
+        );
+        assert!(comparison.score > 0.95);
+        assert!(comparison.log_mel_distance < 0.001);
+        assert!(comparison.envelope_distance < 0.001);
     }
 }

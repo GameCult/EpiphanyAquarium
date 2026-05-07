@@ -1,25 +1,27 @@
-use aquarium_synth::{PatchPlayer, SfxrParams, Waveform};
+use aquarium_synth::{AudioAnalysisConfig, PatchPlayer, SfxrParams, Waveform, compare_audio};
 use sfxr::{Generator, Sample, WaveType};
 
 const SAMPLE_RATE: f32 = 44_100.0;
 const FRAMES: usize = 44_100;
 
-#[derive(Clone, Copy, Debug)]
-struct AudioFeatures {
-    attack_seconds: f32,
-    duration_seconds: f32,
-    peak: f32,
-    rms: f32,
-    zero_crossing_rate: f32,
-}
-
 #[test]
 fn classic_sfxr_presets_stay_near_reference_shape() {
+    let config = AudioAnalysisConfig {
+        fft_size: 128,
+        hop_size: 512,
+        mel_band_count: 16,
+        ..AudioAnalysisConfig::default()
+    };
     for case in reference_cases() {
         let reference_sample = (case.reference)();
         let patch_sample = (case.reference)();
-        let reference = features(&render_reference(reference_sample));
-        let actual = features(&render_patch(sfxr_params_from_reference(patch_sample)));
+        let comparison = compare_audio(
+            &render_reference(reference_sample),
+            &render_patch(sfxr_params_from_reference(patch_sample)),
+            &config,
+        );
+        let reference = &comparison.reference.features;
+        let actual = &comparison.candidate.features;
 
         assert!(
             actual.peak > 0.001,
@@ -50,6 +52,12 @@ fn classic_sfxr_presets_stay_near_reference_shape() {
             reference.attack_seconds + 0.002,
             0.02,
             50.0,
+        );
+        assert!(
+            comparison.score > 0.02,
+            "{} had a suspiciously low comparison score: {:.4}",
+            case.name,
+            comparison.score
         );
     }
 }
@@ -135,35 +143,6 @@ fn sfxr_params_from_reference(sample: Sample) -> SfxrParams {
         repeat_speed: sample.repeat_speed,
         arp_speed: sample.arp_speed,
         arp_mod: sample.arp_mod as f32,
-    }
-}
-
-fn features(buffer: &[f32]) -> AudioFeatures {
-    let peak = buffer.iter().map(|sample| sample.abs()).fold(0.0, f32::max);
-    let gate = (peak * 0.03).max(0.0005);
-    let first = buffer
-        .iter()
-        .position(|sample| sample.abs() >= gate)
-        .unwrap_or(0);
-    let last = buffer
-        .iter()
-        .rposition(|sample| sample.abs() >= gate)
-        .unwrap_or(first);
-    let active = &buffer[first..=last];
-    let rms = (active.iter().map(|sample| sample * sample).sum::<f32>()
-        / active.len().max(1) as f32)
-        .sqrt();
-    let zero_crossings = active
-        .windows(2)
-        .filter(|pair| pair[0].signum() != pair[1].signum())
-        .count();
-    let duration_seconds = (last.saturating_sub(first) + 1) as f32 / SAMPLE_RATE;
-    AudioFeatures {
-        attack_seconds: first as f32 / SAMPLE_RATE,
-        duration_seconds,
-        peak,
-        rms,
-        zero_crossing_rate: zero_crossings as f32 / duration_seconds.max(1.0 / SAMPLE_RATE),
     }
 }
 

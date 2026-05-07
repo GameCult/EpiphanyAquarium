@@ -390,6 +390,12 @@ Current slice:
   the modular Aquarium path, and compares duration/RMS/attack/zero-crossing
   features. This anchors compatibility without turning Aquarium into a hidden
   exact clone of the sfxr generator.
+- Current audio metric API slice: promoted passability tools into
+  `aquarium_synth`. Public `analyze_audio` and `compare_audio` now expose
+  gated duration/attack/peak/RMS/zero-crossing/spectral centroid/rolloff, RMS
+  envelope, normalized log-mel spectrogram data, feature ratios, envelope
+  distance, spectrogram distance, and an overall score. Ground-truth sfxr tests
+  now use that API.
 - Current renderer pass: added a 64x64 GPU fog-history field over the moving
   Grid domain. `cs_update_fog_history` ping-pongs density/history/rejection
   samples after Grid-height generation and before brick/SH/deferred raymarch.
