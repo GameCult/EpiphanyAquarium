@@ -183,6 +183,8 @@
       "The synth script compiler now owns reusable abstraction: `d`/`defaults` applies voice defaults, `def`/`template` stores reusable voice field bundles, and `u=` borrows one or more templates into a voice before explicit fields override them. This is the preferred route for maximum expressiveness without smuggling preset atoms into primitive graph golf.",
       "`CLASSIC_808_PRIMITIVE_GOLF_SCRIPTS` is the next non-sfxr synth golf target: kick, snare, clap, hat, tom, and cowbell built from primitive statements only. Recognition tests currently use duration, centroid, zero-crossing, and peak heuristics rather than external 808 sample ground truth.",
       "FM bell/chime/gong synthesis is now a primitive voice capability, not a preset trick. Use `fm` for modulator frequency ratio, `fmi` for index, and `fmd` for index decay seconds; `FM_BELL_PRIMITIVE_GOLF_SCRIPTS` proves the target with primitive-only scripts and bright inharmonic feature tests."
+      ,
+      "Wobble bass is represented as compiler-level modulation-bus abstraction, not a baked instrument. `wob hz=... w=... g=... l=... fmi=...` expands into ordinary `ControlLane`s over primitive targets. Voice `fm` now means FM ratio; use `fmix` for formant mix in terse scripts."
     ],
     "interaction_design": [
       "Progressive disclosure is the core grammar: vibes first, object second, surface third.",

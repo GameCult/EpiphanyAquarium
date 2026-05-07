@@ -463,3 +463,10 @@ Current slice:
   templates/defaults. Tests prove FM brightens the spectrum versus a plain sine,
   and validate bell-like long decay, centroid, zero-crossing, primitive-only
   syntax, and readability/golf thresholds.
+- Current wobble-bass target: added a compiler `wob`/`wobble` bus that expands
+  one LFO into primitive patch-level control lanes instead of hiding a dubstep
+  instrument behind a preset. The bus can move gain, pitch, duty, low/high pass,
+  noise, drive, fold, formant mix, and FM index; `WOBBLE_BASS_PRIMITIVE_GOLF_SCRIPTS`
+  covers talker, growl, yoy, and neuro bass shapes with primitive-only tests,
+  movement metrics, and readability/golf thresholds. Alias cleanup: `fm` is FM
+  ratio on voices now, while terse formant mix is `fmix`.

@@ -122,6 +122,27 @@ pub const FM_BELL_PRIMITIVE_GOLF_SCRIPTS: [(&str, &str); 4] = [
     ),
 ];
 
+pub const WOBBLE_BASS_NAMES: [&str; 4] = ["talker", "growl", "yoy", "neuro"];
+
+pub const WOBBLE_BASS_PRIMITIVE_GOLF_SCRIPTS: [(&str, &str); 4] = [
+    (
+        "talker",
+        "d w=saw f=55 g=.18 s=.8 d=.25 l=.34 h=.02 drv=.3 fl=.08 fm=2 fmi=.8 fmd=.7 fs=520:90:.7,1250:170:1,2600:320:.45 fmix=.35;wob hz=4 w=tri g=.42 l=.48 fmix=.38 fmi=1.6 drv=.2 fl=.14;v;v f=110 g=.08 du=.42",
+    ),
+    (
+        "growl",
+        "d w=saw f=44 g=.2 s=.7 d=.3 l=.28 h=.01 drv=.42 fl=.18 fm=1.5 fmi=1.2 fmd=.45 nz=.05;wob hz=6 w=sin g=.32 l=.55 p=.035 drv=.28 fl=.22 nz=.08 fmi=2.2;v;v w=sq f=88 g=.09 du=.36",
+    ),
+    (
+        "yoy",
+        "d w=sq f=62 g=.16 s=.65 d=.22 l=.3 h=.03 drv=.25 fm=3 fmi=.7 fmd=.5 fs=400:80:.6,900:120:1,2100:260:.4 fmix=.28;wob hz=5 w=sq g=.5 l=.5 fmix=.45 p=.025 du=.08;v;v w=saw f=124 g=.07",
+    ),
+    (
+        "neuro",
+        "d w=saw f=49 g=.16 s=.75 d=.28 l=.25 h=.04 drv=.38 fl=.24 fm=2.7 fmi=1.5 fmd=.35 nz=.04;wob hz=7 w=hold g=.28 l=.52 p=.04 drv=.25 fl=.3 nz=.1 fmi=2.8;v;v w=tri f=147 g=.06",
+    ),
+];
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AudioAnalysisConfig {
     pub sample_rate: f32,
@@ -629,6 +650,7 @@ pub enum ModTarget {
     Drive,
     Fold,
     FormantMix,
+    FmIndex,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1347,6 +1369,7 @@ impl PatchScriptCompiler {
             "patch" | "p" => apply_patch_fields(&mut self.patch, &fields, line_number)?,
             "defaults" | "default" | "d" => self.apply_voice_defaults(&fields),
             "def" | "template" | "t" => self.define_voice_template(&fields, line_number)?,
+            "wobble" | "wob" | "wb" => self.apply_wobble_bus(&fields, line_number)?,
             "lfo" | "control" | "l" => self
                 .patch
                 .controls
@@ -1377,6 +1400,34 @@ impl PatchScriptCompiler {
                     format!("unknown command `{unknown}`"),
                 ));
             }
+        }
+        Ok(())
+    }
+
+    fn apply_wobble_bus(
+        &mut self,
+        fields: &[(&str, &str)],
+        line: usize,
+    ) -> Result<(), PatchScriptError> {
+        let frequency_hz = parse_optional_f32_any(fields, &["hz", "rate"], line)?.unwrap_or(4.0);
+        let waveform = parse_mod_waveform(
+            field_value_any(fields, &["wave", "w"]).unwrap_or("sine"),
+            line,
+        )?;
+        let phase = parse_optional_f32(fields, "phase", line)?.unwrap_or(0.0);
+        let bus = field_value_any(fields, &["name", "n"]).unwrap_or("wob");
+        for (key, value) in fields {
+            if matches!(*key, "hz" | "rate" | "wave" | "w" | "phase" | "name" | "n") {
+                continue;
+            }
+            let Some(target) = wobble_target(key) else {
+                return Err(unknown_field(line, "wobble", key));
+            };
+            let depth = parse_f32(value, line, key)?;
+            self.patch.controls.push(ControlLane::new(
+                format!("{bus}_{key}"),
+                Modulator::lfo(target, waveform, frequency_hz, depth).with_phase(phase),
+            ));
         }
         Ok(())
     }
@@ -1618,7 +1669,7 @@ fn voice_from_fields(fields: &[(&str, &str)], line: usize) -> Result<Voice, Patc
         fold: parse_optional_f32_any(fields, &["fold", "fl"], line)?.unwrap_or(0.0),
         tremolo_depth: parse_optional_f32_any(fields, &["tremolo", "tr"], line)?.unwrap_or(0.0),
         tremolo_hz: parse_optional_f32_any(fields, &["tremolo_hz", "th"], line)?.unwrap_or(0.0),
-        formant_mix: parse_optional_f32_any(fields, &["formant_mix", "fm"], line)?.unwrap_or(0.0),
+        formant_mix: parse_optional_f32_any(fields, &["formant_mix", "fmix"], line)?.unwrap_or(0.0),
     };
     let formants = match field_value_any(fields, &["formants", "fs"]) {
         Some(value) => parse_formants(value, line)?,
@@ -1689,8 +1740,8 @@ fn voice_from_fields(fields: &[(&str, &str)], line: usize) -> Result<Voice, Patc
             | "fm_ratio" | "fm_index" | "fm_decay" | "gain" => {}
             "w" | "f" | "g" | "a" | "s" | "d" | "pu" | "min" | "pr" | "pdr" | "vi" | "vh"
             | "vd" | "du" | "dur" | "l" | "lr" | "res" | "h" | "hr" | "ph" | "phr" | "ad"
-            | "am" | "nz" | "drv" | "fl" | "tr" | "th" | "fm" | "fmi" | "fmd" | "fs" | "m"
-            | "pa" => {}
+            | "am" | "nz" | "drv" | "fl" | "tr" | "th" | "fmix" | "fm" | "fmi" | "fmd" | "fs"
+            | "m" | "pa" => {}
             "mods" => {}
             unknown => return Err(unknown_field(line, "voice", unknown)),
         }
@@ -1805,6 +1856,7 @@ fn parse_mod_target(value: &str, line: usize) -> Result<ModTarget, PatchScriptEr
         "drive" => Ok(ModTarget::Drive),
         "fold" => Ok(ModTarget::Fold),
         "formant" | "formant_mix" => Ok(ModTarget::FormantMix),
+        "fm" | "fm_index" => Ok(ModTarget::FmIndex),
         other => Err(PatchScriptError::new(
             line,
             format!("unknown modulator target `{other}`"),
@@ -1812,11 +1864,27 @@ fn parse_mod_target(value: &str, line: usize) -> Result<ModTarget, PatchScriptEr
     }
 }
 
+fn wobble_target(value: &str) -> Option<ModTarget> {
+    Some(match value {
+        "gain" | "g" => ModTarget::Gain,
+        "pitch" | "p" => ModTarget::Pitch,
+        "duty" | "du" => ModTarget::Duty,
+        "lpf" | "l" => ModTarget::LowPass,
+        "hpf" | "h" => ModTarget::HighPass,
+        "noise" | "nz" => ModTarget::Noise,
+        "drive" | "drv" => ModTarget::Drive,
+        "fold" | "fl" => ModTarget::Fold,
+        "formant" | "formant_mix" | "fmix" => ModTarget::FormantMix,
+        "fm" | "fmi" | "fm_index" => ModTarget::FmIndex,
+        _ => return None,
+    })
+}
+
 fn parse_mod_waveform(value: &str, line: usize) -> Result<ModWaveform, PatchScriptError> {
     match value {
-        "sine" => Ok(ModWaveform::Sine),
+        "sine" | "sin" => Ok(ModWaveform::Sine),
         "tri" | "triangle" => Ok(ModWaveform::Triangle),
-        "square" => Ok(ModWaveform::Square),
+        "square" | "sq" => Ok(ModWaveform::Square),
         "hold" | "sample_hold" => Ok(ModWaveform::SampleHold),
         other => Err(PatchScriptError::new(
             line,
@@ -2154,8 +2222,11 @@ impl VoiceState {
         if self.phase < previous_phase {
             self.noise_epoch = self.noise_epoch.wrapping_add(1);
         }
-        let phase =
-            self.phase + voice.oscillator.phase + fm_phase_offset(voice.fm, self.fm_phase, age);
+        let fm_index_mod =
+            mod_amount(&voice.modulators, controls, ModTarget::FmIndex, age, seed).max(0.0);
+        let mut fm = voice.fm;
+        fm.index += fm_index_mod;
+        let phase = self.phase + voice.oscillator.phase + fm_phase_offset(fm, self.fm_phase, age);
         let mut sample = oscillator_sample(
             voice.oscillator.waveform,
             phase,
@@ -3182,6 +3253,152 @@ mod tests {
             );
             assert!(
                 metrics.balanced_score > 0.22,
+                "{name} balanced score was {}",
+                metrics.balanced_score
+            );
+        }
+    }
+
+    #[test]
+    fn wobble_bus_expands_to_many_control_lanes() {
+        let patch = SynthPatch::from_script(
+            "wob hz=4 w=tri g=.4 l=.5 p=.03 drv=.2 fmi=1.4;v w=saw f=55 s=.5 d=.2",
+        )
+        .unwrap();
+        assert_eq!(patch.controls.len(), 5);
+        assert!(
+            patch
+                .controls
+                .iter()
+                .any(|lane| lane.modulator.target == ModTarget::Gain)
+        );
+        assert!(
+            patch
+                .controls
+                .iter()
+                .any(|lane| lane.modulator.target == ModTarget::LowPass)
+        );
+        assert!(
+            patch
+                .controls
+                .iter()
+                .any(|lane| lane.modulator.target == ModTarget::Pitch)
+        );
+        assert!(
+            patch
+                .controls
+                .iter()
+                .any(|lane| lane.modulator.target == ModTarget::Drive)
+        );
+        assert!(
+            patch
+                .controls
+                .iter()
+                .any(|lane| lane.modulator.target == ModTarget::FmIndex)
+        );
+    }
+
+    #[test]
+    fn wobble_bass_scripts_use_only_graph_primitives() {
+        for (name, script) in WOBBLE_BASS_PRIMITIVE_GOLF_SCRIPTS {
+            let patch = SynthPatch::from_script(script).unwrap();
+            assert!(!patch.voices.is_empty(), "{name} produced no voices");
+            assert!(
+                !patch.controls.is_empty(),
+                "{name} produced no wobble controls"
+            );
+            for statement in script
+                .split(';')
+                .map(str::trim)
+                .filter(|part| !part.is_empty())
+            {
+                let command = statement.split_whitespace().next().unwrap();
+                assert!(
+                    matches!(
+                        command,
+                        "p" | "patch"
+                            | "d"
+                            | "defaults"
+                            | "def"
+                            | "template"
+                            | "t"
+                            | "v"
+                            | "voice"
+                            | "l"
+                            | "lfo"
+                            | "control"
+                            | "wob"
+                            | "wobble"
+                            | "wb"
+                    ),
+                    "{name} used non-primitive command `{command}`"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn wobble_bass_scripts_have_moving_bass_shapes() {
+        let static_buffer = render_script_mono(
+            "d w=saw f=55 g=.2 s=.8 d=.25 l=.34 h=.02 drv=.3;v;v f=110 g=.08",
+            RenderOptions {
+                duration_seconds: 1.0,
+                ..RenderOptions::default()
+            },
+        )
+        .unwrap();
+        for (name, script) in WOBBLE_BASS_PRIMITIVE_GOLF_SCRIPTS {
+            let buffer = render_script_mono(
+                script,
+                RenderOptions {
+                    duration_seconds: 1.0,
+                    ..RenderOptions::default()
+                },
+            )
+            .unwrap();
+            let comparison = compare_audio(
+                &static_buffer,
+                &buffer,
+                &AudioAnalysisConfig {
+                    fft_size: 256,
+                    hop_size: 128,
+                    mel_band_count: 18,
+                    ..AudioAnalysisConfig::default()
+                },
+            );
+            assert!(
+                comparison.candidate.features.peak > 0.01,
+                "{name} was too quiet"
+            );
+            assert!(
+                comparison.candidate.features.duration_seconds > 0.6,
+                "{name} was not sustained"
+            );
+            assert!(
+                comparison.envelope_distance > 0.08,
+                "{name} envelope did not wobble enough: {}",
+                comparison.envelope_distance
+            );
+            assert!(
+                comparison.log_mel_distance > 0.08,
+                "{name} spectrum did not move enough: {}",
+                comparison.log_mel_distance
+            );
+        }
+    }
+
+    #[test]
+    fn wobble_bass_scripts_score_as_golfable_but_readable() {
+        for (name, script) in WOBBLE_BASS_PRIMITIVE_GOLF_SCRIPTS {
+            let metrics = patch_script_metrics(script);
+            assert!(metrics.terse_score > 0.28, "{name} was not terse enough");
+            assert!(
+                metrics.readability_score > 0.12,
+                "{name} readability was {}",
+                metrics.readability_score
+            );
+            assert!(
+                metrics.balanced_score > 0.18,
                 "{name} balanced score was {}",
                 metrics.balanced_score
             );
