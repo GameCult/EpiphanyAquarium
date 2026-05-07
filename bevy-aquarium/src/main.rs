@@ -17,6 +17,7 @@ use bevy::pbr::DefaultOpaqueRendererMethod;
 use bevy::prelude::*;
 use bevy::render::{
     RenderApp, RenderStartup,
+    diagnostic::RenderDiagnosticsPlugin,
     extract_component::{
         ComponentUniforms, DynamicUniformIndex, ExtractComponent, ExtractComponentPlugin,
         UniformComponentPlugin,
@@ -93,6 +94,9 @@ fn main() {
         })
         .insert_resource(DefaultOpaqueRendererMethod::deferred())
         .insert_resource(CameraRig::from_settings(&settings))
+        .insert_resource(RendererDebugState::from_settings(
+            &runtime_bridge.renderer_settings,
+        ))
         .insert_resource(GridFrame::from_camera_settings(&settings))
         .insert_resource(LightingGridHistory::default())
         .insert_resource(PointerWorld::default())
@@ -103,7 +107,6 @@ fn main() {
         )))
         .insert_resource(AquariumAudioState::default())
         .insert_resource(runtime_bridge)
-        .add_plugins(AquariumRaymarchPlugin)
         .add_plugins(
             DefaultPlugins
                 .set(WindowPlugin {
@@ -120,6 +123,8 @@ fn main() {
                     ..default()
                 }),
         )
+        .add_plugins(RenderDiagnosticsPlugin)
+        .add_plugins(AquariumRaymarchPlugin)
         .add_plugins(DspPlugin::default())
         .add_dsp_source(aquarium_pluck, SourceType::Static { duration: 0.52 })
         .add_dsp_source(aquarium_heartbeat, SourceType::Static { duration: 0.28 })
@@ -137,6 +142,7 @@ fn main() {
                 billboard_labels,
                 aquarium_audio,
                 reload_domain_input,
+                renderer_debug_input,
             ),
         )
         .run();
@@ -194,6 +200,24 @@ struct AquariumDomainState {
     reload_generation: u64,
     #[cultcache(key = 2)]
     swarm_label: String,
+}
+
+#[derive(Clone, Debug, PartialEq, DatabaseEntry)]
+#[cultcache(type = "epiphany.aquarium.renderer-settings")]
+struct AquariumRendererSettings {
+    #[cultcache(key = 0)]
+    schema_version: String,
+    #[cultcache(key = 1)]
+    debug_mode: String,
+}
+
+impl Default for AquariumRendererSettings {
+    fn default() -> Self {
+        Self {
+            schema_version: "epiphany.aquarium.renderer-settings.v0".to_string(),
+            debug_mode: RendererDebugMode::Final.as_key().to_string(),
+        }
+    }
 }
 
 impl Default for AquariumDomainState {
@@ -263,6 +287,7 @@ struct CultRuntimeBridge {
     runtime_id: String,
     settings_path: PathBuf,
     settings: AquariumClientSettings,
+    renderer_settings: AquariumRendererSettings,
     domain_state: AquariumDomainState,
     supported_document_types: Vec<String>,
     hello_payload_bytes: usize,
@@ -282,6 +307,10 @@ impl CultRuntimeBridge {
             Some(domain_state) => domain_state,
             None => cache.put("domain", &AquariumDomainState::default())?,
         };
+        let renderer_settings = match cache.get::<AquariumRendererSettings>("renderer")? {
+            Some(renderer_settings) => renderer_settings,
+            None => cache.put("renderer", &AquariumRendererSettings::default())?,
+        };
 
         cache.put(
             "epiphany-agent",
@@ -300,13 +329,19 @@ impl CultRuntimeBridge {
             ))
             .register(CultNetDocumentBinding::for_entry::<AquariumAgentPresence>(
                 Some("epiphany.aquarium.agent-presence.v0".to_string()),
-            ));
+            ))
+            .register(
+                CultNetDocumentBinding::for_entry::<AquariumRendererSettings>(Some(
+                    "epiphany.aquarium.renderer-settings.v0".to_string(),
+                )),
+            );
 
         let supported_document_types = vec![
             AquariumClientSettings::TYPE.to_string(),
             AquariumAgentPresence::TYPE.to_string(),
             AquariumDomainState::TYPE.to_string(),
             AquariumBodyState::TYPE.to_string(),
+            AquariumRendererSettings::TYPE.to_string(),
         ];
         let hello = CultNetMessage::Hello {
             runtime_id: "epiphany-aquarium-bevy".to_string(),
@@ -325,6 +360,7 @@ impl CultRuntimeBridge {
             runtime_id: "epiphany-aquarium-bevy".to_string(),
             settings_path,
             settings,
+            renderer_settings,
             domain_state,
             supported_document_types,
             hello_payload_bytes,
@@ -336,6 +372,7 @@ impl CultRuntimeBridge {
             runtime_id: "epiphany-aquarium-bevy".to_string(),
             settings_path: PathBuf::from(".epiphany-aquarium/bevy-client-settings.msgpack"),
             settings: AquariumClientSettings::default(),
+            renderer_settings: AquariumRendererSettings::default(),
             domain_state: AquariumDomainState::default(),
             supported_document_types: Vec::new(),
             hello_payload_bytes: 0,
@@ -348,6 +385,7 @@ impl CultRuntimeBridge {
         cache.register_entry_type::<AquariumAgentPresence>()?;
         cache.register_entry_type::<AquariumDomainState>()?;
         cache.register_entry_type::<AquariumBodyState>()?;
+        cache.register_entry_type::<AquariumRendererSettings>()?;
         cache.add_generic_backing_store(SingleFileMessagePackBackingStore::new(settings_path));
         cache.pull_all_backing_stores()?;
         Ok(cache)
@@ -400,6 +438,99 @@ impl CultRuntimeBridge {
             cache.put(body_state.body_id.clone(), body_state)?;
         }
         Ok(())
+    }
+
+    fn save_renderer_settings(
+        &mut self,
+        renderer_settings: AquariumRendererSettings,
+    ) -> anyhow::Result<()> {
+        let mut cache = Self::open_cache(&self.settings_path)?;
+        self.renderer_settings = cache.put("renderer", &renderer_settings)?;
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RendererDebugMode {
+    Final,
+    HitCoverage,
+    Depth,
+    Normals,
+    Motion,
+    BrickOccupancy,
+    ShLuminance,
+}
+
+impl RendererDebugMode {
+    const ALL: [Self; 7] = [
+        Self::Final,
+        Self::HitCoverage,
+        Self::Depth,
+        Self::Normals,
+        Self::Motion,
+        Self::BrickOccupancy,
+        Self::ShLuminance,
+    ];
+
+    fn as_key(self) -> &'static str {
+        match self {
+            Self::Final => "final",
+            Self::HitCoverage => "hit-coverage",
+            Self::Depth => "depth",
+            Self::Normals => "normals",
+            Self::Motion => "motion",
+            Self::BrickOccupancy => "brick-occupancy",
+            Self::ShLuminance => "sh-luminance",
+        }
+    }
+
+    fn from_key(value: &str) -> Self {
+        match value {
+            "hit-coverage" => Self::HitCoverage,
+            "depth" => Self::Depth,
+            "normals" => Self::Normals,
+            "motion" => Self::Motion,
+            "brick-occupancy" => Self::BrickOccupancy,
+            "sh-luminance" => Self::ShLuminance,
+            _ => Self::Final,
+        }
+    }
+
+    fn as_shader_value(self) -> f32 {
+        match self {
+            Self::Final => 0.0,
+            Self::HitCoverage => 1.0,
+            Self::Depth => 2.0,
+            Self::Normals => 3.0,
+            Self::Motion => 4.0,
+            Self::BrickOccupancy => 5.0,
+            Self::ShLuminance => 6.0,
+        }
+    }
+
+    fn next(self) -> Self {
+        let index = Self::ALL.iter().position(|mode| *mode == self).unwrap_or(0);
+        Self::ALL[(index + 1) % Self::ALL.len()]
+    }
+}
+
+#[derive(Resource, Clone, Copy, Debug)]
+struct RendererDebugState {
+    mode: RendererDebugMode,
+}
+
+impl RendererDebugState {
+    fn from_settings(settings: &AquariumRendererSettings) -> Self {
+        Self {
+            mode: RendererDebugMode::from_key(&settings.debug_mode),
+        }
+    }
+
+    fn as_settings(self) -> AquariumRendererSettings {
+        AquariumRendererSettings {
+            schema_version: "epiphany.aquarium.renderer-settings.v0".to_string(),
+            debug_mode: self.mode.as_key().to_string(),
+        }
     }
 }
 
@@ -536,6 +667,8 @@ impl Default for LightingGridHistory {
 struct AquariumRaymarch {
     time: f32,
     body_count: f32,
+    debug_mode: f32,
+    debug_pad: f32,
     grid_center: Vec2,
     grid_half_extent: f32,
     previous_grid_center: Vec2,
@@ -561,6 +694,8 @@ impl Default for AquariumRaymarch {
         Self {
             time: 0.0,
             body_count: 0.0,
+            debug_mode: 0.0,
+            debug_pad: 0.0,
             grid_center: Vec2::ZERO,
             grid_half_extent: GRID_BASE_HALF_EXTENT,
             previous_grid_center: Vec2::ZERO,
@@ -1228,6 +1363,22 @@ fn reload_domain_input(
     );
 }
 
+fn renderer_debug_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut debug_state: ResMut<RendererDebugState>,
+    mut bridge: ResMut<CultRuntimeBridge>,
+) {
+    if !keys.just_pressed(KeyCode::F3) {
+        return;
+    }
+
+    debug_state.mode = debug_state.mode.next();
+    if let Err(err) = bridge.save_renderer_settings(debug_state.as_settings()) {
+        warn!("failed to save renderer debug mode: {err}");
+    }
+    info!("renderer debug mode: {}", debug_state.mode.as_key());
+}
+
 fn camera_input(
     time: Res<Time>,
     buttons: Res<ButtonInput<MouseButton>>,
@@ -1318,6 +1469,7 @@ fn sync_grid_frame(
 fn update_raymarch_uniforms(
     time: Res<Time>,
     grid_frame: Res<GridFrame>,
+    debug_state: Res<RendererDebugState>,
     mut lighting_history: ResMut<LightingGridHistory>,
     bodies: Query<(&Transform, &CelestialBody)>,
     mut camera: Query<(&GlobalTransform, &Projection, &mut AquariumRaymarch), With<AquariumCamera>>,
@@ -1347,6 +1499,8 @@ fn update_raymarch_uniforms(
     };
 
     raymarch.time = time.elapsed_secs();
+    raymarch.debug_mode = debug_state.mode.as_shader_value();
+    raymarch.debug_pad = 0.0;
     raymarch.grid_center = grid_frame.center;
     raymarch.grid_half_extent = grid_frame.half_extent;
     if lighting_history.initialized {

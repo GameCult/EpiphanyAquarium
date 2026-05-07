@@ -357,3 +357,11 @@ Current slice:
   pattern for temporal fields. Portable storage textures are usually write
   targets, while previous state should be sampled or read from a separate
   resource.
+- Current renderer truth pass: added a CultCache-backed Bevy renderer debug
+  state at `epiphany.aquarium.renderer-settings`. F3 cycles final, hit coverage,
+  depth, normals, motion, brick occupancy, and SH luminance. The WGSL encodes
+  debug views through the same deferred prepass payload path, so the debug
+  colors prove the actual raymarch-to-G-buffer route instead of drawing a
+  separate overlay. Bevy `RenderDiagnosticsPlugin` is enabled after
+  `DefaultPlugins`; custom scoped timings still need to be added around brick
+  update, SH propagation, and the raymarch pass.

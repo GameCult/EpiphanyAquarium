@@ -8,6 +8,8 @@
 struct AquariumRaymarch {
     time: f32,
     body_count: f32,
+    debug_mode: f32,
+    debug_pad: f32,
     grid_center: vec2f,
     grid_half_extent: f32,
     previous_grid_center: vec2f,
@@ -478,6 +480,7 @@ struct DeferredPrepassOutput {
 
 struct SurfaceSample {
     hit: bool,
+    kind: f32,
     point: vec3f,
     normal: vec3f,
     color: vec3f,
@@ -523,6 +526,7 @@ fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> 
     let terrain = terrain_hit(ray_origin, ray_dir, jitter);
     var sample = SurfaceSample(
         false,
+        0.0,
         vec3f(0.0),
         vec3f(0.0, 0.0, 1.0),
         vec3f(0.0),
@@ -539,6 +543,7 @@ fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> 
         let hx = grid_height(point.xy + vec2f(eps, 0.0)) - grid_height(point.xy - vec2f(eps, 0.0));
         let hy = grid_height(point.xy + vec2f(0.0, eps)) - grid_height(point.xy - vec2f(0.0, eps));
         sample.hit = true;
+        sample.kind = 1.0;
         sample.point = point;
         sample.normal = normalize(vec3f(-hx, -hy, 2.0 * eps));
         sample.color = mix(vec3f(0.015, 0.18, 0.16), vec3f(0.58, 1.0, 0.84), grid_line_factor(point.xy));
@@ -598,6 +603,7 @@ fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> 
             let normal = normalize((point - body.xyz) / max(displaced_radius, 0.001));
             let plasma = pow(max(fbm4(vec4f(local * mix(1.35, 2.15, self_flag), field.time * 0.24)) * 0.5 + 0.5, 0.0), mix(2.4, 5.4, self_flag));
             sample.hit = true;
+            sample.kind = 2.0;
             sample.point = point;
             sample.normal = normal;
             sample.color = color.rgb;
@@ -612,12 +618,74 @@ fn surface_sample(ray_origin: vec3f, ray_dir: vec3f, uv: vec2f, jitter: f32) -> 
     return sample;
 }
 
+fn debug_mode() -> u32 {
+    return u32(field.debug_mode + 0.5);
+}
+
+fn debug_froxel_occupancy(uv: vec2f, sample_t: f32) -> f32 {
+    let progress = clamp((sample_t - field.depth_near) / max(field.depth_span, 0.001), 0.0, 1.0);
+    let mask = froxel_mask(uv, progress);
+    var count = 0.0;
+    for (var i = 0u; i < 8u; i = i + 1u) {
+        if ((mask & (1u << i)) != 0u) {
+            count += 1.0;
+        }
+    }
+    return count / 8.0;
+}
+
+fn debug_sh_luminance(sample: SurfaceSample) -> f32 {
+    let light = sample_sh_lighting(sample.normal, sample.point);
+    return clamp(dot(light, vec3f(0.2126, 0.7152, 0.0722)) / 4.0, 0.0, 1.0);
+}
+
+fn debug_color(sample: SurfaceSample, uv: vec2f) -> vec3f {
+    let mode = debug_mode();
+    if (mode == 1u) {
+        return select(vec3f(0.0, 0.72, 0.95), vec3f(1.0, 0.72, 0.12), sample.kind > 1.5);
+    }
+    if (mode == 2u) {
+        let depth_value = clamp((sample.t - field.depth_near) / max(field.depth_span, 0.001), 0.0, 1.0);
+        return vec3f(depth_value);
+    }
+    if (mode == 3u) {
+        return sample.normal * 0.5 + vec3f(0.5);
+    }
+    if (mode == 4u) {
+        let velocity = length(motion_vector(sample.point)) * 32.0;
+        return mix(vec3f(0.02, 0.05, 0.18), vec3f(1.0, 0.22, 0.04), clamp(velocity, 0.0, 1.0));
+    }
+    if (mode == 5u) {
+        let occupancy = debug_froxel_occupancy(uv, sample.t);
+        return mix(vec3f(0.02, 0.02, 0.04), vec3f(0.12, 0.95, 0.48), occupancy);
+    }
+    if (mode == 6u) {
+        let luminance = debug_sh_luminance(sample);
+        return mix(vec3f(0.01, 0.015, 0.04), vec3f(1.0, 0.76, 0.18), luminance);
+    }
+    return sample.color;
+}
+
+fn debug_surface_sample(sample: SurfaceSample, uv: vec2f) -> SurfaceSample {
+    if (debug_mode() == 0u) {
+        return sample;
+    }
+    var debug_sample = sample;
+    let color = debug_color(sample, uv);
+    debug_sample.color = color;
+    debug_sample.emissive = color;
+    debug_sample.unlit = true;
+    debug_sample.roughness = 1.0;
+    debug_sample.metallic = 0.0;
+    return debug_sample;
+}
+
 @fragment
 fn fs_deferred_prepass(input: FullscreenVertexOutput) -> DeferredPrepassOutput {
     let jitter = interleaved_noise(input.position.xy + field.time);
     let ray_origin = field.camera_position.xyz;
     let ray_dir = camera_ray(input.uv);
-    let sample = surface_sample(ray_origin, ray_dir, input.uv, jitter);
+    let sample = debug_surface_sample(surface_sample(ray_origin, ray_dir, input.uv, jitter), input.uv);
     if (!sample.hit) {
         discard;
     }

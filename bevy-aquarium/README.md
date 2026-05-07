@@ -47,6 +47,8 @@ Controls:
 - Right mouse drag: pan across the grid.
 - Mouse wheel: exponential zoom.
 - WASD: pan along the camera-projected grid basis.
+- F3: cycle the CultCache-backed renderer debug mode.
+- F5: rehydrate the Bevy domain from CultCache.
 
 Current pass:
 
@@ -60,8 +62,7 @@ Current pass:
 Next renderer pass:
 
 - Add a CultCache-backed renderer debug mode.
-- Expose hit coverage, depth, normals, motion vectors, deferred payloads, brick
-  occupancy, and SH luminance before adding more fog.
+- Expose deferred payload inspection before adding more fog.
 - Add GPU timing scopes around brick update, SH propagation, and the deferred
   prepass raymarch.
 - Move Grid height into an explicit Grid-domain source texture sampled by
