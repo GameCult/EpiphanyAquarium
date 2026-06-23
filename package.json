@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview --host 127.0.0.1 --port 1421",
     "smoke:visual": "node scripts/visual-smoke.mjs",
+    "provider:publish-odin": "node tools/publish_odin_provider_advertisement.mjs",
     "bevy": "cargo run --manifest-path bevy-aquarium/Cargo.toml",
     "bevy:dev": "cargo run --manifest-path bevy-aquarium/Cargo.toml --features dev",
     "bevy:watch": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bevy-dev-watch.ps1",
